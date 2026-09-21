@@ -72,6 +72,7 @@ add_library(squeeze2raop2_core STATIC
   src/device_registry.cpp
   src/mdns_embedded.cpp
   src/raop_player.cpp
+  src/volume_map.cpp
   src/wav_sink.cpp
   src/lms_stream.cpp
   src/slimproto.cpp
@@ -110,6 +111,11 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   target_link_libraries(squeeze2raop2_wire_tests PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(squeeze2raop2_wire_tests)
   add_test(NAME slimproto_wire_test COMMAND squeeze2raop2_wire_tests)
+
+  add_executable(squeeze2raop2_volume_tests test/test_volume_map.cpp)
+  target_link_libraries(squeeze2raop2_volume_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_volume_tests)
+  add_test(NAME volume_map_test COMMAND squeeze2raop2_volume_tests)
 
   add_executable(mp3_smoke test/mp3_smoke.cpp)
   target_link_libraries(mp3_smoke PRIVATE squeeze2raop2_core)

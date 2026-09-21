@@ -57,10 +57,13 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
                 "  --iface <name>        mdns network interface (default: all)\n"
                 "  --mdns-debug          browse-only mDNS debug mode (no LMS/AirPlay sessions)\n"
                 "  --discovery on|off    spawn sessions for discovered devices (default on)\n"
-                "  --vol-mode lms|fixed  follow the LMS slider via AUDG (default; LMS"
-                "\n"
-                "                        minimum = receiver mute, maximum = 0 dB) or\n"
-                "                        ignore LMS volume and play at --vol-pct\n"
+                "  --vol-mode lms|fixed  follow the LMS slider through the --vol-map dB\n"
+                "                        anchors (default) or ignore LMS volume and\n"
+                "                        play at --vol-pct\n"
+                "  --vol-map \"<db:pct, ...>\"  LMS slider percent -> AirPlay dBFS\n"
+                "                        anchors, ascending pct 1-100, db <= 0\n"
+                "                        (default \"-30:1, -23:16, -15:50, 0:100\":\n"
+                "                        slider 16 = -23 dB, 50 = -15, 100 = full)\n"
                 "  --vol-pct <N>         AirPlay volume percent 0.5-100 (default 0.7,\n"
                 "                        about -29.8 dB; fixed-mode level and the\n"
                 "                        fallback until LMS pushes the slider)\n"
@@ -151,6 +154,14 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             if (v == "lms") s.volumeMode = VolumeMode::Lms;
             else if (v == "fixed") s.volumeMode = VolumeMode::Fixed;
             else { log::error("--vol-mode must be lms|fixed"); return std::nullopt; }
+        } else if (arg == "--vol-map") {
+            if (!requireValue(arg, value(), v)) return std::nullopt;
+            if (!VolumeAnchors::parse(v)) {
+                log::error("--vol-map needs \"db:pct, ...\" pairs, ascending "
+                           "pct 1-100, db <= 0");
+                return std::nullopt;
+            }
+            s.volumeMap = v;
         } else if (arg == "--vol-pct") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
             try {

@@ -54,7 +54,7 @@ public:
                   bool paceRealtime, std::optional<std::string> sinkPath,
                   std::optional<RaopTarget> raopTarget,
                   RaopPlayer::CredentialSink credSink, VolumeMode volumeMode,
-                  float volPct, int latencyMs)
+                  VolumeAnchors anchors, float volPct, int latencyMs)
         : deviceId_(std::move(deviceId)),
           name_(std::move(name)),
           mac_(mac),
@@ -64,6 +64,7 @@ public:
           sinkPath_(std::move(sinkPath)),
           raopTarget_(std::move(raopTarget)),
           credSink_(std::move(credSink)),
+          anchors_(std::move(anchors)),
           volumeMode_(volumeMode),
           fixedVolumePct_(volPct),
           latencyMs_(latencyMs) {}
@@ -143,17 +144,16 @@ public:
             pauseUntilMs_ = 0;
         };
         events.onVolume = [this](double l, double r) {
-            // The recovered LMS slider percent passes straight onto the
-            // AirPlay sender's 0..100 % domain (0 % = -144 mute sentinel,
-            // 100 % = 0 dB), i.e. LMS minimum = receiver mute, LMS maximum =
-            // full scale.
+            // The recovered LMS slider percent goes through the --vol-map
+            // dB anchors before it reaches the AirPlay sender's 0..100 %
+            // domain (0 % = -144 mute sentinel, 100 % = 0 dB).
             double pct = (l == r) ? r : (l + r) / 2.0;
             if (volumeMode_ == VolumeMode::Fixed) {
                 log::info("volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})",
                           l, r, pct, fixedVolumePct_);
                 return;
             }
-            pct = clampAirVolumePct(pct);
+            pct = anchors_.airplayPctFromLms(pct);
             // NB: targetMutex_ also guards raop_ mutation in ensureRaop() and
             // the streamLoop teardown paths; no mutex_ nesting here (see the
             // onCont comment).
@@ -693,6 +693,7 @@ private:
     // --vol-pct: fixed-mode level, and in lms mode the pre-AUDG fallback
     // applied to every new session before RECORD (so audio never starts at
     // the receiver's hardware default).
+    VolumeAnchors anchors_;   // --vol-map dB anchors over the LMS slider
     VolumeMode volumeMode_;
     float fixedVolumePct_;
     // Last LMS slider percent seen via AUDG (lms mode); 0 = none. Re-applied
@@ -706,7 +707,11 @@ private:
 class SessionManager {
 public:
     SessionManager(const Settings& settings, StateStore& store)
-        : settings_(settings), store_(store) {}
+        : settings_(settings), store_(store),
+          // parseCommandLine already validated the spec; the fallback is
+          // unreachable but keeps programmatic Settings safe
+          anchors_(VolumeAnchors::parse(settings.volumeMap)
+                       .value_or(*VolumeAnchors::parse(kDefaultVolumeMap))) {}
 
     void onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevice& dev) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -780,7 +785,7 @@ public:
                 (void)deviceId;
                 store_.saveCreds(devId, creds);
             },
-            settings_.volumeMode, settings_.volPct, settings_.apLatencyMs);
+            settings_.volumeMode, anchors_, settings_.volPct, settings_.apLatencyMs);
         session->start();
         sessions_[dev.id] = std::move(session);
     }
@@ -788,6 +793,7 @@ public:
 private:
     const Settings& settings_;
     StateStore& store_;
+    VolumeAnchors anchors_;
     std::mutex mutex_;
     std::map<std::string, std::unique_ptr<PlayerSession>> sessions_;
 };

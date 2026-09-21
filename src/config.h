@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "log.h"
+#include "volume_map.h"
 
 namespace squeeze2raop2 {
 
@@ -36,10 +37,14 @@ struct Settings {
     std::string mdnsIface;
     bool mdnsDebug = false;
     bool discovery = true;
-    // Volume control: 'lms' tracks the LMS slider via AUDG (recovered slider
-    // percent -> receiver 0..100 pct); 'fixed' ignores AUDG and plays at
-    // volPct.
+    // Volume control: 'lms' tracks the LMS slider via AUDG through the
+    // piecewise-linear dB anchor table (--vol-map); 'fixed' ignores AUDG and
+    // plays at volPct.
     VolumeMode volumeMode = VolumeMode::Lms;
+    // Volume anchor spec: "db:pct, ..." pairs, ascending pct, mapping LMS
+    // slider positions to AirPlay dBFS (philippe44 squeeze2raop
+    // VolumeMapping style; his default was "-30:1, -15:50, 0:100").
+    std::string volumeMap = kDefaultVolumeMap;
     // Fixed AirPlay volume percent (--vol-pct): the fixed-mode level, and in
     // lms mode the pre-AUDG fallback until LMS pushes the slider. Maps onto
     // AirPlay's -30..0 dB protocol range via db = 0.3*pct - 30. 0 would be
