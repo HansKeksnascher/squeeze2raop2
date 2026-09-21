@@ -13,6 +13,8 @@
 #include <arpa/inet.h>
 #include <csignal>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -22,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 
@@ -36,7 +39,9 @@ void onSignal(int) { g_run.store(false); }
 std::string ipToString(uint32_t netOrder) {
     in_addr a{};
     a.s_addr = htonl(netOrder);
-    return inet_ntoa(a);
+    char buf[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &a, buf, sizeof(buf))) return std::string();
+    return std::string(buf);
 }
 
 class PlayerSession {
@@ -63,20 +68,26 @@ public:
         SlimProtoClient::Events events;
         events.onStart = [this](const StrmStart& st) { startStream(st); };
         events.onCont = [this](uint32_t) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!autostartPending_) return;
-            autostartPending_ = false;
+            // NB: mutex_ is non-recursive — currentStats() locks it too, so
+            // no currentStats()/sendStat call may happen under our lock.
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!autostartPending_) return;
+                autostartPending_ = false;
+            }
             client_->sendStat("STMs", currentStats());
             streamActive_.store(true);
-            StrmStart st = streamArgs_;
-            streamThread_ = std::thread([this, st] { streamLoop(st); });
+            streamThread_ = std::thread([this] { streamLoop(); });
         };
         events.onStop = [this]() {
             stopPlayback();
-            if (raop_) {
-                raop_->discardAudio();
-                raop_->stop();
-                raop_.reset();
+            {
+                std::lock_guard<std::mutex> lock(targetMutex_);
+                if (raop_) {
+                    raop_->discardAudio();
+                    raop_->stop();
+                    raop_.reset();
+                }
             }
             client_->sendStat("STMf", currentStats());
         };
@@ -87,7 +98,10 @@ public:
             // path honors flushed_ by skipping the session teardown.
             flushed_.store(true);
             stopPlayback();
-            if (raop_) raop_->discardAudio();
+            {
+                std::lock_guard<std::mutex> lock(targetMutex_);
+                if (raop_) raop_->discardAudio();
+            }
             client_->sendStat("STMf", currentStats());
         };
         events.onPause = [this](uint32_t ms) {
@@ -128,10 +142,9 @@ public:
 
         std::string macText = macToString(mac_);
         std::string identity = macText;
-        std::transform(identity.begin(), identity.end(), identity.begin(),
-                       [](unsigned char c) { return std::toupper(c); });
-        identity.erase(std::remove(identity.begin(), identity.end(), ':'),
-                       identity.end());
+        std::ranges::transform(identity, identity.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        std::erase(identity, ':');
         raopIdentity_ = identity;
         // the AirPlay session is launched lazily in ensureRaop() when the
         // first audio arrives; connecting eagerly hits receivers that
@@ -139,6 +152,10 @@ public:
     }
 
     bool ensureRaop(uint32_t sampleRate) {
+        // raop_/raopTarget_ are also read (locked) from SessionManager's
+        // thread via updateTarget(); everything here runs on the stream
+        // thread and must therefore hold targetMutex_ while mutating them.
+        std::lock_guard<std::mutex> lock(targetMutex_);
         if (raop_ && raop_->active()) return true;
         if (raop_) {   // dead session (e.g. receiver teardown): recreate
             raop_->stop();
@@ -156,7 +173,7 @@ public:
         // lost and startStreaming_ falls back to 0 dB = full blast. Post-start
         // it only stores until the handshake finishes; startStreaming_ sends
         // the stored value before the audio pacer starts.
-        raop_->setVolume(fixedVolumePct_);
+        raop_->setVolume(static_cast<double>(fixedVolumePct_));
         log::info("[ap] fixed volume {} pct applied (post-start)", fixedVolumePct_);
         if (raop_) log::info("[ap] session launching for {} ({})", name_,
                              raopTarget_->airplay2 ? "ap2" : "ap1");
@@ -170,12 +187,17 @@ public:
     }
 
     void stop() {
-        if (raop_) {
-            raop_->stop();
-            raop_.reset();
+        // Join the stream thread first: it reads raop_ throughout streamLoop,
+        // so the session must outlive it (teardown used to happen first).
+        stopPlayback();
+        {
+            std::lock_guard<std::mutex> lock(targetMutex_);
+            if (raop_) {
+                raop_->stop();
+                raop_.reset();
+            }
         }
         if (client_) client_->stop();
-        stopPlayback();
     }
 
 private:
@@ -247,7 +269,6 @@ private:
             fedBytes_ = 0;
             fedSamples_ = 0;
             pauseUntilMs_ = 0;
-            streamArgs_ = st;
             format_ = pcmFormat(st.pcm, 44100);
             bytesPerFrame_ = format_.channels * (format_.bitsPerSample / 8);
             if (!bytesPerFrame_) bytesPerFrame_ = 4;
@@ -267,11 +288,10 @@ private:
         }
         client_->sendStat("STMs", currentStats());
         streamActive_.store(true);
-        StrmStart stCopy = st;
-        streamThread_ = std::thread([this, stCopy] { streamLoop(stCopy); });
+        streamThread_ = std::thread([this] { streamLoop(); });
     }
 
-    void streamLoop(const StrmStart& st) {
+    void streamLoop() {
         PcmFormat fmt;
         uint32_t bytesPerFrame = 4;
         {
@@ -291,7 +311,12 @@ private:
                 return;
             }
         }
-        if (raopTarget_ && raopTarget_->port) {
+        std::optional<RaopTarget> target;
+        {
+            std::lock_guard<std::mutex> lock(targetMutex_);
+            target = raopTarget_;
+        }
+        if (target && target->port) {
             if (!ensureRaop(fmt.sampleRate)) {
                 log::error("[ap] cannot start airplay session for {}", name_);
                 client_->sendStat("STMn", currentStats());
@@ -330,11 +355,11 @@ private:
                     receivedBytes_ += got;
                 }
                 if (isMp3_) {
-                    feedMp3(buf, got, fmt, sink.get());
+                    feedMp3(std::as_bytes(std::span{buf}).first(got), fmt, sink.get());
                 } else {
-                    if (sink) sink->feed(buf, got, fmt);
+                    if (sink) sink->feed(std::as_bytes(std::span{buf}).first(got), fmt);
                     if (raop_ && fmt.bitsPerSample == 16) {
-                        pushToRaop(buf, got, fmt);
+                        pushToRaop(std::as_bytes(std::span{buf}).first(got), fmt);
                     } else if (raop_) {
                         log::warn("raop feed requires 16-bit pcm; dropping {} bytes", got);
                     }
@@ -351,7 +376,7 @@ private:
                 if (isMp3_ && mp3_) {
                     // Decode + emit the remaining tail frames of the stream.
                     mp3_->finish();
-                    feedMp3(nullptr, 0, fmt, sink.get());
+                    feedMp3({}, fmt, sink.get());
                 }
                 break;
             }
@@ -371,7 +396,10 @@ private:
         }
 
         if (sink) sink->close();
-        log::info("stream ended, received={} bytes", receivedBytes_);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            log::info("stream ended, received={} bytes", receivedBytes_);
+        }
 
         // Exit handling: a device-initiated session loss gets ONE transparent
         // retry (the receiver may have been transiently busy); otherwise the
@@ -380,10 +408,13 @@ private:
         for (;;) {
             const bool keepSession = flushed_.exchange(false);
             const bool lost = deviceLost_.exchange(false);
-            if (!keepSession && raop_) {
-                raop_->discardAudio();
-                raop_->stop();
-                raop_.reset();
+            {
+                std::lock_guard<std::mutex> lock(targetMutex_);
+                if (!keepSession && raop_) {
+                    raop_->discardAudio();
+                    raop_->stop();
+                    raop_.reset();
+                }
             }
             if (!g_run.load()) break;
             if (!lost) {
@@ -438,18 +469,18 @@ private:
         if (raop_) raop_->setNowPlaying(title, "", "");
     }
 
-    void pushToRaop(const char* data, size_t len, const PcmFormat& fmt) {
+    void pushToRaop(std::span<const std::byte> data, const PcmFormat& fmt) {
         std::vector<int16_t> samples;
-        size_t count = len / 2;
+        const size_t count = data.size() / 2;
         samples.reserve(count);
-        const auto* src = reinterpret_cast<const int16_t*>(data);
-        const auto* raw = reinterpret_cast<const uint16_t*>(data);
-        if (fmt.bigEndian) {
-            for (size_t i = 0; i < count; ++i)
-                samples.push_back(static_cast<int16_t>(ntohs(raw[i])));
-        } else {
-            for (size_t i = 0; i < count; ++i)
-                samples.push_back(src[i]);
+        for (size_t i = 0; i < count; ++i) {
+            // memcpy extraction instead of reinterpret_cast: no int16_t
+            // object ever lives in the receive buffer, so pointer-casting
+            // the raw bytes is strict-aliasing UB.
+            uint16_t raw = 0;
+            std::memcpy(&raw, data.data() + 2 * i, 2);
+            samples.push_back(fmt.bigEndian ? static_cast<int16_t>(ntohs(raw))
+                                            : static_cast<int16_t>(raw));
         }
         if (fmt.channels == 1 && !samples.empty()) {
             std::vector<int16_t> stereo;
@@ -464,13 +495,13 @@ private:
         }
     }
 
-    void feedMp3(const char* data, size_t len, PcmFormat& fmt, PcmFileSink* sink) {
-        constexpr size_t kPcmChunk = 1152 * 2;
+    void feedMp3(std::span<const std::byte> data, PcmFormat& fmt, PcmFileSink* sink) {
+        constexpr size_t kPcmChunk = size_t{1152} * 2;
         if (!mp3_) return;
-        mp3_->feed(reinterpret_cast<const uint8_t*>(data), len);
-        int16_t pcm[kPcmChunk];
+        mp3_->feed(data);
+        std::array<int16_t, kPcmChunk> pcm{};
         for (;;) {
-            size_t n = mp3_->drain(pcm, kPcmChunk);
+            size_t n = mp3_->drain(pcm);
             if (!n) {
                 if (mp3_->hasError()) {
                     log::error("mp3 decode failed; dropping stream");
@@ -482,8 +513,10 @@ private:
             if (mp3_->valid() &&
                 (fmt.sampleRate != mp3_->sampleRate() || fmt.channels != mp3_->channels() ||
                  fmt.bitsPerSample != 16 || fmt.bigEndian)) {
-                fmt = PcmFormat{mp3_->sampleRate(), 16,
-                                static_cast<uint8_t>(mp3_->channels()), false};
+                fmt = PcmFormat{.sampleRate = mp3_->sampleRate(),
+                                .bitsPerSample = 16,
+                                .channels = static_cast<uint8_t>(mp3_->channels()),
+                                .bigEndian = false};
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
                     format_ = fmt;
@@ -492,9 +525,9 @@ private:
                 if (raop_) raop_->setInputRate(fmt.sampleRate);
                 log::info("[ap] mp3 audio: {} Hz, {} ch", fmt.sampleRate, fmt.channels);
             }
-            size_t byteLen = n * sizeof(int16_t);
-            if (sink) sink->feed(reinterpret_cast<const char*>(pcm), byteLen, fmt);
-            if (raop_) pushToRaop(reinterpret_cast<const char*>(pcm), byteLen, fmt);
+            const size_t byteLen = n * sizeof(int16_t);
+            if (sink) sink->feed(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
+            if (raop_) pushToRaop(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 fedSamples_ += n / (fmt.channels ? fmt.channels : 2);
@@ -503,7 +536,8 @@ private:
         }
     }
 
-    void feedRing(const std::vector<int16_t>& samples) {        size_t offset = 0;
+    void feedRing(const std::vector<int16_t>& samples) {
+        size_t offset = 0;
         while (offset < samples.size() && g_run.load() && streamActive_.load()) {
             size_t freeSpace = raop_->availableWrite();
             if (freeSpace == 0) {
@@ -545,7 +579,6 @@ private:
     HttpStreamReader reader_;
     std::thread streamThread_;
     std::atomic<bool> streamActive_{false};
-    StrmStart streamArgs_;
     bool autostartPending_ = false;
 
     PcmFormat format_{};

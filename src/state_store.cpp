@@ -48,13 +48,18 @@ std::string encodeId(const std::string& id) {
 }
 
 bool StateStore::open(const std::string& path, std::string& errorOut) {
-    size_t pos = path.find_last_of('/');
-    if (pos != std::string::npos) (void)mkdir(std::string(path, 0, pos).c_str(), 0755);
-    path_ = path;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        size_t pos = path.find_last_of('/');
+        if (pos != std::string::npos) (void)mkdir(path.substr(0, pos).c_str(), 0755);
+        path_ = path;
+    }
     return load(errorOut);
 }
 
 bool StateStore::load(std::string& errorOut) {
+    (void)errorOut;  // load failures are logged, never fatal
+    std::lock_guard<std::mutex> lock(mutex_);
     std::ifstream in(path_);
     if (!in) {
         save();
@@ -64,7 +69,7 @@ bool StateStore::load(std::string& errorOut) {
     int lineNo = 0;
     while (std::getline(in, line)) {
         ++lineNo;
-        if (line.empty() || line.rfind("#", 0) == 0) continue;
+        if (line.empty() || line.starts_with('#')) continue;
         std::istringstream iss(line);
         std::string tag, id;
         if (!(iss >> tag >> id)) {
@@ -95,6 +100,7 @@ bool StateStore::load(std::string& errorOut) {
 }
 
 std::array<uint8_t, 6> StateStore::macFor(const std::string& deviceId, bool& newlyAssigned) {
+    std::lock_guard<std::mutex> lock(mutex_);
     newlyAssigned = false;
     StateStoreEntry& entry = entries_[deviceId];
     if (!entry.hasMac) {
@@ -107,12 +113,14 @@ std::array<uint8_t, 6> StateStore::macFor(const std::string& deviceId, bool& new
 }
 
 std::optional<std::string> StateStore::credsFor(const std::string& deviceId) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = entries_.find(deviceId);
     if (it == entries_.end() || it->second.creds.empty()) return std::nullopt;
     return it->second.creds;
 }
 
 void StateStore::saveCreds(const std::string& deviceId, const std::string& credsJson) {
+    std::lock_guard<std::mutex> lock(mutex_);
     entries_[deviceId].creds = credsJson;
     save();
 }
@@ -125,8 +133,10 @@ bool StateStore::save() {
     }
     out << "# sqraop2 state: stable virtual MACs, AirPlay pairing credentials\n";
     for (const auto& kv : entries_) {
-    if (kv.second.hasMac) out << "mac  " << encodeId(kv.first) << " " << macToString(kv.second.mac) << "\n";
-    if (!kv.second.creds.empty()) out << "creds  " << encodeId(kv.first) << " " << kv.second.creds << "\n";
+        if (kv.second.hasMac)
+            out << "mac  " << encodeId(kv.first) << " " << macToString(kv.second.mac) << "\n";
+        if (!kv.second.creds.empty())
+            out << "creds  " << encodeId(kv.first) << " " << kv.second.creds << "\n";
     }
     return true;
 }

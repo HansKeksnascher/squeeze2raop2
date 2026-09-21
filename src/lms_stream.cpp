@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -25,12 +26,19 @@ int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
     sa.sin_family = AF_INET;
     sa.sin_port = htons(port);
     if (inet_pton(AF_INET, host.c_str(), &sa.sin_addr) != 1) {
-        hostent* he = gethostbyname2(host.c_str(), AF_INET);
-        if (!he || !he->h_addr_list[0]) {
+        // getaddrinfo instead of gethostbyname2: the latter returns a
+        // thread-unsafe static hostent, and sessions resolve concurrently.
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || !res) {
             errorOut = std::string("cannot resolve ") + host;
             return -1;
         }
-        memcpy(&sa.sin_addr, he->h_addr_list[0], 4);
+        const auto* ai = reinterpret_cast<const sockaddr_in*>(res->ai_addr);
+        sa.sin_addr = ai->sin_addr;
+        freeaddrinfo(res);
     }
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -97,14 +105,9 @@ uint32_t parseIcyMetaint(const std::string& headers) {
     p += sizeof("icy-metaint:") - 1;
     while (p < lower.size() && (lower[p] == ' ' || lower[p] == '\t')) ++p;
     uint64_t v = 0;
-    size_t digits = 0;
-    while (p < lower.size() && lower[p] >= '0' && lower[p] <= '9') {
-        v = v * 10 + static_cast<uint64_t>(lower[p] - '0');
-        if (v > (1u << 20)) return 0;   // absurd interval: treat as absent
-        ++digits;
-        ++p;
-    }
-    if (!digits || v == 0) return 0;
+    auto [ptr, ec] = std::from_chars(lower.data() + p, lower.data() + lower.size(), v);
+    // Absurd interval (or unparseable): treat as absent.
+    if (ec != std::errc{} || v == 0 || v > (1u << 20)) return 0;
     return static_cast<uint32_t>(v);
 }
 
@@ -159,7 +162,7 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
 ssize_t HttpStreamReader::pullRaw(char* dst, size_t max, uint32_t timeoutMs) {
     if (!leftover_.empty()) {
         size_t n = std::min(leftover_.size(), max);
-        memcpy(dst, leftover_.data(), n);
+        leftover_.copy(dst, n);
         leftover_.erase(0, n);
         return static_cast<ssize_t>(n);
     }

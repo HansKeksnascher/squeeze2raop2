@@ -2,7 +2,9 @@
 
 #include "slimproto.h"
 
+#include <cstddef>
 #include <cstdio>
+#include <span>
 #include <string>
 
 namespace sq2 {
@@ -13,7 +15,7 @@ public:
     ~PcmFileSink();
 
     bool open(const PcmFormat& format, std::string& errorOut);
-    void feed(const char* data, size_t len, const PcmFormat& format);
+    void feed(std::span<const std::byte> data, const PcmFormat& format);
     void close();
 
     uint64_t bytesTotal() const { return total_; }

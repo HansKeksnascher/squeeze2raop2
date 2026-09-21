@@ -60,9 +60,11 @@ private:
     std::string identity_;
     RaopTarget target_;
 
+    // Destruction order matters: sender_ holds a RaopIo& to loop_, so loop_
+    // (and ringStorage_) must outlive sender_ — i.e. be declared BEFORE it.
     std::unique_ptr<fxchain::RingBuffer<int16_t>> ringStorage_;
-    std::unique_ptr<fxchain::RaopSender> sender_;
     fxchain::RaopLoop loop_;
+    std::unique_ptr<fxchain::RaopSender> sender_;
     std::optional<std::thread> pumpThread_;
     CredentialSink onCredentials_;
     std::function<void()> onClosed_;

@@ -8,3 +8,4 @@ sqraop2.state
 __pycache__/
 compile_commands.json
 .lock-*
+build-*/

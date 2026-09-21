@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -28,10 +29,14 @@ public:
 
 private:
     bool load(std::string& errorOut);
+    // Callers must hold mutex_; save() itself does not lock.
     bool save();
 
     std::string path_;
     std::map<std::string, StateStoreEntry> entries_;
+    // Guards entries_ and path_: macFor()/saveCreds() run on mDNS/sender
+    // threads, load() at startup.
+    mutable std::mutex mutex_;
 };
 
 }

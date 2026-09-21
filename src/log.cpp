@@ -1,6 +1,7 @@
 #include "log.h"
 
 #include <chrono>
+#include <format>
 #include <cstdio>
 #include <mutex>
 
@@ -28,10 +29,7 @@ std::string stamp() {
     std::tm tm{};
     gmtime_r(&t, &tm);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-    char buf[32];
-    snprintf(buf, sizeof(buf), "[%02d:%02d:%02d.%03d]", tm.tm_hour, tm.tm_min, tm.tm_sec,
-             static_cast<int>(ms.count()));
-    return buf;
+    return std::format("[{:02}:{:02}:{:02}.{:03}]", tm.tm_hour, tm.tm_min, tm.tm_sec, ms.count());
 }
 }
 

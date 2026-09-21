@@ -3,7 +3,7 @@
 #include "log.h"
 
 #include <cctype>
-#include <cstdlib>
+#include <charconv>
 
 namespace sq2 {
 
@@ -63,7 +63,9 @@ void DeviceRegistry::onRaopV4(const std::string& instance, const std::string& ho
     if (auto it = txt.find("pw"); it != txt.end())
         st.device.pw = (it->second == "true" || it->second == "1");
     if (auto it = txt.find("sf"); it != txt.end()) {
-        uint64_t sf = std::strtoull(it->second.c_str(), nullptr, 16);
+        // Preserve the legacy strtoull semantics: garbage input parses as 0.
+        uint64_t sf = 0;
+        std::from_chars(it->second.data(), it->second.data() + it->second.size(), sf, 16);
         st.device.encrypted = (sf & 0x2) != 0;
     }
     if (auto it = txt.find("et"); it != txt.end())
@@ -96,8 +98,12 @@ void DeviceRegistry::onAirplayV4(const std::string& instance, const std::string&
 
     if (st.device.name.empty()) st.device.name = instance;
 
-    if (auto it = txt.find("features"); it != txt.end() && !it->second.empty())
-        st.device.features = std::strtoull(it->second.c_str(), nullptr, 16);
+    if (auto it = txt.find("features"); it != txt.end() && !it->second.empty()) {
+        // Preserve the legacy strtoull semantics: garbage input parses as 0.
+        uint64_t features = 0;
+        std::from_chars(it->second.data(), it->second.data() + it->second.size(), features, 16);
+        st.device.features = features;
+    }
     if (auto it = txt.find("pk"); it != txt.end()) st.device.pk = it->second;
     if (auto it = txt.find("deviceid"); it != txt.end()) st.device.deviceIdHex = it->second;
     if (auto it = txt.find("model"); it != txt.end() && st.device.model.empty())

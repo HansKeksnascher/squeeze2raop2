@@ -11,6 +11,25 @@ option(SQRAOP_WITH_SENDER "integrate the vendored raop_sender library" ON)
 
 find_package(Threads REQUIRED)
 
+# First-party warning set (GCC 13+); third_party targets are excluded.
+set(SQRAOP_CXX_WARNINGS
+  -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+  -Wold-style-cast -Wcast-align -Wuseless-cast -Wnon-virtual-dtor
+  -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion -Wformat=2)
+
+# SQRAOP_SANITIZERS="address,undefined" (ASan+UBSan) or "thread" (TSan).
+# Build in a separate directory; sanitizer builds must not mix.
+set(SQRAOP_SANITIZERS "" CACHE STRING "runtime sanitizers for first-party targets")
+
+function(sqraop_target_settings tgt)
+  target_compile_options(${tgt} PRIVATE ${SQRAOP_CXX_WARNINGS})
+  if(SQRAOP_SANITIZERS)
+    set(SQRAOP_SANITIZE_FLAGS -fsanitize=${SQRAOP_SANITIZERS} -fno-omit-frame-pointer)
+    target_compile_options(${tgt} PRIVATE ${SQRAOP_SANITIZE_FLAGS})
+    target_link_options(${tgt} PRIVATE ${SQRAOP_SANITIZE_FLAGS})
+  endif()
+endfunction()
+
 if(SQRAOP_WITH_SENDER)
   set(AIRPLAY_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
   set(AIRPLAY_BUILD_TESTS ON CACHE BOOL "" FORCE)
@@ -60,6 +79,7 @@ add_library(sqraop_core STATIC
 )
 target_include_directories(sqraop_core PUBLIC src third_party/minimp3)
 target_link_libraries(sqraop_core PUBLIC Threads::Threads sqraop_apple_mdns)
+sqraop_target_settings(sqraop_core)
 if(SQRAOP_WITH_SENDER)
   target_link_libraries(sqraop_core PUBLIC raop_sender)
   target_compile_definitions(sqraop_core PUBLIC SQRAOP_WITH_SENDER=1)
@@ -67,15 +87,18 @@ endif()
 
 add_executable(sqraop2 src/main.cpp src/bridge.cpp)
 target_link_libraries(sqraop2 PRIVATE sqraop_core)
+sqraop_target_settings(sqraop2)
 
 if(SQRAOP_BUILD_TESTS)
   enable_testing()
   add_executable(sqraop_tests test/test_util.cpp)
   target_link_libraries(sqraop_tests PRIVATE sqraop_core)
+  sqraop_target_settings(sqraop_tests)
   add_test(NAME util_test COMMAND sqraop_tests)
 
   add_executable(mp3_smoke test/mp3_smoke.cpp)
   target_link_libraries(mp3_smoke PRIVATE sqraop_core)
+  sqraop_target_settings(mp3_smoke)
 endif()
 
 install(TARGETS sqraop2 RUNTIME DESTINATION bin)

@@ -8,7 +8,7 @@ namespace sq2 {
 
 class HttpStreamReader {
 public:
-    enum class ReadResult { Data, Closed, AtEof };
+    enum class ReadResult : std::uint8_t { Data, Closed, AtEof };
 
     HttpStreamReader() = default;
     ~HttpStreamReader();

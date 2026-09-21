@@ -1,13 +1,16 @@
 #include "util.h"
 
+#include <charconv>
 #include <chrono>
 #include <cctype>
+#include <format>
 
 namespace sq2 {
 
-uint32_t hash32(const std::string& s) {
+uint32_t hash32(std::string_view s) {
     uint32_t h = 2166136261u;
-    for (unsigned char c : s) {
+    for (char raw : s) {
+        const auto c = static_cast<unsigned char>(raw);
         h ^= c;
         h *= 16777619u;
     }
@@ -15,24 +18,24 @@ uint32_t hash32(const std::string& s) {
 }
 
 std::string macToString(const std::array<uint8_t, 6>& mac) {
-    char buf[18];
-    snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
-             mac[2], mac[3], mac[4], mac[5]);
-    return buf;
+    return std::format("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2],
+                       mac[3], mac[4], mac[5]);
 }
 
-bool macFromString(const std::string& s, std::array<uint8_t, 6>& out) {
-    unsigned v[6];
-    if (sscanf(s.c_str(), "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6)
-        return false;
-    for (size_t i = 0; i < 6; ++i)
-        if (v[i] > 0xFF) return false;
-    for (size_t i = 0; i < 6; ++i)
-        out[i] = static_cast<uint8_t>(v[i]);
-    return true;
+bool macFromString(std::string_view s, std::array<uint8_t, 6>& out) {
+    for (size_t i = 0; i < 6; ++i) {
+        unsigned v = 0;
+        auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), v, 16);
+        if (ec != std::errc{} || v > 0xFF) return false;
+        out[i] = static_cast<uint8_t>(v);
+        if (i == 5) return ptr == s.data() + s.size();
+        if (ptr == s.data() + s.size() || *ptr != ':') return false;
+        s.remove_prefix(static_cast<size_t>(ptr + 1 - s.data()));
+    }
+    return false;
 }
 
-std::array<uint8_t, 6> fakeMacFor(const std::string& deviceId) {
+std::array<uint8_t, 6> fakeMacFor(std::string_view deviceId) {
     uint32_t h = hash32(deviceId);
     std::array<uint8_t, 6> mac{0xaa, 0x00, 0x00, 0x00, 0x00, 0x00};
     mac[1] = static_cast<uint8_t>((h >> 24) & 0xFF);
@@ -45,15 +48,16 @@ std::array<uint8_t, 6> fakeMacFor(const std::string& deviceId) {
 
 uint64_t nowMs() {
     using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-std::string urlDecode(const std::string& s) {
+std::string urlDecode(std::string_view s) {
     std::string out;
     out.reserve(s.size());
     for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size() && isxdigit((unsigned char)s[i + 1]) &&
-            isxdigit((unsigned char)s[i + 2])) {
+        if (s[i] == '%' && i + 2 < s.size() && isxdigit(static_cast<unsigned char>(s[i + 1])) &&
+            isxdigit(static_cast<unsigned char>(s[i + 2]))) {
             auto hex = [](char c) -> int {
                 if (c >= '0' && c <= '9') return c - '0';
                 if (c >= 'a' && c <= 'f') return c - 'a' + 10;

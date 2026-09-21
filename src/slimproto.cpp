@@ -12,15 +12,23 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstring>
+#include <span>
 
 namespace sq2 {
 
 namespace {
 
-constexpr size_t kMaxPacket = 4096 * 8;
+constexpr size_t kMaxPacket = size_t{4096} * 8;
 constexpr int kPollTimeoutMs = 100;
+
+std::string ipv4ToString(const in_addr& addr) {
+    char buf[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &addr, buf, sizeof(buf))) return std::string();
+    return std::string(buf);
+}
 
 } // namespace
 
@@ -52,10 +60,10 @@ bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
             ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0,
                                  reinterpret_cast<sockaddr*>(&from), &slen);
             if (n > 0) {
-                buf[n] = '\0';
+                buf[static_cast<size_t>(n)] = '\0';
                 if (buf[0] == 'E' || buf[0] == 'D') {
                     ::close(fd);
-                    hostOut = inet_ntoa(from.sin_addr);
+                    hostOut = ipv4ToString(from.sin_addr);
                     log::info("discovered LMS at {}:{}", hostOut, port);
                     return true;
                 }
@@ -95,8 +103,7 @@ uint8_t bitsPerSampleFromCode(uint8_t code) {
 uint8_t channelsFromCode(uint8_t code) {
     switch (code) {
     case '1': return 1;
-    case '2': return 2;
-    default: return 2;
+    default: return 2;   // '2' and anything unknown: stereo
     }
 }
 
@@ -130,7 +137,7 @@ void SlimProtoClient::stop() {
         // reacts to the old SDK upgrade reason), but it is correct protocol
         // and makes the intent visible in LMS logs before the socket drops.
         const uint8_t bye = 0;
-        sendPacket("BYE!", &bye, 1);
+        sendPacket("BYE!", std::as_bytes(std::span{&bye, 1}));
         if (sock_ >= 0) {
             ::shutdown(sock_, SHUT_RDWR);
         }
@@ -142,9 +149,10 @@ void SlimProtoClient::stop() {
     }
 }
 
-bool SlimProtoClient::sendRaw(const void* data, size_t len) {
+bool SlimProtoClient::sendRaw(std::span<const std::byte> data) {
     std::lock_guard<std::mutex> lock(sendMutex_);
-    const uint8_t* p = static_cast<const uint8_t*>(data);
+    const char* p = reinterpret_cast<const char*>(data.data());
+    size_t len = data.size();
     size_t sent = 0;
     while (sent < len) {
         ssize_t n = ::send(sock_, p + sent, len - sent, MSG_NOSIGNAL);
@@ -160,38 +168,33 @@ bool SlimProtoClient::sendRaw(const void* data, size_t len) {
     return sent == len;
 }
 
-bool SlimProtoClient::sendPacket(const char* opcode, const void* payload, size_t len) {
+bool SlimProtoClient::sendPacket(std::string_view opcode, std::span<const std::byte> payload) {
     if (sock_ < 0) return false;
     // client -> LMS framing (per squeezelite/HELO spec):
     // [4b opcode][4b big-endian length = payload bytes][payload]
-    std::vector<uint8_t> pkt(8 + len);
-    memcpy(pkt.data(), opcode, 4);
-    pkt[4] = static_cast<uint8_t>(len >> 24);
-    pkt[5] = static_cast<uint8_t>(len >> 16);
-    pkt[6] = static_cast<uint8_t>(len >> 8);
-    pkt[7] = static_cast<uint8_t>(len & 0xFF);
-    if (len) memcpy(pkt.data() + 8, payload, len);
-    return sendRaw(pkt.data(), pkt.size());
+    std::vector<uint8_t> pkt(8 + payload.size());
+    std::memcpy(pkt.data(), opcode.data(), 4);
+    packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), payload.size(), 4);
+    if (!payload.empty())
+        std::memcpy(pkt.data() + 8, payload.data(), payload.size());
+    return sendRaw(std::as_bytes(std::span{pkt}));
 }
 
 void SlimProtoClient::sendHelo(bool reconnect) {
     std::string caps = caps_;
-    uint32_t bodyLen = 36 + caps.size();
+    uint32_t bodyLen = 36 + static_cast<uint32_t>(caps.size());
     std::vector<uint8_t> pkt(8 + bodyLen);
-    memcpy(pkt.data(), "HELO", 4);
-    pkt[4] = static_cast<uint8_t>(bodyLen >> 24);
-    pkt[5] = static_cast<uint8_t>(bodyLen >> 16);
-    pkt[6] = static_cast<uint8_t>(bodyLen >> 8);
-    pkt[7] = static_cast<uint8_t>(bodyLen & 0xFF);
-    uint8_t* p = pkt.data() + 8;
-    p[0] = 12;
-    p[1] = 0;
-    memcpy(p + 2, mac_.data(), 6);
-    packN(p + 24, reconnect ? 0x4000 : 0x0000, 2);
-    memcpy(p + 36, caps.data(), caps.size());
+    std::memcpy(pkt.data(), "HELO", 4);
+    packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), bodyLen, 4);
+    std::span<std::byte> p = std::as_writable_bytes(std::span{pkt}).subspan(8);
+    p[0] = std::byte{12};
+    p[1] = std::byte{0};
+    std::memcpy(p.data() + 2, mac_.data(), 6);
+    packN(p.subspan(24, 2), reconnect ? 0x4000 : 0x0000, 2);
+    std::memcpy(p.data() + 36, caps.data(), caps.size());
 
     log::info("HELO mac={} cap={}", macToString(mac_), caps);
-    if (!sendRaw(pkt.data(), pkt.size())) log::error("HELO send failed");
+    if (!sendRaw(std::as_bytes(std::span{pkt}))) log::error("HELO send failed");
 }
 
 
@@ -199,50 +202,47 @@ void SlimProtoClient::sendStat(const char* event, StreamStats stats,
                                uint32_t serverTimestamp) {
     stats_ = stats;
     std::vector<uint8_t> pkt(8 + 53);
-    memcpy(pkt.data(), "STAT", 4);
-    pkt[4] = 0;
-    pkt[5] = 0;
-    pkt[6] = 0;
-    pkt[7] = 53;
-    uint8_t* p = pkt.data() + 8;
-    memcpy(p, event, 4);
-    p[6] = 0;
-    packN(p + 7, stats_.streamBufferSize, 4);
-    packN(p + 11, stats_.streamBufferFullness, 4);
-    packN(p + 15, stats_.bytesReceived >> 32, 4);
-    packN(p + 19, stats_.bytesReceived & 0xFFFFFFFF, 4);
-    packN(p + 23, 0xFFFF, 2);
-    packN(p + 25, nowMs(), 4);
-    packN(p + 29, stats_.outputBufferSize, 4);
-    packN(p + 33, stats_.outputBufferFullness, 4);
-    packN(p + 37, stats_.elapsedMs / 1000, 4);
-    packN(p + 41, 0, 2);
-    packN(p + 43, stats_.elapsedMs, 4);
-    memcpy(p + 47, &serverTimestamp, 4);
-    packN(p + 51, 0, 2);
-    if (!sendRaw(pkt.data(), pkt.size())) log::warn("STAT send failed");
+    std::memcpy(pkt.data(), "STAT", 4);
+    packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), 53, 4);
+    std::span<std::byte> p = std::as_writable_bytes(std::span{pkt}).subspan(8);
+    std::memcpy(p.data(), event, 4);
+    p[6] = std::byte{0};
+    packN(p.subspan(7, 4), stats_.streamBufferSize, 4);
+    packN(p.subspan(11, 4), stats_.streamBufferFullness, 4);
+    packN(p.subspan(15, 4), stats_.bytesReceived >> 32, 4);
+    packN(p.subspan(19, 4), stats_.bytesReceived & 0xFFFFFFFF, 4);
+    packN(p.subspan(23, 2), 0xFFFF, 2);
+    packN(p.subspan(25, 4), nowMs(), 4);
+    packN(p.subspan(29, 4), stats_.outputBufferSize, 4);
+    packN(p.subspan(33, 4), stats_.outputBufferFullness, 4);
+    packN(p.subspan(37, 4), stats_.elapsedMs / 1000, 4);
+    packN(p.subspan(41, 2), 0, 2);
+    packN(p.subspan(43, 4), stats_.elapsedMs, 4);
+    packN(p.subspan(47, 4), serverTimestamp, 4);
+    packN(p.subspan(51, 2), 0, 2);
+    if (!sendRaw(std::as_bytes(std::span{pkt}))) log::warn("STAT send failed");
 }
 
 void SlimProtoClient::sendResp(const std::string& header) {
-    if (!sendPacket("RESP", header.data(), header.size())) log::warn("RESP send failed");
+    if (!sendPacket("RESP", std::as_bytes(std::span{header}))) log::warn("RESP send failed");
 }
 
 void SlimProtoClient::sendSetdName(const std::string& name) {
     std::vector<uint8_t> payload(1 + name.size() + 1);
     payload[0] = 0;
-    memcpy(payload.data() + 1, name.data(), name.size());
-    if (!sendPacket("SETD", payload.data(), payload.size())) log::warn("SETD send failed");
+    std::memcpy(payload.data() + 1, name.data(), name.size());
+    if (!sendPacket("SETD", std::as_bytes(std::span{payload}))) log::warn("SETD send failed");
 }
 
 void SlimProtoClient::sendDisco(uint8_t reason) {
-    if (!sendPacket("DSCO", &reason, 1)) log::warn("DSCO send failed");
+    if (!sendPacket("DSCO", std::as_bytes(std::span{&reason, 1}))) log::warn("DSCO send failed");
 }
 
 void SlimProtoClient::sendMeta(const char* data, size_t len) {
     // squeezelite parity: forward the raw ICY metadata block to LMS so its
     // track display follows the stream (LMS also watches direct streams
     // itself; this is redundant there but keeps proxied streams in sync).
-    sendPacket("META", data, len);
+    sendPacket("META", std::as_bytes(std::span{data, len}));
 }
 
 bool SlimProtoClient::connectOnce(bool reconnect) {
@@ -254,12 +254,20 @@ bool SlimProtoClient::connectOnce(bool reconnect) {
     sa.sin_family = AF_INET;
     sa.sin_port = htons(port_);
     if (inet_pton(AF_INET, host_.c_str(), &sa.sin_addr) != 1) {
-        hostent* he = gethostbyname2(host_.c_str(), AF_INET);
-        if (!he || !he->h_addr_list[0]) {
+        // getaddrinfo instead of gethostbyname2: the latter returns a
+        // thread-unsafe static hostent, and multiple sessions resolve
+        // concurrently here.
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        if (getaddrinfo(host_.c_str(), nullptr, &hints, &res) != 0 || !res) {
             log::error("cannot resolve {}", host_);
             return false;
         }
-        memcpy(&sa.sin_addr, he->h_addr_list[0], 4);
+        const auto* ai = reinterpret_cast<const sockaddr_in*>(res->ai_addr);
+        sa.sin_addr = ai->sin_addr;
+        freeaddrinfo(res);
     }
     sock_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (sock_ < 0) return false;
@@ -283,20 +291,18 @@ bool SlimProtoClient::connectOnce(bool reconnect) {
 }
 
 void SlimProtoClient::process(const std::string& pkt) {
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(pkt.data());
     size_t len = pkt.size();
     if (len < 4) return;
-    char op[5];
-    memcpy(op, pkt.data(), 4);
-    op[4] = 0;
+    const std::string_view op(pkt.data(), 4);
 
-    if (strncmp(op, "strm", 4) == 0) {
+    if (op == "strm") {
         if (len < 5) return;
-        const uint8_t* d = p + 4;
-        char command = static_cast<char>(d[0]);
+        const char command = pkt[4];
         switch (command) {
         case 't': {
-            uint32_t ts = static_cast<uint32_t>(unpackN(d + 14, 4));
+            // heartbeat timestamp sits at packet bytes 18..21
+            if (len < 22) return;
+            uint32_t ts = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
             sendStat("STMt", {}, ts);
             lastHeartbeatMs_ = nowMs();
             break;
@@ -309,18 +315,21 @@ void SlimProtoClient::process(const std::string& pkt) {
             sendStat("STMf", stats_);
             break;
         case 'p': {
-            uint32_t ms = static_cast<uint32_t>(unpackN(d + 14, 4));
+            if (len < 22) return;
+            uint32_t ms = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
             if (events_.onPause) events_.onPause(ms);
             if (!ms) sendStat("STMp", stats_);
             break;
         }
         case 'a': {
-            uint32_t ms = static_cast<uint32_t>(unpackN(d + 14, 4));
+            if (len < 22) return;
+            uint32_t ms = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
             if (events_.onSkipAhead) events_.onSkipAhead(ms);
             break;
         }
         case 'u': {
-            uint32_t jiffies = static_cast<uint32_t>(unpackN(d + 14, 4));
+            if (len < 22) return;
+            uint32_t jiffies = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
             if (events_.onUnpause) events_.onUnpause(jiffies);
             sendStat("STMr", stats_);
             break;
@@ -328,20 +337,20 @@ void SlimProtoClient::process(const std::string& pkt) {
         case 's': {
             if (len < 28) return;
             StrmStart st;
-            st.autostart = static_cast<uint8_t>(d[1] - '0');
-            st.format = static_cast<StreamFormat>(d[2]);
-            st.pcm.sampleSizeCode = d[3];
-            st.pcm.sampleRateCode = d[4];
-            st.pcm.channelsCode = d[5];
-            st.pcm.endianCode = d[6];
-            st.thresholdKb = d[7];
-            st.transitionPeriodS = d[9];
-            st.transitionType = static_cast<uint8_t>(d[10] - '0');
-            st.flags = d[11];
-            st.outputThresholdTenths = d[12];
-            st.replayGain = static_cast<uint32_t>(unpackN(d + 14, 4));
-            st.serverPort = static_cast<uint16_t>(unpackN(d + 18, 2));
-            st.serverIp = static_cast<uint32_t>(unpackN(d + 20, 4));
+            st.autostart = static_cast<uint8_t>(pkt[5] - '0');
+            st.format = static_cast<StreamFormat>(pkt[6]);
+            st.pcm.sampleSizeCode = static_cast<uint8_t>(pkt[7]);
+            st.pcm.sampleRateCode = static_cast<uint8_t>(pkt[8]);
+            st.pcm.channelsCode = static_cast<uint8_t>(pkt[9]);
+            st.pcm.endianCode = static_cast<uint8_t>(pkt[10]);
+            st.thresholdKb = static_cast<uint8_t>(pkt[11]);
+            st.transitionPeriodS = static_cast<uint8_t>(pkt[13]);
+            st.transitionType = static_cast<uint8_t>(pkt[14] - '0');
+            st.flags = static_cast<uint8_t>(pkt[15]);
+            st.outputThresholdTenths = static_cast<uint8_t>(pkt[16]);
+            st.replayGain = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
+            st.serverPort = static_cast<uint16_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(22, 2)));
+            st.serverIp = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(24, 4)));
             st.request.assign(pkt.data() + 28, len - 28);
             log::debug("strm s autostart={} format={} threshold={}", st.autostart,
                        static_cast<char>(st.format), st.thresholdKb);
@@ -353,20 +362,21 @@ void SlimProtoClient::process(const std::string& pkt) {
             log::warn("unhandled strm command '{}'", command);
             break;
         }
-    } else if (strncmp(op, "cont", 4) == 0) {
+    } else if (op == "cont") {
         if (len < 8) return;
-        uint32_t metaint = static_cast<uint32_t>(unpackN(p + 4, 4));
+        uint32_t metaint = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(4, 4)));
         if (events_.onCont) events_.onCont(metaint);
-    } else if (strncmp(op, "codc", 4) == 0) {
+    } else if (op == "codc") {
         if (len < 10) return;
-        StreamFormat f = static_cast<StreamFormat>(p[4]);
-        PcmParams pcm{p[5], p[6], p[7], p[8]};
+        StreamFormat f = static_cast<StreamFormat>(pkt[4]);
+        PcmParams pcm{static_cast<uint8_t>(pkt[5]), static_cast<uint8_t>(pkt[6]),
+                      static_cast<uint8_t>(pkt[7]), static_cast<uint8_t>(pkt[8])};
         if (events_.onCodc) events_.onCodc(f, pcm);
-    } else if (strncmp(op, "audg", 4) == 0) {
-        if (len < 18) return;
-        uint32_t gainL = static_cast<uint32_t>(unpackN(p + 14, 4));
-        uint32_t gainR = static_cast<uint32_t>(unpackN(p + 18, 4));
-        uint8_t adjust = p[12];
+    } else if (op == "audg") {
+        if (len < 22) return;
+        uint32_t gainL = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(14, 4)));
+        uint32_t gainR = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
+        uint8_t adjust = static_cast<uint8_t>(pkt[12]);
         // new_left/new_right are 16.16 fixed-point linear amplitude
         // multipliers (1.0 = full volume). LMS encodes its slider through a
         // linear dB curve (Squeezebox2 getVolume: 0.495 dB/step over
@@ -384,8 +394,8 @@ void SlimProtoClient::process(const std::string& pkt) {
             return std::clamp(pct, 0.0, 100.0);
         };
         if (events_.onVolume) events_.onVolume(pctOf(gainL), pctOf(gainR));
-    } else if (strncmp(op, "setd", 4) == 0) {
-        if (len >= 5 && p[4] == 0) {
+    } else if (op == "setd") {
+        if (len >= 5 && pkt[4] == '\0') {
             if (len == 5) {
                 sendSetdName(playerName_.empty() ? "sqraop2" : playerName_);
             } else if (len > 5) {
@@ -395,16 +405,14 @@ void SlimProtoClient::process(const std::string& pkt) {
                 sendSetdName(name);
             }
         }
-    } else if (strncmp(op, "serv", 4) == 0) {
+    } else if (op == "serv") {
         if (len >= 8) {
-            uint32_t ip = static_cast<uint32_t>(unpackN(p + 4, 4));
+            uint32_t ip = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(4, 4)));
             if (events_.onServerSwitch) events_.onServerSwitch(ip);
         }
-    } else if (strncmp(op, "aude", 4) == 0 || strncmp(op, "DBUG", 4) == 0 ||
-               strncmp(op, "SYST", 4) == 0 || strncmp(op, "visu", 4) == 0 ||
-               strncmp(op, "IR  ", 4) == 0 || strncmp(op, "GRFe", 4) == 0 ||
-               strncmp(op, "GRFh", 4) == 0 || strncmp(op, "GRFb", 4) == 0 ||
-               strncmp(op, "GRFm", 4) == 0 || strncmp(op, "OCOB", 4) == 0) {
+    } else if (op == "aude" || op == "DBUG" || op == "SYST" || op == "visu" ||
+               op == "IR  " || op == "GRFe" || op == "GRFh" || op == "GRFb" ||
+               op == "GRFm" || op == "OCOB") {
         log::debug("ignored {}", op);
     } else {
         log::warn("unhandled opcode {}", op);

@@ -2,7 +2,24 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wdouble-promotion"
+#endif
+
+#include <minimp3.h>
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace sq2 {
 
@@ -13,14 +30,13 @@ namespace sq2 {
 class Mp3Decoder {
 public:
     Mp3Decoder();
-    ~Mp3Decoder();
     Mp3Decoder(const Mp3Decoder&) = delete;
     Mp3Decoder& operator=(const Mp3Decoder&) = delete;
 
-    void feed(const uint8_t* data, size_t len);
+    void feed(std::span<const std::byte> data);
     // Signal end of compressed input; decodes remaining tail frames.
     void finish();
-    size_t drain(int16_t* out, size_t maxSamples);
+    size_t drain(std::span<int16_t> out);
 
     uint32_t sampleRate() const { return sampleRate_; }
     int channels() const { return channels_; }
@@ -33,8 +49,8 @@ public:
 private:
     void decodeMore();
 
-    void* handle_ = nullptr;       // mp3dec_t*
-    std::vector<uint8_t> buffer_;  // contiguous compressed window
+    mp3dec_t dec_{};               // minimp3 decoder state, embedded by value
+    std::vector<std::byte> buffer_;  // contiguous compressed window
     size_t consumed_ = 0;          // decoded/skipped prefix of buffer_
     std::vector<int16_t> pcm_;     // decoded samples awaiting drain
     bool eof_ = false;

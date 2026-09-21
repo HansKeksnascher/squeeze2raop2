@@ -2,8 +2,10 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -106,13 +108,15 @@ public:
 
     const std::array<uint8_t, 6>& mac() const { return mac_; }
 
+    // Exposed for the packet-bounds unit test: parses one framed LMS packet.
+    void process(const std::string& packet);
+
 private:
     void run();
     bool connectOnce(bool reconnect);
-    bool sendPacket(const char* opcode, const void* payload, size_t len);
-    bool sendRaw(const void* data, size_t len);
+    bool sendPacket(std::string_view opcode, std::span<const std::byte> payload);
+    bool sendRaw(std::span<const std::byte> data);
     void sendHelo(bool reconnect);
-    void process(const std::string& packet);
     void maybeHeartbeat();
 
     std::array<uint8_t, 6> mac_;

@@ -41,9 +41,9 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
         log::info("[ap] {} session closed", name_);
         if (onClosed_) onClosed_();
     };
-    events.pinRequired = [this](const std::string& target) {
+    events.pinRequired = [this](const std::string& targetHost) {
         log::warn("[ap] {} requires a PIN for pairing; not yet supported in bridge (target={})",
-                  name_, target);
+                  name_, targetHost);
     };
     events.credentialsObtained = [this](const std::string& deviceId,
                                         const std::string& credsJson) {

@@ -1,10 +1,12 @@
 #include "mp3_decoder.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <span>
 #include <vector>
 
 using sq2::Mp3Decoder;
@@ -31,7 +33,7 @@ void writeWav(const std::string& path, uint32_t rate, int ch, const std::vector<
     u16(1, f);
     u16(static_cast<uint16_t>(ch), f);
     u32(rate, f);
-    u32(rate * ch * 2, f);
+    u32(rate * static_cast<uint32_t>(ch) * 2u, f);
     u16(static_cast<uint16_t>(ch * 2), f);
     u16(16, f);
     f.write("data", 4);
@@ -61,7 +63,7 @@ int main(int argc, char** argv) {
         in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
         size_t got = static_cast<size_t>(in.gcount());
         if (!got) break;
-        dec.feed(buf.data(), got);
+        dec.feed(std::as_bytes(std::span{buf}).first(got));
 
         if (dec.valid() && !rateWarned) {
             std::cout << "stream header: " << dec.sampleRate() << " Hz, " << dec.channels()
@@ -71,9 +73,9 @@ int main(int argc, char** argv) {
 
         std::vector<int16_t> chunk(8192);
         for (;;) {
-            size_t n = dec.drain(chunk.data(), chunk.size());
+            size_t n = dec.drain(chunk);
             if (!n) break;
-            pcmAll.insert(pcmAll.end(), chunk.begin(), chunk.begin() + static_cast<long>(n));
+            pcmAll.insert(pcmAll.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(n));
         }
         if (dec.hasError()) {
             std::cerr << "decode error\n";
@@ -84,9 +86,9 @@ int main(int argc, char** argv) {
     dec.finish();
     std::vector<int16_t> chunk(8192);
     for (;;) {
-        size_t n = dec.drain(chunk.data(), chunk.size());
+        size_t n = dec.drain(chunk);
         if (!n) break;
-        pcmAll.insert(pcmAll.end(), chunk.begin(), chunk.begin() + static_cast<long>(n));
+        pcmAll.insert(pcmAll.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(n));
     }
 
     if (!dec.valid()) {

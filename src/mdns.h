@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 
 namespace sq2 {
@@ -17,11 +18,13 @@ struct MdnsRecord {
 
 class MdnsBrowser {
 public:
-    enum class RecordEvent { Added, Removed };
+    enum class RecordEvent : std::uint8_t { Added, Removed };
 
     using RecordCallback = std::function<void(const MdnsRecord&, RecordEvent)>;
 
-    MdnsBrowser() = default;
+    // ctor/dtor are out-of-line: with unique_ptr<Impl>, a defaulted ctor in
+    // the header would instantiate ~unique_ptr<Impl> on an incomplete type.
+    MdnsBrowser();
     ~MdnsBrowser();
     MdnsBrowser(const MdnsBrowser&) = delete;
     MdnsBrowser& operator=(const MdnsBrowser&) = delete;
@@ -31,7 +34,7 @@ public:
 
 private:
     struct Impl;
-    Impl* impl_ = nullptr;
+    std::unique_ptr<Impl> impl_;
 };
 
 }

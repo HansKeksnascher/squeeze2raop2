@@ -26,12 +26,14 @@ struct AirplayDevice {
 
     bool hasRaop() const { return raopPort != 0; }
     bool hasAirplay() const { return airplayPort != 0; }
-    bool airplay2() const { return (features & (1ULL << 38)) != 0 || (features & 1ULL << 48) != 0; }
+    bool airplay2() const {
+        return (features & (1ULL << 38)) != 0 || (features & (1ULL << 48)) != 0;
+    }
 };
 
 class DeviceRegistry {
 public:
-    enum class Event { Added, Updated, Removed };
+    enum class Event : std::uint8_t { Added, Updated, Removed };
 
     using Callback = std::function<void(Event, const AirplayDevice&)>;
 

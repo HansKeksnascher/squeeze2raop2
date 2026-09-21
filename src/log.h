@@ -5,7 +5,7 @@
 
 namespace sq2::log {
 
-enum class Level { Off = 0, Error, Warn, Info, Debug };
+enum class Level : std::uint8_t { Off = 0, Error, Warn, Info, Debug };
 
 void setLevel(Level l);
 Level level();

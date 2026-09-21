@@ -2,6 +2,7 @@
 
 #include "log.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
@@ -39,62 +40,69 @@ bool PcmFileSink::open(const PcmFormat& format, std::string& errorOut) {
     return true;
 }
 
-void PcmFileSink::feed(const char* data, size_t len, const PcmFormat& format) {
-    if (!fp_) return;
+void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format) {
+    if (!fp_ || data.empty()) return;
 
     if (!headerWritten_) {
         format_ = format;
-        char header[44];
-        memcpy(header, "RIFF", 4);
-        packLe32(header + 4, 0xFFFFFFFF);
-        memcpy(header + 8, "WAVEfmt ", 8);
-        packLe32(header + 16, 16);
-        packLe16(header + 20, 1);
-        packLe16(header + 22, format_.channels);
-        packLe32(header + 24, format_.sampleRate);
-        uint16_t blockAlign = static_cast<uint16_t>(format_.channels * format_.bitsPerSample / 8);
+        std::array<char, 44> header{};
+        std::ranges::copy(std::string_view{"RIFF"}, header.begin());
+        packLe32(header.data() + 4, 0xFFFFFFFF);
+        std::ranges::copy(std::string_view{"WAVEfmt "}, header.begin() + 8);
+        packLe32(header.data() + 16, 16);
+        packLe16(header.data() + 20, 1);
+        packLe16(header.data() + 22, format_.channels);
+        packLe32(header.data() + 24, format_.sampleRate);
+        uint16_t blockAlign =
+            static_cast<uint16_t>(format_.channels * format_.bitsPerSample / 8);
         uint32_t byteRate = format_.sampleRate * blockAlign;
-        packLe32(header + 28, byteRate);
-        packLe16(header + 32, blockAlign);
-        packLe16(header + 34, format_.bitsPerSample);
-        memcpy(header + 36, "data", 4);
-        packLe32(header + 40, 0xFFFFFFFF);
-        fwrite(header, 1, sizeof(header), fp_);
+        packLe32(header.data() + 28, byteRate);
+        packLe16(header.data() + 32, blockAlign);
+        packLe16(header.data() + 34, format_.bitsPerSample);
+        std::ranges::copy(std::string_view{"data"}, header.begin() + 36);
+        packLe32(header.data() + 40, 0xFFFFFFFF);
+        fwrite(header.data(), 1, header.size(), fp_);
         headerWritten_ = true;
         log::info("sink opened {} ({} Hz, {} bit, {} ch)", path_, format_.sampleRate,
                   format_.bitsPerSample, format_.channels);
     }
 
-    if (total_ == 0 && len >= 4 && memcmp(data, "RIFF", 4) == 0) {
-        if (len >= 44) {
-            data += 44;
-            len -= 44;
+    if (total_ == 0 && data.size() >= 4 &&
+        std::memcmp(data.data(), "RIFF", 4) == 0) {
+        if (data.size() >= 44) {
+            data = data.subspan(44);
         }
     }
 
     if (format_.bigEndian && format_.bitsPerSample == 16) {
         std::string swapped;
-        swapped.resize(len);
-        for (size_t i = 0; i + 1 < len; i += 2) {
-            swapped[i] = data[i + 1];
-            swapped[i + 1] = data[i];
+        swapped.resize(data.size());
+        for (size_t i = 0; i + 1 < data.size(); i += 2) {
+            swapped[i] = std::to_integer<char>(data[i + 1]);
+            swapped[i + 1] = std::to_integer<char>(data[i]);
         }
         fwrite(swapped.data(), 1, swapped.size(), fp_);
     } else {
-        fwrite(data, 1, len, fp_);
+        fwrite(data.data(), 1, data.size(), fp_);
     }
-    total_ += len;
+    total_ += data.size();
 }
 
 void PcmFileSink::close() {
     if (fp_) {
         if (headerWritten_ && total_ > 0) {
-            uint32_t dataSize = total_;
-            uint32_t riffSize = dataSize + 8 + 36 - 8 + 44 - 44 + 36;
+            // RIFF chunk size = file size - 8 = (44-byte header + data) - 8.
+            // WAV tops out at 32-bit sizes; clamp like streaming writers do.
+            const uint32_t dataSize = static_cast<uint32_t>(std::min<uint64_t>(total_, 0xFFFFFFFFu));
+            const uint32_t riffSize =
+                static_cast<uint32_t>(std::min<uint64_t>(total_ + 36, 0xFFFFFFFFu));
             fseek(fp_, 4, SEEK_SET);
-            fwrite(&riffSize, 4, 1, fp_);
+            char buf[4];
+            packLe32(buf, riffSize);
+            fwrite(buf, 1, 4, fp_);
             fseek(fp_, 40, SEEK_SET);
-            fwrite(&dataSize, 4, 1, fp_);
+            packLe32(buf, dataSize);
+            fwrite(buf, 1, 4, fp_);
         }
         fclose(fp_);
         fp_ = nullptr;

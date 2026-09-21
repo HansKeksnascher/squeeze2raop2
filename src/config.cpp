@@ -3,7 +3,8 @@
 #include "log.h"
 #include "util.h"
 
-#include <cstring>
+#include <charconv>
+#include <optional>
 
 namespace sq2 {
 
@@ -16,6 +17,14 @@ bool requireValue(const std::string& flag, const char* value, std::string& out) 
     }
     out = value;
     return true;
+}
+
+std::optional<uint16_t> parsePort(const std::string& text) {
+    unsigned port = 0;
+    auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), port);
+    if (ec != std::errc{} || ptr != text.data() + text.size() || port < 1 || port > 65535)
+        return std::nullopt;
+    return static_cast<uint16_t>(port);
 }
 
 } // namespace
@@ -60,8 +69,14 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             if (!requireValue(arg, value(), v)) return std::nullopt;
             auto colon = v.find(':');
             if (colon != std::string::npos) {
+                auto port = parsePort(v.substr(colon + 1));
+                if (!port) {
+                    log::error("--lms requires a numeric port 1-65535, got '{}'",
+                               v.substr(colon + 1));
+                    return std::nullopt;
+                }
                 s.lmsHost = v.substr(0, colon);
-                s.lmsPort = static_cast<uint16_t>(std::stoi(v.substr(colon + 1)));
+                s.lmsPort = *port;
             } else {
                 s.lmsHost = v;
             }
@@ -89,8 +104,14 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             s.ap.enabled = true;
             auto colon = v.find(':');
             if (colon != std::string::npos) {
+                auto port = parsePort(v.substr(colon + 1));
+                if (!port) {
+                    log::error("--ap requires a numeric port 1-65535, got '{}'",
+                               v.substr(colon + 1));
+                    return std::nullopt;
+                }
                 s.ap.host = v.substr(0, colon);
-                s.ap.port = static_cast<uint16_t>(std::stoi(v.substr(colon + 1)));
+                s.ap.port = *port;
             } else {
                 s.ap.host = v;
             }
