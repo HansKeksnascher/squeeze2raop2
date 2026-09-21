@@ -290,11 +290,11 @@ void PlayerSession::startStream(const StrmStart& st) {
         format_ = pcmFormat(st.pcm, 44100);
         bytesPerFrame_ = format_.channels * (format_.bitsPerSample / 8);
         if (!bytesPerFrame_) bytesPerFrame_ = 4;
-        isMp3_ = (st.format == StreamFormat::Mp3);
-        mp3_.reset();
-        if (isMp3_) {
-            mp3_ = std::make_unique<Mp3Decoder>();
-            log::info("strm s: mp3 native stream, decoding locally");
+        // One decoder per stream format, one feed pipeline for both.
+        decoder_ = Decoder::create(st.format, format_);
+        if (decoder_) {
+            log::info("strm s: {} stream via decoder pipeline",
+                      decoder_->name());
         }
     }
 
@@ -311,11 +311,9 @@ void PlayerSession::startStream(const StrmStart& st) {
 
 void PlayerSession::streamLoop(std::stop_token st) {
     PcmFormat fmt;
-    uint32_t bytesPerFrame = 4;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         fmt = format_;
-        bytesPerFrame = bytesPerFrame_;
     }
 
     std::unique_ptr<PcmFileSink> sink;
@@ -341,7 +339,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             return;
         }
         // (input rate is applied inside ensureRaop; the only later
-        // setInputRate is feedMp3's mid-stream rate-change update)
+        // setInputRate is feedStream's mid-stream format-adoption update)
         if (fmt.channels != 2)
             log::warn("input is {}-channel; bridges Apple receivers expect stereo", fmt.channels);
     }
@@ -368,11 +366,9 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // so an unpause resumes with fresh live audio.
             auto rr = reader_.read(std::span{buf}, 20);
             if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
-                if (isMp3_ &&
-                    !feedMp3(st, std::as_bytes(std::span{buf}).first(rr.bytes), fmt,
-                             nullptr, /*toOutput=*/false))
+                if (!feedStream(st, std::as_bytes(std::span{buf}).first(rr.bytes),
+                                fmt, nullptr, /*toOutput=*/false))
                     break;
-                // raw-pcm pause: nothing to decode, just dropped
             } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
                 log::warn("stream socket error while paused; ending stream");
                 break;
@@ -391,21 +387,8 @@ void PlayerSession::streamLoop(std::stop_token st) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 receivedBytes_ += rr.bytes;
             }
-            if (isMp3_) {
-                if (!feedMp3(st, audio, fmt, sink.get()))
-                    break;
-            } else {
-                if (sink) sink->feed(audio, fmt);
-                if (raop_ && fmt.bitsPerSample == 16) {
-                    pushToRaop(st, audio, fmt);
-                } else if (raop_) {
-                    log::warn("raop feed requires 16-bit pcm; dropping {} bytes",
-                              rr.bytes);
-                }
-                std::lock_guard<std::mutex> lock(mutex_);
-                fedBytes_ += rr.bytes;
-                fedSamples_ += rr.bytes / bytesPerFrame;
-            }
+            if (!feedStream(st, audio, fmt, sink.get()))
+                break;
             // The pacing clock must include the feed cost, not just the
             // read: pushToRaop/feedRing can block on ring backpressure and
             // an under-counted clock makes the pacer over-sleep relative
@@ -421,10 +404,11 @@ void PlayerSession::streamLoop(std::stop_token st) {
         }
 
         if (rr.result == HttpStreamReader::ReadResult::AtEof) {
-            if (isMp3_ && mp3_) {
-                // Decode + emit the remaining tail frames of the stream.
-                mp3_->finish();
-                feedMp3(st, {}, fmt, sink.get());
+            if (decoder_) {
+                // Decode + emit the remaining tail frames of the stream
+                // (MP3); PCM's finish() is the base no-op.
+                decoder_->finish();
+                feedStream(st, {}, fmt, sink.get());
             }
             break;
         }
@@ -549,37 +533,37 @@ void PlayerSession::pushToRaop(std::stop_token st, std::span<const std::byte> da
     }
 }
 
-// Returns false when the decoder failed and the stream must abort.
-bool PlayerSession::feedMp3(std::stop_token st, std::span<const std::byte> data,
-                            PcmFormat& fmt, PcmFileSink* sink, bool toOutput) {
+// One pipeline for every stream format: bytes go through the stream's
+// Decoder (mp3 decode / pcm header-skip + s16 stereo normalization) and are
+// drained in the same 1152-frame chunks. Returns false when the decoder
+// failed and the stream must abort.
+bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> data,
+                               PcmFormat& fmt, PcmFileSink* sink, bool toOutput) {
     constexpr size_t kPcmChunk = size_t{1152} * 2;
-    if (!mp3_) return true;
-    mp3_->feed(data);
+    if (!decoder_) return true;
+    decoder_->feed(data);
     std::array<int16_t, kPcmChunk> pcm{};
     for (;;) {
-        size_t n = mp3_->drain(pcm);
+        size_t n = decoder_->drain(pcm);
         if (!n) {
-            if (mp3_->hasError()) {
-                log::error("mp3 decode failed; dropping stream");
+            if (decoder_->hasError()) {
+                log::error("{} decode failed; dropping stream", decoder_->name());
                 client_->sendStat("STMn", currentStats());
                 return false;
             }
             break;
         }
-        if (mp3_->valid() &&
-            (fmt.sampleRate != mp3_->sampleRate() || fmt.channels != mp3_->channels() ||
-             fmt.bitsPerSample != 16 || fmt.bigEndian)) {
-            fmt = PcmFormat{.sampleRate = mp3_->sampleRate(),
-                            .bitsPerSample = 16,
-                            .channels = static_cast<uint8_t>(mp3_->channels()),
-                            .bigEndian = false};
+        const PcmFormat norm = decoder_->format();
+        if (norm.sampleRate != 0 && fmt != norm) {
+            fmt = norm;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 format_ = fmt;
                 bytesPerFrame_ = 2 * fmt.channels;
             }
             if (raop_) raop_->setInputRate(fmt.sampleRate);
-            log::info("[ap] mp3 audio: {} Hz, {} ch", fmt.sampleRate, fmt.channels);
+            log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(),
+                      fmt.sampleRate, fmt.channels);
         }
         if (!toOutput) continue;   // paused drain: decode, discard
         const size_t byteLen = n * sizeof(int16_t);
@@ -588,7 +572,7 @@ bool PlayerSession::feedMp3(std::stop_token st, std::span<const std::byte> data,
         {
             std::lock_guard<std::mutex> lock(mutex_);
             fedSamples_ += n / (fmt.channels ? fmt.channels : 2);
-            fedBytes_ = receivedBytes_ - mp3_->pendingBytes();
+            fedBytes_ = receivedBytes_ - decoder_->pendingBytes();
         }
     }
     return true;

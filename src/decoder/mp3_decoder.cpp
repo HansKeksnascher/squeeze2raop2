@@ -25,7 +25,7 @@
 #include <type_traits>
 
 #include "log.h"
-#include "mp3_decoder.h"
+#include "decoder/mp3_decoder.h"
 
 namespace squeeze2raop2 {
 
@@ -93,14 +93,6 @@ void Mp3Decoder::decodeMore() {
             consumed_ = 0;
         }
     }
-}
-
-void Mp3Decoder::reset() {
-    buffer_.clear();
-    pcm_.clear();
-    consumed_ = 0;
-    eof_ = false;
-    mp3dec_init(&dec_);
 }
 
 size_t Mp3Decoder::drain(std::span<int16_t> out) {

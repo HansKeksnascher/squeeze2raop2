@@ -1,8 +1,8 @@
 #pragma once
 
 #include "config.h"
+#include "decoder/decoder.h"
 #include "lms_stream.h"
-#include "mp3_decoder.h"
 #include "raop_player.h"
 #include "slimproto.h"
 #include "volume_map.h"
@@ -52,8 +52,12 @@ private:
     void onRaopDeviceClosed();
     void onIcyMeta(std::string_view block);
     void pushToRaop(std::stop_token st, std::span<const std::byte> data, const PcmFormat& fmt);
-    bool feedMp3(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
-                 PcmFileSink* sink, bool toOutput = true);
+    // One pipeline for every stream format: bytes go through the stream's
+    // Decoder (mp3 decode / pcm normalization), drained in 1152-frame
+    // chunks. Returns false when the decoder failed and the stream must
+    // abort.
+    bool feedStream(std::stop_token st, std::span<const std::byte> data,
+                    PcmFormat& fmt, PcmFileSink* sink, bool toOutput = true);
     void feedRing(std::stop_token st, const std::vector<int16_t>& samples);
     void stopPlayback();
     // Silence the receiver immediately and, with fullStop, end and destroy
@@ -80,8 +84,8 @@ private:
     PcmFormat format_{};
     uint32_t bytesPerFrame_ = 4;
 
-    std::unique_ptr<Mp3Decoder> mp3_;
-    bool isMp3_ = false;
+    // The stream format's decoder (mp3/pcm); null while no stream runs.
+    std::unique_ptr<Decoder> decoder_;
 
     std::mutex mutex_;
     std::mutex targetMutex_;

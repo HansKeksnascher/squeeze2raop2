@@ -78,7 +78,12 @@ add_library(squeeze2raop2_core STATIC
   src/lms_stream.cpp
   src/slimproto.cpp
   src/slimproto_packets.cpp
-  src/mp3_decoder.cpp
+  src/lms_stream.cpp
+  src/slimproto.cpp
+  src/slimproto_packets.cpp
+  src/decoder/decoder.cpp
+  src/decoder/mp3_decoder.cpp
+  src/decoder/pcm_decoder.cpp
   src/player_session.cpp
   src/session_manager.cpp
 )

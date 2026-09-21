@@ -1,4 +1,4 @@
-#include "mp3_decoder.h"
+#include "decoder/mp3_decoder.h"
 
 #include <cstdint>
 #include <cstdlib>
