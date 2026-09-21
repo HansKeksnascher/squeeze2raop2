@@ -88,6 +88,10 @@ public:
             {
                 std::lock_guard<std::mutex> lock(targetMutex_);
                 if (raop_) {
+                    // Drop the receiver's buffered audio BEFORE tearing
+                    // down: a HomePod keeps playing its ~latency jitter
+                    // buffer otherwise (~2-3 s tail on stop).
+                    raop_->flush();
                     raop_->discardAudio();
                     raop_->stop();
                     raop_.reset();
@@ -104,7 +108,10 @@ public:
             stopPlayback();
             {
                 std::lock_guard<std::mutex> lock(targetMutex_);
-                if (raop_) raop_->discardAudio();
+                if (raop_) {
+                    raop_->flush();
+                    raop_->discardAudio();
+                }
             }
             client_->sendStat("STMf", currentStats());
         };
@@ -116,6 +123,14 @@ public:
                 // stream is a fade-down followed by 'p 0'.
                 pauseUntilMs_ = ms ? nowMs() + ms
                                    : std::numeric_limits<uint64_t>::max();
+            }
+            {
+                std::lock_guard<std::mutex> lock(targetMutex_);
+                if (raop_) {
+                    // Silence now: the receiver's jitter buffer would keep
+                    // the tail playing for ~latency after the feed stops.
+                    raop_->flush();
+                }
             }
             log::debug("pause {}", ms);
             client_->sendStat("STMp", currentStats());
