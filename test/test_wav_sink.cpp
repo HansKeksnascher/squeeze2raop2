@@ -2,18 +2,18 @@
 
 #include "check.h"
 
+#include <unistd.h>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <span>
 #include <string>
-#include <unistd.h>
 #include <vector>
 
 using namespace sq2t;
-using squeeze2raop2::PcmFormat;
 using squeeze2raop2::PcmFileSink;
+using squeeze2raop2::PcmFormat;
 
 namespace {
 
@@ -62,7 +62,7 @@ void expectTag(const std::vector<unsigned char>& b, size_t off, std::string_view
         expect(b[off + i] == static_cast<unsigned char>(tag[i]), "tag matches at offset");
 }
 
-} // namespace
+}  // namespace
 
 // Pins the RIFF header layout, including the audit's dataSize+36 fix.
 static void testLeHeaderAndPayload(const ScratchDir& dir) {

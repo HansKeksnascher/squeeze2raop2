@@ -16,7 +16,7 @@ static_assert(std::atomic<bool>::is_always_lock_free,
 
 namespace detail {
 inline void onShutdownSignal(int) { g_run.store(false); }
-} // namespace detail
+}  // namespace detail
 
 // SIGINT/SIGTERM flip g_run, the flag the run loops actually poll (a
 // main.cpp handler used to set a separate anonymous-namespace flag nobody
@@ -32,4 +32,4 @@ inline void installShutdownSignalHandlers() {
     ::sigaction(SIGTERM, &sa, nullptr);
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

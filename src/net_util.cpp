@@ -79,4 +79,4 @@ bool sendAll(int fd, const void* data, size_t len) {
     return true;
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

@@ -16,4 +16,4 @@ inline void expect(bool ok, std::string_view what) {
     }
 }
 
-} // namespace sq2t
+}  // namespace sq2t

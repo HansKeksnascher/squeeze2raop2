@@ -69,10 +69,10 @@ public:
             auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             while (got < n) {
                 pollfd pfd{conn_, POLLIN, 0};
-                int remaining = static_cast<int>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(deadline -
-                                                                          std::chrono::steady_clock::now())
-                        .count());
+                int remaining =
+                    static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         deadline - std::chrono::steady_clock::now())
+                                         .count());
                 if (remaining <= 0) expect(false, "timed out waiting for packet bytes");
                 if (::poll(&pfd, 1, remaining) != 1) expect(false, "poll for packet bytes");
                 ssize_t r = ::recv(conn_, dst + got, n - got, 0);
@@ -137,7 +137,7 @@ std::string opcodeOf(const std::vector<unsigned char>& pkt) {
     return std::string(reinterpret_cast<const char*>(pkt.data()), 4);
 }
 
-} // namespace
+}  // namespace
 
 static void testHeloFramingAndStatRoundTrip() {
     LoopbackServer server;
@@ -170,9 +170,9 @@ static void testHeloFramingAndStatRoundTrip() {
     expect(helo[9] == 1, "HELO revision byte");
     for (size_t i = 0; i < mac.size(); ++i)
         expect(helo[10 + i] == mac[i], "HELO carries the client mac");
-    expect(std::string_view(reinterpret_cast<const char*>(helo.data() + 8 + 36), caps.size()) ==
-               caps,
-           "HELO carries the caps string");
+    expect(
+        std::string_view(reinterpret_cast<const char*>(helo.data() + 8 + 36), caps.size()) == caps,
+        "HELO carries the caps string");
 
     // --- 'strm t' heartbeat request -> expect STMt STAT with len 53 ---
     std::vector<unsigned char> strmT(18);
@@ -221,8 +221,7 @@ static void testHeloFramingAndStatRoundTrip() {
     for (int i = 0; i < 100 && !volumeSeen.load(); ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     expect(volumeSeen.load(), "mid-range audg fired onVolume");
-    expect(volumePct.load() > 49.9 && volumePct.load() < 50.1,
-           "slider-50 gain decodes to ~50%");
+    expect(volumePct.load() > 49.9 && volumePct.load() < 50.1, "slider-50 gain decodes to ~50%");
 
     // --- audg mute (gain 0) -> pct 0 (the receiver's -144 mute sentinel) ---
     volumeSeen.store(false);

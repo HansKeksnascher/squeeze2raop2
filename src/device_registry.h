@@ -60,12 +60,11 @@ private:
     // under the registry mutex, snapshots the device and reports whether it
     // was newly added. Notification is the caller's job so its log line
     // stays ordered before the callback.
-    std::pair<AirplayDevice, bool> upsertAndNotifyKey(
-        const std::string& key, const std::function<void(State&)>& mutate);
+    std::pair<AirplayDevice, bool> upsertAndNotifyKey(const std::string& key,
+                                                      const std::function<void(State&)>& mutate);
     // Marks one service type gone and erases the device when neither
     // remains; nullopt when the key is unknown.
-    std::optional<std::pair<Event, AirplayDevice>> markGone(const std::string& key,
-                                                            bool raop);
+    std::optional<std::pair<Event, AirplayDevice>> markGone(const std::string& key, bool raop);
     static std::string keyFor(const std::string& instance);
     static std::string normalizeHexKey(const std::string& raw);
 
@@ -74,4 +73,4 @@ private:
     Callback cb_;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

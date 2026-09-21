@@ -49,8 +49,7 @@ void PlayerSession::start() {
             autostartPending_ = false;
         }
         client_->sendStat("STMs", currentStats());
-        streamThread_ = std::jthread(
-            [this](std::stop_token st) { streamLoop(st); });
+        streamThread_ = std::jthread([this](std::stop_token st) { streamLoop(st); });
     };
     events.onStop = [this]() {
         stopPlayback();
@@ -79,8 +78,7 @@ void PlayerSession::start() {
             // squeezelite parity: 'p 0' pauses indefinitely, 'p N' is a
             // timed pause (transition gaps). LMS's stop for a remote
             // stream is a fade-down followed by 'p 0'.
-            pauseUntilMs_ = ms ? nowMs() + ms
-                               : std::numeric_limits<uint64_t>::max();
+            pauseUntilMs_ = ms ? nowMs() + ms : std::numeric_limits<uint64_t>::max();
         }
         {
             std::lock_guard<std::mutex> lock(targetMutex_);
@@ -99,8 +97,8 @@ void PlayerSession::start() {
         // domain (0 % = -144 mute sentinel, 100 % = 0 dB).
         double pct = (l == r) ? r : (l + r) / 2.0;
         if (volumeMode_ == VolumeMode::Fixed) {
-            log::info("volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})",
-                      l, r, pct, fixedVolumePct_);
+            log::info("volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})", l, r, pct,
+                      fixedVolumePct_);
             return;
         }
         pct = anchors_.airplayPctFromLms(pct);
@@ -117,8 +115,7 @@ void PlayerSession::start() {
             log::info("[ap] volume {:.1f} pct applied (lms)", pct);
         } else {
             log::info("volume -> {:.1f} pct ({})", pct,
-                      pct > 0.0 ? "remembered for next session"
-                                : "mute, not remembered");
+                      pct > 0.0 ? "remembered for next session" : "mute, not remembered");
         }
     };
 
@@ -163,7 +160,7 @@ bool PlayerSession::prepareAirplaySession(uint32_t sampleRate) {
     // thread and must therefore hold targetMutex_ while mutating them.
     std::lock_guard<std::mutex> lock(targetMutex_);
     if (raop_ && (raop_->active() || !raop_->launched())) return true;
-    if (raop_) {   // dead session (e.g. receiver teardown): recreate
+    if (raop_) {  // dead session (e.g. receiver teardown): recreate
         raop_->stop();
         raop_.reset();
     }
@@ -197,12 +194,10 @@ void PlayerSession::launchAirplaySession() {
     }
     if (volumeMode_ == VolumeMode::Lms && lastLmsPct_ > 0.0) {
         raop_->setVolume(lastLmsPct_);
-        log::info("[ap] volume {:.1f} pct applied (remembered lms slider)",
-                  lastLmsPct_);
+        log::info("[ap] volume {:.1f} pct applied (remembered lms slider)", lastLmsPct_);
     } else {
         raop_->setVolume(static_cast<double>(fixedVolumePct_));
-        log::info("[ap] fixed volume {} pct applied (post-start)",
-                  fixedVolumePct_);
+        log::info("[ap] fixed volume {} pct applied (post-start)", fixedVolumePct_);
     }
 }
 
@@ -247,8 +242,8 @@ void PlayerSession::startStream(const StrmStart& st) {
     retryUsed_.store(false);
     lastTitle_.clear();
 
-    std::string host = st.serverIp ? ipv4ToString(st.serverIp)
-                                   : (client_ ? client_->serverHost() : std::string());
+    std::string host =
+        st.serverIp ? ipv4ToString(st.serverIp) : (client_ ? client_->serverHost() : std::string());
     uint16_t port = st.serverPort ? st.serverPort : 9000;
     if (host.empty() || st.request.empty()) {
         log::error("strm-s missing stream target or request header");
@@ -259,8 +254,7 @@ void PlayerSession::startStream(const StrmStart& st) {
     // HELO caps (pcm,mp3); a stray direct format would otherwise be pushed
     // into the ring as raw PCM = noise.
     if (st.format != StreamFormat::Pcm && st.format != StreamFormat::Mp3) {
-        log::error("strm s: unsupported stream format '{}'",
-                   static_cast<char>(st.format));
+        log::error("strm s: unsupported stream format '{}'", static_cast<char>(st.format));
         client_->sendStat("STMn", currentStats());
         return;
     }
@@ -279,8 +273,7 @@ void PlayerSession::startStream(const StrmStart& st) {
         if (end != std::string::npos)
             request.insert(end + 2, hdr);
         else
-            request += (request.size() >= 2 &&
-                        request.compare(request.size() - 2, 2, "\r\n") == 0)
+            request += (request.size() >= 2 && request.compare(request.size() - 2, 2, "\r\n") == 0)
                            ? hdr
                            : "\r\n" + hdr;
     }
@@ -299,14 +292,14 @@ void PlayerSession::startStream(const StrmStart& st) {
         fedBytes_ = 0;
         fedSamples_ = 0;
         pauseUntilMs_ = 0;
-ringStatsMin_ = SIZE_MAX;
+        ringStatsMin_ = SIZE_MAX;
         ringStatsMax_ = 0;
         ringStatsMarkMs_ = 0;
         ringStarvedMs_ = 0;
         format_ = pcmFormat(st.pcm, 44100);
         bytesPerFrame_ = format_.channels * (format_.bitsPerSample / 8);
         if (!bytesPerFrame_) bytesPerFrame_ = 4;
-                pcmInputFrameBytes_ = bytesPerFrame_;
+        pcmInputFrameBytes_ = bytesPerFrame_;
         pcmWindowReceivedBytes_ = 0;
         pcmAppliedRate_ = 0.0;
         // One decoder per stream format, one feed pipeline for both. PCM
@@ -314,8 +307,7 @@ ringStatsMin_ = SIZE_MAX;
         // under-delivers cannot drain the pipeline.
         decoder_ = Decoder::create(st.format, format_, 44100);
         if (decoder_) {
-            log::info("strm s: {} stream via decoder pipeline",
-                      decoder_->name());
+            log::info("strm s: {} stream via decoder pipeline", decoder_->name());
         }
     }
 
@@ -326,8 +318,7 @@ ringStatsMin_ = SIZE_MAX;
         return;
     }
     client_->sendStat("STMs", currentStats());
-    streamThread_ = std::jthread(
-        [this](std::stop_token stopTok) { streamLoop(stopTok); });
+    streamThread_ = std::jthread([this](std::stop_token stopTok) { streamLoop(stopTok); });
 }
 
 void PlayerSession::streamLoop(std::stop_token st) {
@@ -377,8 +368,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
     }
     bool streaming = !haveTarget || prebufferSamples == 0;
     const uint64_t prebufferStartMs = nowMs();
-    if (!streaming)
-        log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
+    if (!streaming) log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
 
     uint64_t activeMs = 0;
     char buf[4096];
@@ -390,8 +380,10 @@ void PlayerSession::streamLoop(std::stop_token st) {
         bool paused = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (pauseUntilMs_ && nowMs() < pauseUntilMs_) paused = true;
-            else pauseUntilMs_ = 0;
+            if (pauseUntilMs_ && nowMs() < pauseUntilMs_)
+                paused = true;
+            else
+                pauseUntilMs_ = 0;
         }
         if (!paused && streaming) sampleRingTelemetry();
         if (paused) {
@@ -403,8 +395,8 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // so an unpause resumes with fresh live audio.
             auto rr = reader_.read(std::span{buf}, 20);
             if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
-                if (!feedStream(st, std::as_bytes(std::span{buf}).first(rr.bytes),
-                                fmt, nullptr, /*toOutput=*/false))
+                if (!feedStream(st, std::as_bytes(std::span{buf}).first(rr.bytes), fmt, nullptr,
+                                /*toOutput=*/false))
                     break;
             } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
                 log::warn("stream socket error while paused; ending stream");
@@ -424,8 +416,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 receivedBytes_ += rr.bytes;
             }
-            if (!feedStream(st, audio, fmt, sink.get()))
-                break;
+            if (!feedStream(st, audio, fmt, sink.get())) break;
             if (!streaming) {
                 size_t avail = 0;
                 {
@@ -433,8 +424,8 @@ void PlayerSession::streamLoop(std::stop_token st) {
                     avail = raop_ ? raop_->availableRead() : 0;
                 }
                 if (avail >= prebufferSamples) {
-                    log::info("[ap] prebuffered {} samples in {} ms; launching",
-                              avail, nowMs() - prebufferStartMs);
+                    log::info("[ap] prebuffered {} samples in {} ms; launching", avail,
+                              nowMs() - prebufferStartMs);
                     streaming = true;
                     launchAirplaySession();
                 }
@@ -445,7 +436,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // to real elapsed time (ring dips -> receiver silence pads).
             activeMs += nowMs() - iterStart;
         } else if (rr.result == HttpStreamReader::ReadResult::Timeout) {
-            activeMs += nowMs() - iterStart;   // ~= the read timeout
+            activeMs += nowMs() - iterStart;  // ~= the read timeout
         } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
             // Socket error, not a mere no-data timeout: without this branch
             // the loop used to spin hot on a dead socket forever.
@@ -463,7 +454,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             break;
         }
 
-                // Pacing must stand down while the rate stage regulates: the
+        // Pacing must stand down while the rate stage regulates: the
         // decoder intentionally emits ahead of the source (stretching), so
         // an emitted-timeline pacer would throttle the reads, starve the
         // measurement, and spiral the step down. LMS paces the source
@@ -514,7 +505,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
         }
         if (!g_run.load()) break;
         if (!lost) {
-            client_->sendStat("STMu", currentStats());   // normal end
+            client_->sendStat("STMu", currentStats());  // normal end
             break;
         }
         if (retryUsed_.exchange(true)) {
@@ -529,8 +520,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             client_->sendStat("STMn", currentStats());
             break;
         }
-        if (raop_ && !lastTitle_.empty())
-            raop_->setNowPlaying(lastTitle_, "", "");
+        if (raop_ && !lastTitle_.empty()) raop_->setNowPlaying(lastTitle_, "", "");
     }
 }
 
@@ -595,8 +585,8 @@ void PlayerSession::pushToRaop(std::stop_token st, std::span<const std::byte> da
 // Decoder (mp3 decode / pcm header-skip + s16 stereo normalization) and are
 // drained in the same 1152-frame chunks. Returns false when the decoder
 // failed and the stream must abort.
-bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> data,
-                               PcmFormat& fmt, PcmFileSink* sink, bool toOutput) {
+bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
+                               PcmFileSink* sink, bool toOutput) {
     constexpr size_t kPcmChunk = size_t{1152} * 2;
     if (!decoder_) return true;
     decoder_->feed(data);
@@ -620,10 +610,10 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
                 bytesPerFrame_ = 2 * fmt.channels;
             }
             if (raop_) raop_->setInputRate(fmt.sampleRate);
-            log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(),
-                      fmt.sampleRate, fmt.channels);
+            log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
+                      fmt.channels);
         }
-        if (!toOutput) continue;   // paused drain: decode, discard
+        if (!toOutput) continue;  // paused drain: decode, discard
         const size_t byteLen = n * sizeof(int16_t);
         if (sink) sink->feed(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
         if (raop_) pushToRaop(st, std::as_bytes(std::span{pcm}).first(byteLen), fmt);
@@ -652,12 +642,12 @@ void PlayerSession::sampleRingTelemetry() {
     if (avail < ringStatsMin_) ringStatsMin_ = avail;
     if (avail > ringStatsMax_) ringStatsMax_ = avail;
 
-            if (ringStatsMarkMs_ == 0) {
+    if (ringStatsMarkMs_ == 0) {
         ringStatsMarkMs_ = now;
         pcmWindowReceivedBytes_ = 0;
     } else if (now - ringStatsMarkMs_ >= 10000) {
-        log::info("[ap] ring 10s: cur={} min={} max={} samples", avail,
-                  ringStatsMin_, ringStatsMax_);
+        log::info("[ap] ring 10s: cur={} min={} max={} samples", avail, ringStatsMin_,
+                  ringStatsMax_);
         regulateSourceRate(now - ringStatsMarkMs_);
         ringStatsMin_ = SIZE_MAX;
         ringStatsMax_ = 0;
@@ -684,8 +674,7 @@ void PlayerSession::sampleRingTelemetry() {
 // the prebuffer reserve, a 0.2% overdrive gently rebuilds the reserve (an
 // inaudible ~8 cent pitch offset).
 void PlayerSession::regulateSourceRate(uint64_t windowMs) {
-    if (!decoder_ || decoder_->name() != "pcm" || !pcmInputFrameBytes_)
-        return;
+    if (!decoder_ || decoder_->name() != "pcm" || !pcmInputFrameBytes_) return;
     const double sec = double(windowMs) / 1000.0;
     if (sec < 5.0) return;
 
@@ -695,13 +684,12 @@ void PlayerSession::regulateSourceRate(uint64_t windowMs) {
     if (prevReceived == 0 || receivedNow < prevReceived) return;
 
     constexpr double kNominal = 44100.0;
-    const double fps = double(receivedNow - prevReceived) /
-                       double(pcmInputFrameBytes_) / sec;
-    if (fps < 0.95 * kNominal || fps > 1.05 * kNominal) return;   // stall/burst
+    const double fps = double(receivedNow - prevReceived) / double(pcmInputFrameBytes_) / sec;
+    if (fps < 0.95 * kNominal || fps > 1.05 * kNominal) return;  // stall/burst
 
     const double off = std::abs(fps - kNominal);
     if (pcmAppliedRate_ == 0.0) {
-        if (off > 44.0) {   // 0.1%
+        if (off > 44.0) {  // 0.1%
             size_t avail = 0;
             {
                 std::lock_guard<std::mutex> lock(targetMutex_);
@@ -716,7 +704,7 @@ void PlayerSession::regulateSourceRate(uint64_t windowMs) {
         }
         return;
     }
-    if (off <= 20.0) {   // back within ~0.045%: release to pass-through
+    if (off <= 20.0) {  // back within ~0.045%: release to pass-through
         pcmAppliedRate_ = 0.0;
         decoder_->setSourceRate(kNominal);
         log::info("[ap] pcm source rate nominal: pass-through");
@@ -738,8 +726,7 @@ void PlayerSession::regulateSourceRate(uint64_t windowMs) {
 
 void PlayerSession::feedRing(std::stop_token st, const std::vector<int16_t>& samples) {
     size_t offset = 0;
-    while (offset < samples.size() && !st.stop_requested() && g_run.load() &&
-           !deviceLost_.load()) {
+    while (offset < samples.size() && !st.stop_requested() && g_run.load() && !deviceLost_.load()) {
         size_t freeSpace = raop_->availableWrite();
         if (freeSpace == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
@@ -777,4 +764,4 @@ void PlayerSession::teardownReceiverAudio(bool fullStop) {
     }
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

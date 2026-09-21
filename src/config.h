@@ -19,10 +19,10 @@ struct PlayerSettings {
 };
 
 enum class VolumeMode {
-    Lms,   // follow the LMS slider: the AUDG-recovered slider percent passes
-           // straight to the receiver (LMS minimum = receiver mute, LMS
-           // maximum = 0 dB; 0.3 dB per slider step)
-    Fixed, // ignore AUDG, play every session at volPct
+    Lms,    // follow the LMS slider: the AUDG-recovered slider percent passes
+            // straight to the receiver (LMS minimum = receiver mute, LMS
+            // maximum = 0 dB; 0.3 dB per slider step)
+    Fixed,  // ignore AUDG, play every session at volPct
 };
 
 struct Settings {
@@ -68,4 +68,4 @@ struct Settings {
 
 std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode);
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

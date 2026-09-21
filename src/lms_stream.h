@@ -41,9 +41,7 @@ public:
     // ICY in-band metadata (squeezelite parity): when the response carried
     // icy-metaint, read() strips the interleaved metadata blocks from the
     // audio and delivers each complete block here.
-    void setMetaCallback(std::function<void(std::string_view)> cb) {
-        metaCb_ = std::move(cb);
-    }
+    void setMetaCallback(std::function<void(std::string_view)> cb) { metaCb_ = std::move(cb); }
     uint32_t metaInterval() const { return metaInterval_; }
 
 private:
@@ -61,4 +59,4 @@ private:
     std::function<void(std::string_view)> metaCb_;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

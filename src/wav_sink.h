@@ -28,4 +28,4 @@ private:
     bool headerWritten_ = false;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

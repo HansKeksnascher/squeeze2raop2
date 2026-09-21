@@ -57,10 +57,10 @@ namespace {
 CacheEntity gRRCache[SQUEEZE2RAOP2_RR_CACHE_SIZE];
 
 extern "C" {
-mDNS mDNSStorage;          // the vendored code references this client-owned global
+mDNS mDNSStorage;  // the vendored code references this client-owned global
 extern const char ProgramName[] = "squeeze2raop2";
-} // namespace
-mDNS& gMdns = mDNSStorage; // keep C++-side name
+}  // namespace
+mDNS& gMdns = mDNSStorage;  // keep C++-side name
 mDNS_PlatformSupport gMdnsPlatformSupport;
 
 constexpr std::array<std::string_view, 2> kServiceTypes{"_raop._tcp", "_airplay._tcp"};
@@ -81,7 +81,7 @@ mDNSInterfaceID g_iface = mDNSInterface_Any;
 // The rdata union provides typed members; use them instead of reinterpreting
 // u.data (mirrors how mDNSResponder's core reads SRV/A answers).
 std::string addressFromRData4(const ResourceRecord* rr) {
-    const mDNSu8 (&octets)[4] = rr->rdata->u.ipv4.b;
+    const mDNSu8(&octets)[4] = rr->rdata->u.ipv4.b;
     return std::format("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]);
 }
 
@@ -118,7 +118,7 @@ std::string stripServiceSuffix(const std::string& fqdnIn, const std::string& ser
     return fqdn;
 }
 
-} // namespace
+}  // namespace
 
 // All mDNS core access happens on the loop thread: mDNS is single-threaded
 // and its core state has no locks. Loop-thread code (callbacks) calls the
@@ -165,7 +165,8 @@ struct MdnsBrowser::Impl {
 
     void drainWake() {
         char buf[64];
-        while (::read(wakeRd, buf, sizeof(buf)) > 0) {}
+        while (::read(wakeRd, buf, sizeof(buf)) > 0) {
+        }
     }
 
     void runCommands() {
@@ -192,10 +193,10 @@ void publishResolved(ResolveTracker& t) {
     record.host = t.address;
     record.port = t.port;
     record.txt = t.txt;
-    log::info("mdns: {} resolved {}:{} ({} txt keys)", t.instance, record.host,
-              record.port, record.txt.size());
+    log::info("mdns: {} resolved {}:{} ({} txt keys)", t.instance, record.host, record.port,
+              record.txt.size());
     g_cb(record, MdnsBrowser::RecordEvent::Added);
-} // namespace
+}  // namespace
 
 void stopTracker(ResolveTracker& t) {
     if (t.srvActive) {
@@ -216,8 +217,7 @@ ResolveTracker* trackerForQuestion(DNSQuestion* q) {
     return static_cast<ResolveTracker*>(q->QuestionContext);
 }
 
-void resolveQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr,
-                       QC_result add) {
+void resolveQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr, QC_result add) {
     (void)m;
     {
         char rrtypeName[16];
@@ -259,7 +259,7 @@ void resolveQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr,
 
     if (!t.srvActive && !t.txtActive && !t.addrActive) {
         if (t.port && !t.targetHost.empty() && t.address.empty()) {
-            t.addrQ = DNSQuestion{};   // value-init instead of memset
+            t.addrQ = DNSQuestion{};  // value-init instead of memset
             t.addrQ.QuestionContext = &t;
             MakeDomainNameFromDNSNameString(&t.addrQ.qname, t.targetHost.c_str());
             t.addrQ.InterfaceID = g_iface;
@@ -276,12 +276,12 @@ void resolveQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr,
     }
 }
 
-} // namespace
+}  // namespace
 
 namespace {
 
 void resetTracker(ResolveTracker& t) {
-    t.srvQ = DNSQuestion{};   // value-init instead of memset
+    t.srvQ = DNSQuestion{};  // value-init instead of memset
     t.txtQ = DNSQuestion{};
     t.addrQ = DNSQuestion{};
     t.srvActive = t.txtActive = t.addrActive = false;
@@ -289,10 +289,9 @@ void resetTracker(ResolveTracker& t) {
     t.targetHost.clear();
     t.address.clear();
     t.txt.clear();
-} // namespace
+}  // namespace
 
-bool startTracker(ResolveTracker& t, const std::string& instance,
-                  const std::string& serviceType) {
+bool startTracker(ResolveTracker& t, const std::string& instance, const std::string& serviceType) {
     resetTracker(t);
     t.instance = instance;
     t.serviceType = serviceType;
@@ -358,8 +357,7 @@ void browseQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr, QC_resu
     if (rr->rrtype != kDNSType_PTR || rr->rdlength == 0) return;
 
     std::string ptrName = domainToString(&rr->rdata->u.name);
-    log::debug("mdns: browse ptr '{}' type={} add={}", ptrName, rr->rrtype,
-               static_cast<int>(add));
+    log::debug("mdns: browse ptr '{}' type={} add={}", ptrName, rr->rrtype, static_cast<int>(add));
     std::string recordName = domainToString(rr->name);
 
     for (std::string_view serviceTypeView : kServiceTypes) {
@@ -382,7 +380,7 @@ void browseQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr, QC_resu
     }
 }
 
-} // namespace
+}  // namespace
 
 MdnsBrowser::MdnsBrowser() = default;
 
@@ -405,8 +403,9 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
             errorOut = std::string("cannot find interface ") + ifaceName;
             return false;
         }
-        log::warn("mdns: --iface filtering not supported by embedded mDNS v1; "
-                  "browsing on all interfaces");
+        log::warn(
+            "mdns: --iface filtering not supported by embedded mDNS v1; "
+            "browsing on all interfaces");
     }
     g_iface = mDNSInterface_Any;
 
@@ -418,12 +417,11 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
     // Everything below runs on this thread while no loop thread exists yet:
     // mDNS_Init and the browse questions are therefore race-free here.
     mStatus status = mDNS_Init(&gMdns, &gMdnsPlatformSupport, gRRCache, SQUEEZE2RAOP2_RR_CACHE_SIZE,
-                               mDNS_Init_DontAdvertiseLocalAddresses,
-                               mDNS_Init_NoInitCallback, mDNS_Init_NoInitCallbackContext);
+                               mDNS_Init_DontAdvertiseLocalAddresses, mDNS_Init_NoInitCallback,
+                               mDNS_Init_NoInitCallbackContext);
     if (status != mStatus_NoError) {
         g_cb = nullptr;
-        errorOut = std::string("mDNS_Init failed: ") +
-                   std::to_string(static_cast<int>(status));
+        errorOut = std::string("mDNS_Init failed: ") + std::to_string(static_cast<int>(status));
         return false;
     }
 
@@ -433,9 +431,8 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
         MakeDomainNameFromDNSNameString(&srv, std::string(kServiceTypes[i]).c_str());
         MakeDomainNameFromDNSNameString(&dom, "local");
         impl->browseQ[i] = DNSQuestion{};
-        mStatus st = mDNS_StartBrowse(&gMdns, &impl->browseQ[i], &srv, &dom,
-                                      impl->iface, 0, mDNSfalse, mDNSfalse,
-                                      browseQuestionCb, impl.get());
+        mStatus st = mDNS_StartBrowse(&gMdns, &impl->browseQ[i], &srv, &dom, impl->iface, 0,
+                                      mDNSfalse, mDNSfalse, browseQuestionCb, impl.get());
         if (st != mStatus_NoError) {
             for (size_t j = 0; j < i; ++j) {
                 if (impl->browseActive[j]) {
@@ -533,4 +530,4 @@ void MdnsBrowser::stop() {
     log::info("mdns: stopped");
 }
 
-}
+}  // namespace squeeze2raop2

@@ -37,7 +37,8 @@ namespace {
 uint32_t parseIcyMetaint(const std::string& headers) {
     std::string lower;
     lower.reserve(headers.size());
-    for (char c : headers) lower.push_back(static_cast<char>(tolower(static_cast<unsigned char>(c))));
+    for (char c : headers)
+        lower.push_back(static_cast<char>(tolower(static_cast<unsigned char>(c))));
     size_t p = lower.find("icy-metaint:");
     if (p == std::string::npos) return 0;
     p += sizeof("icy-metaint:") - 1;
@@ -49,7 +50,7 @@ uint32_t parseIcyMetaint(const std::string& headers) {
     return static_cast<uint32_t>(v);
 }
 
-} // namespace
+}  // namespace
 
 bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
                                     const std::string& request, std::string& errorOut) {
@@ -119,8 +120,7 @@ ssize_t HttpStreamReader::pullRaw(std::span<char> dst, uint32_t timeoutMs) {
     return -1;
 }
 
-HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
-                                                    uint32_t timeoutMs) {
+HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer, uint32_t timeoutMs) {
     size_t produced = 0;
     // What a zero-progress return means: a read timeout, unless a pull
     // reported EOF or a socket error first (with partial data produced,
@@ -158,7 +158,7 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
             if (n == 0) break;
             metaBytesLeft_ = static_cast<uint32_t>(static_cast<unsigned char>(lenByte)) * 16;
             metaBuf_.clear();
-            if (!metaBytesLeft_) metaCountdown_ = metaInterval_;   // empty block, restart
+            if (!metaBytesLeft_) metaCountdown_ = metaInterval_;  // empty block, restart
             continue;
         }
         size_t want = buffer.size() - produced;
@@ -177,4 +177,4 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
     return {outcome};
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

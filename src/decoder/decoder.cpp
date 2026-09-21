@@ -14,4 +14,4 @@ std::unique_ptr<Decoder> Decoder::create(StreamFormat format, const PcmFormat& i
     }
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

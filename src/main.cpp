@@ -5,7 +5,7 @@
 
 namespace squeeze2raop2 {
 void runBridge(const Settings& settings);
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2
 
 int main(int argc, char** argv) {
     using namespace squeeze2raop2;

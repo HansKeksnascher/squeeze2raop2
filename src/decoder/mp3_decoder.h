@@ -56,10 +56,10 @@ public:
 private:
     void decodeMore();
 
-    mp3dec_t dec_{};               // minimp3 decoder state, embedded by value
+    mp3dec_t dec_{};                 // minimp3 decoder state, embedded by value
     std::vector<std::byte> buffer_;  // contiguous compressed window
-    size_t consumed_ = 0;          // decoded/skipped prefix of buffer_
-    std::vector<int16_t> pcm_;     // decoded samples awaiting drain
+    size_t consumed_ = 0;            // decoded/skipped prefix of buffer_
+    std::vector<int16_t> pcm_;       // decoded samples awaiting drain
     bool eof_ = false;
     uint32_t sampleRate_ = 0;
     int channels_ = 2;

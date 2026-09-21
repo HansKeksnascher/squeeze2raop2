@@ -31,4 +31,4 @@ private:
     std::map<std::string, std::unique_ptr<PlayerSession>> sessions_;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

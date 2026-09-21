@@ -1,8 +1,8 @@
 #include "decoder/mp3_decoder.h"
 
 #include <cstdint>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -21,8 +21,8 @@ void writeWav(const std::string& path, uint32_t rate, int ch, const std::vector<
         o.write(b, 2);
     };
     auto u32 = [](uint32_t v, std::ofstream& o) {
-        char b[4] = {static_cast<char>(v), static_cast<char>(v >> 8),
-                     static_cast<char>(v >> 16), static_cast<char>(v >> 24)};
+        char b[4] = {static_cast<char>(v), static_cast<char>(v >> 8), static_cast<char>(v >> 16),
+                     static_cast<char>(v >> 24)};
         o.write(b, 4);
     };
     f.write("RIFF", 4);
@@ -38,7 +38,8 @@ void writeWav(const std::string& path, uint32_t rate, int ch, const std::vector<
     u16(16, f);
     f.write("data", 4);
     u32(byteLen, f);
-    f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size() * 2));
+    f.write(reinterpret_cast<const char*>(data.data()),
+            static_cast<std::streamsize>(data.size() * 2));
 }
 
 }  // namespace
@@ -75,7 +76,8 @@ int main(int argc, char** argv) {
         for (;;) {
             size_t n = dec.drain(chunk);
             if (!n) break;
-            pcmAll.insert(pcmAll.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(n));
+            pcmAll.insert(pcmAll.end(), chunk.begin(),
+                          chunk.begin() + static_cast<std::ptrdiff_t>(n));
         }
         if (dec.hasError()) {
             std::cerr << "decode error\n";
@@ -96,11 +98,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     const size_t bytes = pcmAll.size() * 2;
-    std::cout << "samples=" << pcmAll.size()
-              << " bytes=" << bytes
-              << " rate=" << dec.sampleRate()
-              << " ch=" << dec.channels()
-              << " pendingBytes=" << dec.pendingBytes() << "\n";
+    std::cout << "samples=" << pcmAll.size() << " bytes=" << bytes << " rate=" << dec.sampleRate()
+              << " ch=" << dec.channels() << " pendingBytes=" << dec.pendingBytes() << "\n";
 
     int maxAbs = 0;
     for (int16_t s : pcmAll) {

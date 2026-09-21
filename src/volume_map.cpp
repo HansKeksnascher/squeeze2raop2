@@ -30,8 +30,8 @@ std::optional<VolumeAnchors> VolumeAnchors::parse(std::string_view spec) {
         double db = 0, pct = 0;
         auto [dbEnd, dbEc] = std::from_chars(item.data(), item.data() + colon, db);
         if (dbEc != std::errc{} || dbEnd != item.data() + colon) return std::nullopt;
-        auto [pctEnd, pctEc] = std::from_chars(item.data() + colon + 1,
-                                               item.data() + item.size(), pct);
+        auto [pctEnd, pctEc] =
+            std::from_chars(item.data() + colon + 1, item.data() + item.size(), pct);
         if (pctEc != std::errc{} || pctEnd != item.data() + item.size()) return std::nullopt;
         // pct 0 is the mute sentinel, kept out of the anchor table
         if (db > 0.0 || db < -144.0 || pct < 1.0 || pct > 100.0) return std::nullopt;
@@ -64,7 +64,7 @@ double VolumeAnchors::dbAt(double pct) const {
 }
 
 double VolumeAnchors::airplayPctFromLms(double lmsPct) const {
-    if (lmsPct <= 0.0) return 0.0;   // LMS mute -> -144 mute sentinel
+    if (lmsPct <= 0.0) return 0.0;  // LMS mute -> -144 mute sentinel
     double db = dbAt(std::clamp(lmsPct, 0.0, 100.0));
     // AirPlay pct for a dBFS level: pct = (db + 30) / 0.3. The -30 dB anchor
     // lands at pct 0 = mute, so non-mute levels floor at the quietest step.
@@ -72,4 +72,4 @@ double VolumeAnchors::airplayPctFromLms(double lmsPct) const {
     return clampAirVolumePct(std::max(pct, 0.05));
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

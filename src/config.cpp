@@ -27,7 +27,7 @@ std::optional<uint16_t> parsePort(const std::string& text) {
     return static_cast<uint16_t>(port);
 }
 
-} // namespace
+}  // namespace
 
 std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
     Settings s;
@@ -53,7 +53,8 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
                 "  --ap-password <pw>    RTSP digest password for pw=true receivers\n"
                 "  --device <NAME>       also register this name as static player\n"
                 "                        (used when discovery is unavailable)\n"
-                "  --state <file>        persistent MAC/credential store (default squeeze2raop2.state)\n"
+                "  --state <file>        persistent MAC/credential store (default "
+                "squeeze2raop2.state)\n"
                 "  --iface <name>        mdns network interface (default: all)\n"
                 "  --mdns-debug          browse-only mDNS debug mode (no LMS/AirPlay sessions)\n"
                 "  --discovery on|off    spawn sessions for discovered devices (default on)\n"
@@ -106,9 +107,14 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             s.sinkPath = v;
         } else if (arg == "--pace") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "fast") s.paceRealtime = false;
-            else if (v == "realtime") s.paceRealtime = true;
-            else { log::error("--pace must be realtime|fast"); return std::nullopt; }
+            if (v == "fast")
+                s.paceRealtime = false;
+            else if (v == "realtime")
+                s.paceRealtime = true;
+            else {
+                log::error("--pace must be realtime|fast");
+                return std::nullopt;
+            }
         } else if (arg == "--ap") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
             s.ap.enabled = true;
@@ -127,9 +133,14 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             }
         } else if (arg == "--ap-protocol") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "ap1") s.ap.airplay2 = false;
-            else if (v == "ap2") s.ap.airplay2 = true;
-            else { log::error("--ap-protocol must be ap1|ap2"); return std::nullopt; }
+            if (v == "ap1")
+                s.ap.airplay2 = false;
+            else if (v == "ap2")
+                s.ap.airplay2 = true;
+            else {
+                log::error("--ap-protocol must be ap1|ap2");
+                return std::nullopt;
+            }
         } else if (arg == "--ap-password") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
             s.ap.password = v;
@@ -146,19 +157,30 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             s.mdnsDebug = true;
         } else if (arg == "--discovery") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "on") s.discovery = true;
-            else if (v == "off") s.discovery = false;
-            else { log::error("--discovery must be on|off"); return std::nullopt; }
+            if (v == "on")
+                s.discovery = true;
+            else if (v == "off")
+                s.discovery = false;
+            else {
+                log::error("--discovery must be on|off");
+                return std::nullopt;
+            }
         } else if (arg == "--vol-mode") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "lms") s.volumeMode = VolumeMode::Lms;
-            else if (v == "fixed") s.volumeMode = VolumeMode::Fixed;
-            else { log::error("--vol-mode must be lms|fixed"); return std::nullopt; }
+            if (v == "lms")
+                s.volumeMode = VolumeMode::Lms;
+            else if (v == "fixed")
+                s.volumeMode = VolumeMode::Fixed;
+            else {
+                log::error("--vol-mode must be lms|fixed");
+                return std::nullopt;
+            }
         } else if (arg == "--vol-map") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
             if (!VolumeAnchors::parse(v)) {
-                log::error("--vol-map needs \"db:pct, ...\" pairs, ascending "
-                           "pct 1-100, db <= 0");
+                log::error(
+                    "--vol-map needs \"db:pct, ...\" pairs, ascending "
+                    "pct 1-100, db <= 0");
                 return std::nullopt;
             }
             s.volumeMap = v;
@@ -183,18 +205,27 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
                 return std::nullopt;
             }
             if (s.apLatencyMs < 250 || s.apLatencyMs > 2000) {
-                log::error("--ap-latency-ms must be 250-2000 "
-                           "(receiver latencyMin..Max)");
+                log::error(
+                    "--ap-latency-ms must be 250-2000 "
+                    "(receiver latencyMin..Max)");
                 return std::nullopt;
             }
         } else if (arg == "--log") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "off") s.logLevel = log::Level::Off;
-            else if (v == "error") s.logLevel = log::Level::Error;
-            else if (v == "warn") s.logLevel = log::Level::Warn;
-            else if (v == "info") s.logLevel = log::Level::Info;
-            else if (v == "debug") s.logLevel = log::Level::Debug;
-            else { log::error("--log must be off|error|warn|info|debug"); return std::nullopt; }
+            if (v == "off")
+                s.logLevel = log::Level::Off;
+            else if (v == "error")
+                s.logLevel = log::Level::Error;
+            else if (v == "warn")
+                s.logLevel = log::Level::Warn;
+            else if (v == "info")
+                s.logLevel = log::Level::Info;
+            else if (v == "debug")
+                s.logLevel = log::Level::Debug;
+            else {
+                log::error("--log must be off|error|warn|info|debug");
+                return std::nullopt;
+            }
         } else {
             log::error("unknown option {}", arg);
             return std::nullopt;
@@ -207,4 +238,4 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
     return s;
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

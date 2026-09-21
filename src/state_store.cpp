@@ -34,15 +34,18 @@ std::array<uint8_t, 6> uniqueMacFor(std::map<std::string, StateStoreEntry>& entr
     return fakeMacFor(deviceId);
 }
 
-} // namespace
+}  // namespace
 
 std::string encodeId(const std::string& id) {
     std::string out;
     out.reserve(id.size());
     for (char c : id) {
-        if (c == ' ') out.append("%20");
-        else if (c == '\n' || c == '\r') out.push_back(' ');
-        else out.push_back(c);
+        if (c == ' ')
+            out.append("%20");
+        else if (c == '\n' || c == '\r')
+            out.push_back(' ');
+        else
+            out.push_back(c);
     }
     return out;
 }
@@ -138,8 +141,7 @@ bool StateStore::save() {
         out << "# squeeze2raop2 state: stable virtual MACs, AirPlay pairing credentials\n";
         for (const auto& kv : entries_) {
             if (kv.second.hasMac)
-                out << "mac  " << encodeId(kv.first) << " "
-                    << macToString(kv.second.mac) << "\n";
+                out << "mac  " << encodeId(kv.first) << " " << macToString(kv.second.mac) << "\n";
             if (!kv.second.creds.empty())
                 out << "creds  " << encodeId(kv.first) << " " << kv.second.creds << "\n";
         }
@@ -159,4 +161,4 @@ bool StateStore::save() {
     return true;
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

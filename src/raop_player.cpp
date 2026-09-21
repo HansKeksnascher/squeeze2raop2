@@ -24,18 +24,18 @@ void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
     squeeze2raop2::log::write(mapped, std::string("[ap] ") + msg);
 }
 
-} // namespace
+}  // namespace
 
 RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget target)
-    : name_(std::move(deviceName)),
-      identity_(std::move(identity)),
-      target_(std::move(target)) {
+    : name_(std::move(deviceName)), identity_(std::move(identity)), target_(std::move(target)) {
     ringStorage_ = std::make_unique<fxchain::RingBuffer<int16_t>>(1 << 18);
 
     fxchain::RaopEvents events;
     events.launched = [this](bool ok, const std::string& error) {
-        if (!ok) log::warn("[ap] {} start failure: {}", name_, error);
-        else log::info("[ap] {} session launched", name_);
+        if (!ok)
+            log::warn("[ap] {} start failure: {}", name_, error);
+        else
+            log::info("[ap] {} session launched", name_);
     };
     events.closed = [this]() {
         log::info("[ap] {} session closed", name_);
@@ -45,8 +45,7 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
         log::warn("[ap] {} requires a PIN for pairing; not yet supported in bridge (target={})",
                   name_, targetHost);
     };
-    events.credentialsObtained = [this](const std::string& deviceId,
-                                        const std::string& credsJson) {
+    events.credentialsObtained = [this](const std::string& deviceId, const std::string& credsJson) {
         log::info("[ap] {} stored long-term credentials ({} bytes)", name_, credsJson.size());
         if (onCredentials_) onCredentials_(deviceId, credsJson);
     };
@@ -60,8 +59,8 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
 
     sender_->setIdentity({name_, identity_, "iPhone14,3"});
     sender_->setInputFormat(44100);
-    sender_->setAuth(authFor(target_), target_.airplay2, identity_,
-                     target_.storedCreds, target_.password);
+    sender_->setAuth(authFor(target_), target_.airplay2, identity_, target_.storedCreds,
+                     target_.password);
 }
 
 RaopPlayer::~RaopPlayer() { stop(); }
@@ -89,8 +88,6 @@ void RaopPlayer::setNowPlaying(const std::string& title, const std::string& arti
     if (sender_) sender_->setNowPlaying(title, artist, album);
 }
 
-bool RaopPlayer::active() const {
-    return sender_ && sender_->active();
-}
+bool RaopPlayer::active() const { return sender_ && sender_->active(); }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

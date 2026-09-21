@@ -21,27 +21,20 @@ constexpr size_t kChunkFrames = 1152;
 constexpr size_t kStageMaxFrames = 8192;
 
 uint16_t rd16le(const std::byte* p) {
-    return uint16_t(std::to_integer<uint8_t>(p[0]) |
-                    (std::to_integer<uint8_t>(p[1]) << 8));
+    return uint16_t(std::to_integer<uint8_t>(p[0]) | (std::to_integer<uint8_t>(p[1]) << 8));
 }
 uint32_t rd32le(const std::byte* p) {
     return uint32_t(rd16le(p)) | (uint32_t(rd16le(p + 2)) << 16);
 }
 uint16_t rd16be(const std::byte* p) {
-    return uint16_t((std::to_integer<uint8_t>(p[0]) << 8) |
-                    std::to_integer<uint8_t>(p[1]));
+    return uint16_t((std::to_integer<uint8_t>(p[0]) << 8) | std::to_integer<uint8_t>(p[1]));
 }
-uint32_t rd32be(const std::byte* p) {
-    return (uint32_t(rd16be(p)) << 16) | rd16be(p + 2);
-}
-bool tagIs(const std::byte* p, const char (&tag)[5]) {
-    return std::memcmp(p, tag, 4) == 0;
-}
+uint32_t rd32be(const std::byte* p) { return (uint32_t(rd16be(p)) << 16) | rd16be(p + 2); }
+bool tagIs(const std::byte* p, const char (&tag)[5]) { return std::memcmp(p, tag, 4) == 0; }
 
-} // namespace
+}  // namespace
 
-PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
-    : outRate_(outputRate) {
+PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate) : outRate_(outputRate) {
     // Source layouts the reference converts: 16-bit mono/stereo and 24-bit
     // stereo (pcm.c's conversion set). The container header may override
     // rate/channels/size; endian is decided per conversion. Output is
@@ -50,11 +43,9 @@ PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
     srcChannels_ = in.channels;
     srcBigEndian_ = in.bigEndian;
     srcRate_ = in.sampleRate;
-    if ((srcBits_ != 16 && srcBits_ != 24) ||
-        (srcBits_ == 24 && srcChannels_ != 2) ||
+    if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
         (srcChannels_ != 1 && srcChannels_ != 2)) {
-        log::error("pcm codec: unsupported {} bit / {} ch stream",
-                   srcBits_, srcChannels_);
+        log::error("pcm codec: unsupported {} bit / {} ch stream", srcBits_, srcChannels_);
         failed_ = true;
     }
     bytesPerFrame_ = size_t(srcChannels_) * (srcBits_ / 8);
@@ -68,24 +59,21 @@ PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
 std::optional<size_t> PcmDecoder::checkHeader() {
     const auto* p = reinterpret_cast<const std::byte*>(buf_.data());
     const size_t have = buf_.size();
-    if (have < kHeaderProbeBytes) return std::nullopt;   // keep buffering
+    if (have < kHeaderProbeBytes) return std::nullopt;  // keep buffering
 
     // RIFF/WAVE: fmt chunk carries the real format; skip RIFF hdr + fmt
     // chunk + the 'data' chunk header (pcm.c's skip arithmetic).
-    if (have >= 44 && tagIs(p, "RIFF") && tagIs(p + 8, "WAVE") &&
-        tagIs(p + 12, "fmt ")) {
+    if (have >= 44 && tagIs(p, "RIFF") && tagIs(p + 8, "WAVE") && tagIs(p + 12, "fmt ")) {
         const uint32_t fmtSize = rd32le(p + 16);
         srcChannels_ = static_cast<uint8_t>(rd16le(p + 22));
         srcRate_ = rd32le(p + 24);
         srcBits_ = static_cast<uint8_t>(rd16le(p + 34));
         srcBigEndian_ = false;
-        log::info("pcm codec: WAV header, {} bit / {} Hz / {} ch",
-                  srcBits_, srcRate_, srcChannels_);
-        if ((srcBits_ != 16 && srcBits_ != 24) ||
-            (srcBits_ == 24 && srcChannels_ != 2) ||
+        log::info("pcm codec: WAV header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
+                  srcChannels_);
+        if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
             (srcChannels_ != 1 && srcChannels_ != 2)) {
-            log::error("pcm codec: unsupported WAV {} bit / {} ch",
-                       srcBits_, srcChannels_);
+            log::error("pcm codec: unsupported WAV {} bit / {} ch", srcBits_, srcChannels_);
             failed_ = true;
             return size_t{0};
         }
@@ -98,8 +86,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
 
     // FORM/AIFF|AIFC: walk chunks, COMM carries the format (big-endian),
     // SSND starts the sound data (its own 8-byte header + data offset).
-    if (have >= 64 && tagIs(p, "FORM") &&
-        (tagIs(p + 8, "AIFF") || tagIs(p + 8, "AIFC"))) {
+    if (have >= 64 && tagIs(p, "FORM") && (tagIs(p + 8, "AIFF") || tagIs(p + 8, "AIFC"))) {
         size_t off = 12;
         srcBigEndian_ = true;
         while (off + 8 <= have) {
@@ -112,20 +99,25 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                                 std::to_integer<uint8_t>(p[off + 17])) -
                                16383 - 31;
                 uint32_t rate = rd32be(p + off + 18);
-                while (exponent < 0) { rate >>= 1; ++exponent; }
-                while (exponent > 0) { rate <<= 1; --exponent; }
+                while (exponent < 0) {
+                    rate >>= 1;
+                    ++exponent;
+                }
+                while (exponent > 0) {
+                    rate <<= 1;
+                    --exponent;
+                }
                 srcRate_ = rate;
-                log::info("pcm codec: AIFF header, {} bit / {} Hz / {} ch",
-                          srcBits_, srcRate_, srcChannels_);
+                log::info("pcm codec: AIFF header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
+                          srcChannels_);
             }
             if (tagIs(p + off, "SSND")) {
                 const uint32_t sndOffset = rd32be(p + off + 8);
                 const size_t skip = off + 8 + sndOffset;
-                if ((srcBits_ != 16 && srcBits_ != 24) ||
-                    (srcBits_ == 24 && srcChannels_ != 2) ||
+                if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
                     (srcChannels_ != 1 && srcChannels_ != 2)) {
-                    log::error("pcm codec: unsupported AIFF {} bit / {} ch",
-                               srcBits_, srcChannels_);
+                    log::error("pcm codec: unsupported AIFF {} bit / {} ch", srcBits_,
+                               srcChannels_);
                     failed_ = true;
                 } else {
                     bytesPerFrame_ = size_t(srcChannels_) * (srcBits_ / 8);
@@ -142,10 +134,8 @@ std::optional<size_t> PcmDecoder::checkHeader() {
     }
 
     // No container: raw samples per the strm params (the common radio case).
-    log::info("pcm codec: raw pcm, {} bit / {} Hz / {} ch / {}, output {} Hz",
-              srcBits_, srcRate_, srcChannels_,
-              srcBigEndian_ ? "big-endian" : "little-endian",
-              fmt_.sampleRate);
+    log::info("pcm codec: raw pcm, {} bit / {} Hz / {} ch / {}, output {} Hz", srcBits_, srcRate_,
+              srcChannels_, srcBigEndian_ ? "big-endian" : "little-endian", fmt_.sampleRate);
     return size_t{0};
 }
 
@@ -207,8 +197,7 @@ size_t PcmDecoder::normalizeMore() {
         }
     }
     written = frames;
-    buf_.erase(buf_.begin(),
-               buf_.begin() + std::ptrdiff_t(frames * bytesPerFrame_));
+    buf_.erase(buf_.begin(), buf_.begin() + std::ptrdiff_t(frames * bytesPerFrame_));
     (void)written;
     return frames;
 }
@@ -216,7 +205,7 @@ size_t PcmDecoder::normalizeMore() {
 void PcmDecoder::setSourceRate(double framesPerSecond) {
     if (failed_ || outRate_ == 0) return;
     const double lo = 0.9 * outRate_, hi = 1.1 * outRate_;
-    if (!(framesPerSecond >= lo && framesPerSecond <= hi)) return;   // hold
+    if (!(framesPerSecond >= lo && framesPerSecond <= hi)) return;  // hold
     // Defense in depth: never let a measurement glitch push the pitch
     // beyond ±1% (the real-world deficits this regulates are ≲0.3%).
     const double step = std::clamp(framesPerSecond / outRate_, 0.99, 1.01);
@@ -224,8 +213,8 @@ void PcmDecoder::setSourceRate(double framesPerSecond) {
     const bool wasEngaged = rateEngaged_;
     rateStep_ = step;
     rateEngaged_ = step != 1.0;
-    log::info("pcm codec: source rate {} fps -> step {:.6f} ({})", framesPerSecond,
-              rateStep_, rateEngaged_ ? "resampling" : "pass-through");
+    log::info("pcm codec: source rate {} fps -> step {:.6f} ({})", framesPerSecond, rateStep_,
+              rateEngaged_ ? "resampling" : "pass-through");
     if (wasEngaged && !rateEngaged_) resetRateStage();
 }
 
@@ -241,15 +230,14 @@ size_t PcmDecoder::rateStageEmit(std::span<int16_t> out) {
         const size_t frames = std::min({stageFrames, want, kChunkFrames});
         if (!frames) return 0;
         std::memcpy(out.data(), stage_.data(), frames * 4);
-        stage_.erase(stage_.begin(),
-                     stage_.begin() + std::ptrdiff_t(frames * 2));
+        stage_.erase(stage_.begin(), stage_.begin() + std::ptrdiff_t(frames * 2));
         return frames * 2;
     }
 
     size_t produced = 0;
     while (produced < want) {
         const size_t i0 = size_t(stagePhase_);
-        if (i0 + 1 >= stageFrames) break;   // need i0 and i0+1, starved
+        if (i0 + 1 >= stageFrames) break;  // need i0 and i0+1, starved
         const double frac = stagePhase_ - double(i0);
         const int16_t* a = stage_.data() + i0 * 2;
         const int16_t* b = a + 2;
@@ -262,8 +250,7 @@ size_t PcmDecoder::rateStageEmit(std::span<int16_t> out) {
     const size_t keepFrom = size_t(stagePhase_);
     if (keepFrom > 0) {
         const size_t drop = std::min(keepFrom, stageFrames);
-        stage_.erase(stage_.begin(),
-                     stage_.begin() + std::ptrdiff_t(drop * 2));
+        stage_.erase(stage_.begin(), stage_.begin() + std::ptrdiff_t(drop * 2));
         stagePhase_ -= double(drop);
     }
     return produced * 2;
@@ -282,12 +269,11 @@ size_t PcmDecoder::drain(std::span<int16_t> out) {
 
     if (!headerDone_) {
         auto skip = checkHeader();
-        if (!skip) return 0;   // still probing
+        if (!skip) return 0;  // still probing
         headerBytes_ = *skip;
-        if (*skip > buf_.size()) {   // AIFF sound data starts beyond what we
+        if (*skip > buf_.size()) {  // AIFF sound data starts beyond what we
             // have buffered (possible with a large SSND offset); fail closed.
-            log::error("pcm codec: SSND offset {} beyond header buffer",
-                       *skip);
+            log::error("pcm codec: SSND offset {} beyond header buffer", *skip);
             failed_ = true;
             return 0;
         }
@@ -299,10 +285,10 @@ size_t PcmDecoder::drain(std::span<int16_t> out) {
     for (;;) {
         const size_t got = rateStageEmit(out.subspan(totalSamples));
         totalSamples += got;
-        if (totalSamples * 2 >= out.size()) break;   // caller buffer full
-        if (got == 0 && normalizeMore() == 0) break; // starved
+        if (totalSamples * 2 >= out.size()) break;    // caller buffer full
+        if (got == 0 && normalizeMore() == 0) break;  // starved
     }
     return totalSamples;
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

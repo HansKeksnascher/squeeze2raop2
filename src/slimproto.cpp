@@ -29,7 +29,7 @@ namespace {
 constexpr size_t kMaxPacket = size_t{4096} * 8;
 constexpr int kPollTimeoutMs = 100;
 
-} // namespace
+}  // namespace
 
 bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
     int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
@@ -56,8 +56,8 @@ bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
         if (poll(&pfd, 1, static_cast<int>(wait)) == 1) {
             char buf[64];
             socklen_t slen = sizeof(from);
-            ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0,
-                                 reinterpret_cast<sockaddr*>(&from), &slen);
+            ssize_t n =
+                recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&from), &slen);
             if (n > 0) {
                 buf[static_cast<size_t>(n)] = '\0';
                 if (buf[0] == 'E' || buf[0] == 'D') {
@@ -93,7 +93,7 @@ void SlimProtoClient::stop() {
         // reacts to the old SDK upgrade reason), but it is correct protocol
         // and makes the intent visible in LMS logs before the socket drops.
         const uint8_t bye = 0;
-        (void)sendPacket("BYE!", std::as_bytes(std::span{&bye, 1}));   // best effort
+        (void)sendPacket("BYE!", std::as_bytes(std::span{&bye, 1}));  // best effort
         if (sock_ >= 0) {
             ::shutdown(sock_, SHUT_RDWR);
         }
@@ -149,8 +149,10 @@ void SlimProtoClient::maybeHeartbeat() {
     uint64_t now = nowMs();
     if (now - lastHeartbeatMs_ >= 1000) {
         lastHeartbeatMs_ = now;
-        if (statsProvider_) sendStat("STMt", statsProvider_());
-        else sendStat("STMt", {});
+        if (statsProvider_)
+            sendStat("STMt", statsProvider_());
+        else
+            sendStat("STMt", {});
     }
 }
 
@@ -221,4 +223,4 @@ void SlimProtoClient::run(std::stop_token st) {
     }
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

@@ -33,10 +33,10 @@ uint64_t beAt(const std::string& pkt, size_t off, size_t len) {
 }
 
 // Opcodes LMS sends that this client intentionally ignores.
-constexpr std::array<std::string_view, 10> kIgnoredOps{
-    "aude", "DBUG", "SYST", "visu", "IR  ", "GRFe", "GRFh", "GRFb", "GRFm", "OCOB"};
+constexpr std::array<std::string_view, 10> kIgnoredOps{"aude", "DBUG", "SYST", "visu", "IR  ",
+                                                       "GRFe", "GRFh", "GRFb", "GRFm", "OCOB"};
 
-} // namespace
+}  // namespace
 
 uint32_t sampleRateFromCode(uint8_t code) {
     switch (code) {
@@ -67,15 +67,18 @@ uint8_t bitsPerSampleFromCode(uint8_t code) {
 uint8_t channelsFromCode(uint8_t code) {
     switch (code) {
     case '1': return 1;
-    default: return 2;   // '2' and anything unknown: stereo
+    default: return 2;  // '2' and anything unknown: stereo
     }
 }
 
 PcmFormat pcmFormat(const PcmParams& params, uint32_t fallbackRate) {
     PcmFormat f;
-    if (params.sampleSizeCode != '?') f.bitsPerSample = bitsPerSampleFromCode(params.sampleSizeCode);
-    if (params.sampleRateCode != '?') f.sampleRate = sampleRateFromCode(params.sampleRateCode);
-    else f.sampleRate = fallbackRate;
+    if (params.sampleSizeCode != '?')
+        f.bitsPerSample = bitsPerSampleFromCode(params.sampleSizeCode);
+    if (params.sampleRateCode != '?')
+        f.sampleRate = sampleRateFromCode(params.sampleRateCode);
+    else
+        f.sampleRate = fallbackRate;
     if (params.channelsCode != '?') f.channels = channelsFromCode(params.channelsCode);
     if (params.endianCode != '?') f.bigEndian = (params.endianCode == '0');
     return f;
@@ -88,8 +91,8 @@ void SlimProtoClient::sendHelo(bool reconnect) {
     std::memcpy(pkt.data(), "HELO", 4);
     packN(beField(pkt, 4, 4), bodyLen, 4);
     std::span<std::byte> p = beField(pkt, 8, pkt.size() - 8);
-    p[0] = std::byte{12};   // deviceid 12 = squeezeplay class (squeezelite parity)
-    p[1] = std::byte{1};    // revision: single byte, shown as player firmware rev
+    p[0] = std::byte{12};  // deviceid 12 = squeezeplay class (squeezelite parity)
+    p[1] = std::byte{1};   // revision: single byte, shown as player firmware rev
     std::memcpy(p.data() + 2, mac_.data(), 6);
     packN(p.subspan(24, 2), reconnect ? 0x4000 : 0x0000, 2);
     std::memcpy(p.data() + 36, caps.data(), caps.size());
@@ -98,14 +101,12 @@ void SlimProtoClient::sendHelo(bool reconnect) {
     if (!sendRaw(std::as_bytes(std::span{pkt}))) log::error("HELO send failed");
 }
 
-
 StreamStats SlimProtoClient::lastStats() {
     std::lock_guard<std::mutex> lock(sendMutex_);
     return stats_;
 }
 
-void SlimProtoClient::sendStat(const char* event, StreamStats stats,
-                               uint32_t serverTimestamp) {
+void SlimProtoClient::sendStat(const char* event, StreamStats stats, uint32_t serverTimestamp) {
     {
         // stats_ is read back by the run thread ('f'/'p'/'u' handlers) and
         // written from stream threads; sendMutex_ serializes both.
@@ -156,7 +157,7 @@ void SlimProtoClient::sendMeta(std::string_view data) {
     // The ICY de-interleaver only invokes this with a non-empty block; an
     // empty block carries no information for LMS either way.
     if (data.empty()) return;
-    (void)sendPacket("META", std::as_bytes(std::span{data}));   // best effort:
+    (void)sendPacket("META", std::as_bytes(std::span{data}));  // best effort:
     // metadata is cosmetic; connection health is the read loop's job
 }
 
@@ -228,9 +229,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (events_.onStart) events_.onStart(st);
             break;
         }
-        default:
-            log::warn("unhandled strm command '{}'", command);
-            break;
+        default: log::warn("unhandled strm command '{}'", command); break;
         }
     } else if (op == "cont") {
         if (len < 8) return;
@@ -264,7 +263,7 @@ void SlimProtoClient::process(const std::string& pkt) {
         // AirPlay's -30..0 dB protocol range at 0.3 dB per slider step
         // (LMS minimum = receiver mute, LMS maximum = full scale).
         auto pctOf = [&](uint32_t raw) {
-            if (raw == 0) return 0.0;              // LMS mute
+            if (raw == 0) return 0.0;  // LMS mute
             double db = 20.0 * std::log10(static_cast<double>(raw) / 65536.0);
             double pct = 100.0 + db * 101.0 / 50.0;
             return std::clamp(pct, 0.0, 100.0);
@@ -293,4 +292,4 @@ void SlimProtoClient::process(const std::string& pkt) {
     }
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

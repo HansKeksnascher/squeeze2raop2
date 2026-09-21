@@ -24,4 +24,4 @@ int connectTcp(const std::string& host, uint16_t port, std::string& errorOut);
 // kill the process with SIGPIPE.
 bool sendAll(int fd, const void* data, size_t len);
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

@@ -1,8 +1,8 @@
 #include "util.h"
 
+#include <cctype>
 #include <charconv>
 #include <chrono>
-#include <cctype>
 #include <format>
 #include <system_error>
 
@@ -36,8 +36,8 @@ std::map<std::string, std::string> parseTxtKeyValues(std::string_view raw) {
 }
 
 std::string macToString(const std::array<uint8_t, 6>& mac) {
-    return std::format("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2],
-                       mac[3], mac[4], mac[5]);
+    return std::format("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3],
+                       mac[4], mac[5]);
 }
 
 bool macFromString(std::string_view s, std::array<uint8_t, 6>& out) {
@@ -70,9 +70,7 @@ uint64_t nowMs() {
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-std::string errnoMessage(int err) {
-    return std::generic_category().message(err);
-}
+std::string errnoMessage(int err) { return std::generic_category().message(err); }
 
 std::string urlDecode(std::string_view s) {
     std::string out;
@@ -97,4 +95,4 @@ std::string urlDecode(std::string_view s) {
     return out;
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

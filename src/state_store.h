@@ -39,4 +39,4 @@ private:
     mutable std::mutex mutex_;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

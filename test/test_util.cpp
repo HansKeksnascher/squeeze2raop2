@@ -69,25 +69,25 @@ static void testShortPackets() {
         return base;
     };
 
-    client.process("");                                  // < 4
-    client.process("strm");                              // opcode only
-    client.process("strmt");                             // t, 5 < 22 -> ignore
-    client.process(withFiller("strmt", 21));             // t, one byte short
-    client.process(withFiller("strmp", 21));             // p, one byte short
-    client.process(withFiller("strma", 21));             // a, one byte short
-    client.process(withFiller("strmu", 21));             // u, one byte short
-    client.process(withFiller("audg", 21));              // audg, old code read OOB
-    client.process(withFiller("cont", 7));               // cont, one byte short
-    client.process(withFiller("codc", 9));               // codc, one byte short
-    client.process(withFiller("serv", 7));               // serv, one byte short
-    client.process("strmq");                             // q -> onStop
-    client.process(withFiller("strmt", 22));             // t at exact bound
-    client.process(withFiller("cont", 8));               // cont -> onCont
-    client.process(withFiller("codc", 10));              // codc -> onCodc
-    client.process(withFiller("serv", 8));               // serv -> onServerSwitch
+    client.process("");                       // < 4
+    client.process("strm");                   // opcode only
+    client.process("strmt");                  // t, 5 < 22 -> ignore
+    client.process(withFiller("strmt", 21));  // t, one byte short
+    client.process(withFiller("strmp", 21));  // p, one byte short
+    client.process(withFiller("strma", 21));  // a, one byte short
+    client.process(withFiller("strmu", 21));  // u, one byte short
+    client.process(withFiller("audg", 21));   // audg, old code read OOB
+    client.process(withFiller("cont", 7));    // cont, one byte short
+    client.process(withFiller("codc", 9));    // codc, one byte short
+    client.process(withFiller("serv", 7));    // serv, one byte short
+    client.process("strmq");                  // q -> onStop
+    client.process(withFiller("strmt", 22));  // t at exact bound
+    client.process(withFiller("cont", 8));    // cont -> onCont
+    client.process(withFiller("codc", 10));   // codc -> onCodc
+    client.process(withFiller("serv", 8));    // serv -> onServerSwitch
     if (stops != 1 || conts != 1 || codcs != 1 || switches != 1) {
-        fprintf(stderr, "short packet test: stops=%d conts=%d codcs=%d switches=%d\n",
-                stops, conts, codcs, switches);
+        fprintf(stderr, "short packet test: stops=%d conts=%d codcs=%d switches=%d\n", stops, conts,
+                codcs, switches);
         exit(1);
     }
 }
@@ -109,14 +109,13 @@ static void testUrlDecode() {
 
 static void testParseTxtKeyValues() {
     // wire format: (len byte, len-1 data bytes); first occurrence of a key wins
-    const std::string wire =
-        std::string("\x06", 1) + "br=128" + std::string("\x03", 1) + "a=b" +
-        std::string("\x02", 1) + "br" + std::string("\x08", 1) + "name=x=y";
+    const std::string wire = std::string("\x06", 1) + "br=128" + std::string("\x03", 1) + "a=b" +
+                             std::string("\x02", 1) + "br" + std::string("\x08", 1) + "name=x=y";
     auto txt = parseTxtKeyValues(wire);
     if (txt.size() != 3) exit(1);
-    if (txt["br"] != "128") exit(1);   // first occurrence wins over bare "br"
+    if (txt["br"] != "128") exit(1);  // first occurrence wins over bare "br"
     if (txt["a"] != "b") exit(1);
-    if (txt["name"] != "x=y") exit(1); // only the first '=' splits
+    if (txt["name"] != "x=y") exit(1);  // only the first '=' splits
 
     // key without '=' yields an empty value
     txt = parseTxtKeyValues(std::string("\x03", 1) + "key");

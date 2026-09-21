@@ -2,8 +2,8 @@
 
 #include <atomic>
 #include <chrono>
-#include <format>
 #include <cstdio>
+#include <format>
 #include <mutex>
 
 namespace squeeze2raop2::log {
@@ -15,10 +15,10 @@ std::mutex g_mutex;
 
 const char* tag(Level l) {
     switch (l) {
-    case Level::Off:   return "off ";
+    case Level::Off: return "off ";
     case Level::Error: return "err ";
-    case Level::Warn:  return "warn";
-    case Level::Info:  return "info";
+    case Level::Warn: return "warn";
+    case Level::Info: return "info";
     case Level::Debug: return "dbug";
     }
     return "?";
@@ -33,15 +33,15 @@ std::string stamp() {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
     return std::format("[{:02}:{:02}:{:02}.{:03}]", tm.tm_hour, tm.tm_min, tm.tm_sec, ms.count());
 }
-} // namespace
+}  // namespace
 
 void setLevel(Level l) { g_level.store(l, std::memory_order_relaxed); }
 Level level() { return g_level.load(std::memory_order_relaxed); }
 
 void write(Level l, std::string_view msg) {
     std::lock_guard<std::mutex> g(g_mutex);
-    std::fprintf(stderr, "%s %-4s %.*s\n", stamp().c_str(), tag(l),
-                 static_cast<int>(msg.size()), msg.data());
+    std::fprintf(stderr, "%s %-4s %.*s\n", stamp().c_str(), tag(l), static_cast<int>(msg.size()),
+                 msg.data());
 }
 
-} // namespace squeeze2raop2::log
+}  // namespace squeeze2raop2::log

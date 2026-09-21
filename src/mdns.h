@@ -37,4 +37,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

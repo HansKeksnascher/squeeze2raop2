@@ -3,12 +3,12 @@
 #include "check.h"
 #include "util.h"
 
+#include <unistd.h>
 #include <array>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <unistd.h>
 
 using namespace sq2t;
 using squeeze2raop2::StateStore;
@@ -32,7 +32,7 @@ private:
     std::filesystem::path path_;
 };
 
-} // namespace
+}  // namespace
 
 static void testFreshStoreAssignsMac(const ScratchDir& dir) {
     StateStore store;

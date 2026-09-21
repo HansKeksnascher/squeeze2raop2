@@ -22,7 +22,7 @@ void packLe16(char* p, uint16_t v) {
     p[1] = static_cast<char>((v >> 8) & 0xFF);
 }
 
-} // namespace
+}  // namespace
 
 PcmFileSink::PcmFileSink(std::string path) : path_(std::move(path)) {}
 
@@ -53,8 +53,7 @@ void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format)
         packLe16(header.data() + 20, 1);
         packLe16(header.data() + 22, format_.channels);
         packLe32(header.data() + 24, format_.sampleRate);
-        uint16_t blockAlign =
-            static_cast<uint16_t>(format_.channels * format_.bitsPerSample / 8);
+        uint16_t blockAlign = static_cast<uint16_t>(format_.channels * format_.bitsPerSample / 8);
         uint32_t byteRate = format_.sampleRate * blockAlign;
         packLe32(header.data() + 28, byteRate);
         packLe16(header.data() + 32, blockAlign);
@@ -67,8 +66,7 @@ void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format)
                   format_.bitsPerSample, format_.channels);
     }
 
-    if (total_ == 0 && data.size() >= 4 &&
-        std::memcmp(data.data(), "RIFF", 4) == 0) {
+    if (total_ == 0 && data.size() >= 4 && std::memcmp(data.data(), "RIFF", 4) == 0) {
         if (data.size() >= 44) {
             data = data.subspan(44);
         }
@@ -93,7 +91,8 @@ void PcmFileSink::close() {
         if (headerWritten_ && total_ > 0) {
             // RIFF chunk size = file size - 8 = (44-byte header + data) - 8.
             // WAV tops out at 32-bit sizes; clamp like streaming writers do.
-            const uint32_t dataSize = static_cast<uint32_t>(std::min<uint64_t>(total_, 0xFFFFFFFFu));
+            const uint32_t dataSize =
+                static_cast<uint32_t>(std::min<uint64_t>(total_, 0xFFFFFFFFu));
             const uint32_t riffSize =
                 static_cast<uint32_t>(std::min<uint64_t>(total_ + 36, 0xFFFFFFFFu));
             fseek(fp_, 4, SEEK_SET);
@@ -109,4 +108,4 @@ void PcmFileSink::close() {
     }
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

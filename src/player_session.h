@@ -31,11 +31,10 @@ class PcmFileSink;
 class PlayerSession {
 public:
     PlayerSession(std::string deviceId, std::string name, std::array<uint8_t, 6> mac,
-                  std::optional<std::string> lmsHost, uint16_t lmsPort,
-                  bool paceRealtime, std::optional<std::string> sinkPath,
-                  std::optional<RaopTarget> raopTarget,
-                  RaopPlayer::CredentialSink credSink, VolumeMode volumeMode,
-                  VolumeAnchors anchors, float volPct, int latencyMs);
+                  std::optional<std::string> lmsHost, uint16_t lmsPort, bool paceRealtime,
+                  std::optional<std::string> sinkPath, std::optional<RaopTarget> raopTarget,
+                  RaopPlayer::CredentialSink credSink, VolumeMode volumeMode, VolumeAnchors anchors,
+                  float volPct, int latencyMs);
     ~PlayerSession();
     PlayerSession(const PlayerSession&) = delete;
     PlayerSession& operator=(const PlayerSession&) = delete;
@@ -57,8 +56,8 @@ private:
     // Decoder (mp3 decode / pcm normalization), drained in 1152-frame
     // chunks. Returns false when the decoder failed and the stream must
     // abort.
-    bool feedStream(std::stop_token st, std::span<const std::byte> data,
-                    PcmFormat& fmt, PcmFileSink* sink, bool toOutput = true);
+    bool feedStream(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
+                    PcmFileSink* sink, bool toOutput = true);
     // Ring-occupancy telemetry while streaming: 10 s min/max/cur summary
     // plus one warn/recover pair per starvation episode (ring sampled on
     // the stream thread; user pauses are excluded — the ring draining
@@ -131,7 +130,7 @@ private:
     // --vol-pct: fixed-mode level, and in lms mode the pre-AUDG fallback
     // applied to every new session before RECORD (so audio never starts at
     // the receiver's hardware default).
-    VolumeAnchors anchors_;   // --vol-map dB anchors over the LMS slider
+    VolumeAnchors anchors_;  // --vol-map dB anchors over the LMS slider
     VolumeMode volumeMode_;
     float fixedVolumePct_;
     // Last LMS slider percent seen via AUDG (lms mode); 0 = none. Re-applied
@@ -143,4 +142,4 @@ private:
     int latencyMs_;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

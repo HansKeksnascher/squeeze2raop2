@@ -84,7 +84,8 @@ public:
         std::function<void(uint32_t skipMs)> onSkipAhead;
         std::function<void(uint32_t metaint)> onCont;
         std::function<void(StreamFormat format, const PcmParams& pcm)> onCodc;
-        std::function<void(double leftPct, double rightPct)> onVolume;  // 0..100; LMS slider percent
+        std::function<void(double leftPct, double rightPct)>
+            onVolume;  // 0..100; LMS slider percent
         std::function<void(const std::string& name)> onSetName;
         std::function<void(uint32_t serverIp)> onServerSwitch;
     };
@@ -141,4 +142,4 @@ private:
     std::function<StreamStats()> statsProvider_;
 };
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

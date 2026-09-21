@@ -73,7 +73,7 @@ void runBridge(const Settings& settings) {
     }
     MdnsBrowser browser;
     MdnsBrowser::RecordCallback cb = [&registry](const MdnsRecord& rec,
-                                                MdnsBrowser::RecordEvent ev) {
+                                                 MdnsBrowser::RecordEvent ev) {
         if (rec.type == "_raop._tcp") {
             if (ev == MdnsBrowser::RecordEvent::Added)
                 registry.onRaopV4(rec.instance, rec.host, rec.port, rec.txt);
@@ -101,4 +101,4 @@ void runBridge(const Settings& settings) {
     log::info("bye");
 }
 
-} // namespace squeeze2raop2
+}  // namespace squeeze2raop2

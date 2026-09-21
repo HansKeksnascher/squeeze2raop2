@@ -5,8 +5,8 @@
 #include <cmath>
 
 using namespace sq2t;
-using squeeze2raop2::VolumeAnchors;
 using squeeze2raop2::kDefaultVolumeMap;
+using squeeze2raop2::VolumeAnchors;
 
 namespace {
 
@@ -62,7 +62,7 @@ void testChain() {
     }
 }
 
-} // namespace
+}  // namespace
 
 int main() {
     testParse();
