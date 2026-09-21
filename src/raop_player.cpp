@@ -69,16 +69,13 @@ RaopPlayer::~RaopPlayer() { stop(); }
 void RaopPlayer::start() {
     loop_.clearStopRequest();
     sender_->start(target_.host, target_.port, name_);
-    pumpThread_.emplace([this] { loop_.run(*sender_); });
+    pumpThread_ = std::jthread([this] { loop_.run(*sender_); });
 }
 
 void RaopPlayer::stop() {
     if (sender_) sender_->stop();
-    if (pumpThread_.has_value()) {
-        loop_.requestStop();
-        pumpThread_->join();
-        pumpThread_.reset();
-    }
+    loop_.requestStop();
+    if (pumpThread_.joinable()) pumpThread_.join();
 }
 
 void RaopPlayer::setVolume(double pct) {

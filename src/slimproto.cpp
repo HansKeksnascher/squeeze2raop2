@@ -127,12 +127,12 @@ void SlimProtoClient::setPlayerName(const std::string& name) { playerName_ = nam
 void SlimProtoClient::start(const std::string& host, uint16_t port) {
     host_ = host;
     port_ = port;
-    running_ = true;
-    thread_ = std::thread([this] { run(); });
+    thread_ = std::jthread([this](std::stop_token st) { run(st); });
 }
 
 void SlimProtoClient::stop() {
-    if (running_.exchange(false)) {
+    if (thread_.joinable() && !thread_.get_stop_token().stop_requested()) {
+        thread_.request_stop();
         // Graceful goodbye: LMS 9.1's BYE! handler is a near no-op (it only
         // reacts to the old SDK upgrade reason), but it is correct protocol
         // and makes the intent visible in LMS logs before the socket drops.
@@ -170,6 +170,7 @@ bool SlimProtoClient::sendRaw(std::span<const std::byte> data) {
 
 bool SlimProtoClient::sendPacket(std::string_view opcode, std::span<const std::byte> payload) {
     if (sock_ < 0) return false;
+    if (opcode.size() != 4) return false;  // opcodes are exactly 4 bytes
     // client -> LMS framing (per squeezelite/HELO spec):
     // [4b opcode][4b big-endian length = payload bytes][payload]
     std::vector<uint8_t> pkt(8 + payload.size());
@@ -438,12 +439,12 @@ void SlimProtoClient::maybeHeartbeat() {
     }
 }
 
-void SlimProtoClient::run() {
+void SlimProtoClient::run(std::stop_token st) {
     unsigned fails = 0;
-    while (running_.load()) {
+    while (!st.stop_requested()) {
         if (host_.empty() && !discoverLms(host_, port_, 5000)) {
             log::warn("LMS discovery failed, retrying in 5s");
-            for (unsigned i = 0; i < 50 && running_.load(); ++i)
+            for (unsigned i = 0; i < 50 && !st.stop_requested(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
@@ -451,7 +452,7 @@ void SlimProtoClient::run() {
             ++fails;
             unsigned delay = std::min<unsigned>(fails * 2, 15);
             log::warn("connect to {} failed, retrying in {}s", host_, delay);
-            for (unsigned i = 0; i < delay * 10 && running_.load(); ++i)
+            for (unsigned i = 0; i < delay * 10 && !st.stop_requested(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
@@ -462,7 +463,7 @@ void SlimProtoClient::run() {
         size_t expect = 0;
         char tmp[2048];
 
-        while (running_.load()) {
+        while (!st.stop_requested()) {
             pollfd pfd{sock_, POLLIN, 0};
             int pr = ::poll(&pfd, 1, kPollTimeoutMs);
             if (pr < 0) {
@@ -501,7 +502,7 @@ void SlimProtoClient::run() {
             }
         }
         log::info("connection lost");
-        if (!running_.load()) break;
+        if (st.stop_requested()) break;
     }
 }
 

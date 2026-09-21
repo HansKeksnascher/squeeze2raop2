@@ -7,7 +7,6 @@
 
 #include <functional>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -65,7 +64,10 @@ private:
     std::unique_ptr<fxchain::RingBuffer<int16_t>> ringStorage_;
     fxchain::RaopLoop loop_;
     std::unique_ptr<fxchain::RaopSender> sender_;
-    std::optional<std::thread> pumpThread_;
+    // The pump's exit condition lives inside fxchain::RaopLoop::run() (its
+    // own atomic), so no stop_token can drive it — jthread is used for its
+    // auto-join safety net only.
+    std::jthread pumpThread_;
     CredentialSink onCredentials_;
     std::function<void()> onClosed_;
 };

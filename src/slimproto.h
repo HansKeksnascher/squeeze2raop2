@@ -6,6 +6,7 @@
 #include <functional>
 #include <mutex>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <vector>
@@ -112,7 +113,7 @@ public:
     void process(const std::string& packet);
 
 private:
-    void run();
+    void run(std::stop_token st);
     bool connectOnce(bool reconnect);
     bool sendPacket(std::string_view opcode, std::span<const std::byte> payload);
     bool sendRaw(std::span<const std::byte> data);
@@ -129,8 +130,7 @@ private:
     uint16_t port_ = 3483;
 
     int sock_ = -1;
-    std::atomic<bool> running_{false};
-    std::thread thread_;
+    std::jthread thread_;
     StreamStats stats_{};
     std::mutex sendMutex_;
     uint64_t lastHeartbeatMs_ = 0;

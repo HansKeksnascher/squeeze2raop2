@@ -160,36 +160,35 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
 
 // Pull raw bytes from leftover_/socket: >0 = bytes, 0 = no data yet (timeout),
 // -1 = socket error, -2 = orderly EOF.
-ssize_t HttpStreamReader::pullRaw(char* dst, size_t max, uint32_t timeoutMs) {
+ssize_t HttpStreamReader::pullRaw(std::span<char> dst, uint32_t timeoutMs) {
     if (!leftover_.empty()) {
-        size_t n = std::min(leftover_.size(), max);
-        leftover_.copy(dst, n);
+        size_t n = std::min(leftover_.size(), dst.size());
+        leftover_.copy(dst.data(), n);
         leftover_.erase(0, n);
         return static_cast<ssize_t>(n);
     }
     if (fd_ < 0) return -1;
     pollfd pfd{fd_, POLLIN, 0};
     if (poll(&pfd, 1, static_cast<int>(timeoutMs)) <= 0) return 0;
-    ssize_t n = ::recv(fd_, dst, max, 0);
+    ssize_t n = ::recv(fd_, dst.data(), dst.size(), 0);
     if (n > 0) return n;
     if (n == 0) return -2;
     if (errno == EAGAIN || errno == EINTR) return 0;
     return -1;
 }
 
-HttpStreamReader::ReadResult HttpStreamReader::read(char* buffer, size_t maxLen,
-                                                    size_t* gotOut, uint32_t timeoutMs) {
-    *gotOut = 0;
+HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
+                                                    uint32_t timeoutMs) {
     size_t produced = 0;
-    while (produced < maxLen) {
+    while (produced < buffer.size()) {
         const uint32_t timeout = produced ? 0 : timeoutMs;
         if (metaBytesLeft_) {
             char tmp[4096];
             const size_t want = std::min<size_t>(metaBytesLeft_, sizeof(tmp));
-            ssize_t n = pullRaw(tmp, want, timeout);
+            ssize_t n = pullRaw(std::span{tmp}.first(want), timeout);
             if (n < 0) {
                 if (produced) break;
-                return n == -2 ? ReadResult::AtEof : ReadResult::Closed;
+                return {n == -2 ? ReadResult::AtEof : ReadResult::Closed};
             }
             if (n == 0) break;
             metaBuf_.append(tmp, static_cast<size_t>(n));
@@ -203,10 +202,10 @@ HttpStreamReader::ReadResult HttpStreamReader::read(char* buffer, size_t maxLen,
         }
         if (metaInterval_ && !metaCountdown_) {
             char lenByte;
-            const ssize_t n = pullRaw(&lenByte, 1, timeout);
+            const ssize_t n = pullRaw(std::span{&lenByte, 1}, timeout);
             if (n < 0) {
                 if (produced) break;
-                return n == -2 ? ReadResult::AtEof : ReadResult::Closed;
+                return {n == -2 ? ReadResult::AtEof : ReadResult::Closed};
             }
             if (n == 0) break;
             metaBytesLeft_ = static_cast<uint32_t>(static_cast<unsigned char>(lenByte)) * 16;
@@ -214,22 +213,19 @@ HttpStreamReader::ReadResult HttpStreamReader::read(char* buffer, size_t maxLen,
             if (!metaBytesLeft_) metaCountdown_ = metaInterval_;   // empty block, restart
             continue;
         }
-        size_t want = maxLen - produced;
+        size_t want = buffer.size() - produced;
         if (metaCountdown_) want = std::min<size_t>(want, metaCountdown_);
-        const ssize_t n = pullRaw(buffer + produced, want, timeout);
+        const ssize_t n = pullRaw(std::span{buffer}.subspan(produced, want), timeout);
         if (n < 0) {
             if (produced) break;
-            return n == -2 ? ReadResult::AtEof : ReadResult::Closed;
+            return {n == -2 ? ReadResult::AtEof : ReadResult::Closed};
         }
         if (n == 0) break;
         if (metaCountdown_) metaCountdown_ -= static_cast<uint32_t>(n);
         produced += static_cast<size_t>(n);
     }
-    if (produced) {
-        *gotOut = produced;
-        return ReadResult::Data;
-    }
-    return ReadResult::Closed;
+    if (produced) return {ReadResult::Data, produced};
+    return {ReadResult::Closed};
 }
 
 }

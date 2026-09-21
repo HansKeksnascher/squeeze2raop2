@@ -33,7 +33,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstring>
 #include <deque>
 #include <format>
@@ -41,6 +40,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 #include <thread>
 #include <type_traits>
 
@@ -142,8 +142,7 @@ std::map<std::string, std::string> parseTxtKeyValues(std::string_view raw) {
 // API directly; other threads enqueue commands through Impl::post().
 struct MdnsBrowser::Impl {
     RecordCallback cb;
-    std::thread loopThread;
-    std::atomic<bool> running{false};
+    std::jthread loopThread;
     mDNSInterfaceID iface = mDNSInterface_Any;
     DNSQuestion browseQ[2];
     bool browseActive[2] = {false, false};
@@ -156,7 +155,12 @@ struct MdnsBrowser::Impl {
     int wakeWr = -1;
 
     ~Impl() {
-        if (loopThread.joinable()) loopThread.join();
+        // join before closing the wake fds (jthread would auto-join after
+        // them, member destruction order)
+        if (loopThread.joinable()) {
+            loopThread.request_stop();
+            loopThread.join();
+        }
         if (wakeRd >= 0) ::close(wakeRd);
         if (wakeWr >= 0) ::close(wakeWr);
     }
@@ -484,12 +488,11 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
     impl->wakeRd = fds[0];
     impl->wakeWr = fds[1];
 
-    impl->running.store(true);
     Impl* raw = impl.get();
-    raw->loopThread = std::thread([raw]() {
-        while (raw->running.load()) {
+    raw->loopThread = std::jthread([raw](std::stop_token st) {
+        while (!st.stop_requested()) {
             raw->runCommands();
-            if (!raw->running.load()) break;
+            if (st.stop_requested()) break;
             fd_set readfds;
             fd_set writefds;
             FD_ZERO(&readfds);
@@ -534,7 +537,7 @@ void MdnsBrowser::stop() {
         g_resolvers.clear();
         g_cb = nullptr;
         mDNS_Close(&gMdns);
-        raw->running.store(false);
+        raw->loopThread.request_stop();
     };
     if (raw->loopThread.joinable()) {
         raw->post(teardown);

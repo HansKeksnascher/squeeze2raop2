@@ -15,7 +15,7 @@ inline void packN(std::span<std::byte> dst, uint64_t value, size_t bytes) {
     bytes = std::min(bytes, dst.size());
     for (size_t i = 0; i < bytes; ++i)
         dst[i] = std::byte{static_cast<unsigned char>((value >> ((bytes - 1 - i) * 8)) & 0xFF)};
-} // namespace squeeze2raop2
+}
 
 // Inverse of packN: reads all octets of `src`, MSB first.
 inline uint64_t unpackN(std::span<const std::byte> src) {
@@ -39,4 +39,4 @@ std::string urlDecode(std::string_view s);
 // Thread-safe errno -> text (strerror_r/std::generic_category under the hood).
 std::string errnoMessage(int err);
 
-}
+} // namespace squeeze2raop2

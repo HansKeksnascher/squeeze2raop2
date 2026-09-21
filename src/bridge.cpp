@@ -25,6 +25,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -78,8 +79,8 @@ public:
                 autostartPending_ = false;
             }
             client_->sendStat("STMs", currentStats());
-            streamActive_.store(true);
-            streamThread_ = std::thread([this] { streamLoop(); });
+            streamThread_ = std::jthread(
+                [this](std::stop_token st) { streamLoop(st); });
         };
         events.onStop = [this]() {
             stopPlayback();
@@ -299,11 +300,11 @@ private:
             return;
         }
         client_->sendStat("STMs", currentStats());
-        streamActive_.store(true);
-        streamThread_ = std::thread([this] { streamLoop(); });
+        streamThread_ = std::jthread(
+            [this](std::stop_token stopTok) { streamLoop(stopTok); });
     }
 
-    void streamLoop() {
+    void streamLoop(std::stop_token st) {
         PcmFormat fmt;
         uint32_t bytesPerFrame = 4;
         {
@@ -319,7 +320,6 @@ private:
             if (!sink->open(fmt, error)) {
                 log::error("cannot open sink: {}", error);
                 client_->sendStat("STMn", currentStats());
-                streamActive_.store(false);
                 return;
             }
         }
@@ -332,7 +332,6 @@ private:
             if (!ensureRaop(fmt.sampleRate)) {
                 log::error("[ap] cannot start airplay session for {}", name_);
                 client_->sendStat("STMn", currentStats());
-                streamActive_.store(false);
                 if (sink) sink->close();
                 return;
             }
@@ -344,7 +343,10 @@ private:
         uint64_t activeMs = 0;
         char buf[4096];
 
-        while (g_run.load() && streamActive_.load()) {
+        // deviceLost_ doubles as the "receiver died" exit signal set from the
+        // sender's io thread (streamActive_ was removed with the stop_token
+        // conversion; stop requests arrive via st).
+        while (!st.stop_requested() && g_run.load() && !deviceLost_.load()) {
             bool paused = false;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -358,20 +360,22 @@ private:
 
             uint64_t iterStart = nowMs();
             size_t got = 0;
-            auto rr = reader_.read(buf, sizeof(buf), &got, 150);
+            auto rr = reader_.read(std::span{buf}, 150);
+            got = rr.bytes;
             uint64_t iterCost = nowMs() - iterStart;
 
-            if (rr == HttpStreamReader::ReadResult::Data && got > 0) {
+            if (rr.result == HttpStreamReader::ReadResult::Data && got > 0) {
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
                     receivedBytes_ += got;
                 }
                 if (isMp3_) {
-                    feedMp3(std::as_bytes(std::span{buf}).first(got), fmt, sink.get());
+                    if (!feedMp3(st, std::as_bytes(std::span{buf}).first(got), fmt, sink.get()))
+                        break;
                 } else {
                     if (sink) sink->feed(std::as_bytes(std::span{buf}).first(got), fmt);
                     if (raop_ && fmt.bitsPerSample == 16) {
-                        pushToRaop(std::as_bytes(std::span{buf}).first(got), fmt);
+                        pushToRaop(st, std::as_bytes(std::span{buf}).first(got), fmt);
                     } else if (raop_) {
                         log::warn("raop feed requires 16-bit pcm; dropping {} bytes", got);
                     }
@@ -384,11 +388,11 @@ private:
                 activeMs += 150;
             }
 
-            if (rr == HttpStreamReader::ReadResult::AtEof) {
+            if (rr.result == HttpStreamReader::ReadResult::AtEof) {
                 if (isMp3_ && mp3_) {
                     // Decode + emit the remaining tail frames of the stream.
                     mp3_->finish();
-                    feedMp3({}, fmt, sink.get());
+                    feedMp3(st, {}, fmt, sink.get());
                 }
                 break;
             }
@@ -447,21 +451,18 @@ private:
             }
             if (raop_ && !lastTitle_.empty())
                 raop_->setNowPlaying(lastTitle_, "", "");
-            streamActive_.store(true);
         }
-        streamActive_.store(false);
     }
 
     // The receiver ended the session on its own (e.g. the phone took over the
     // HomePod). Stop the local stream and tell LMS with STMu so it stops the
     // track instead of streaming into a dead session. Runs on the sender's
     // io thread: only flag here — the streamLoop's normal exit path does the
-    // raop discard/stop/reset (no locking needed beyond streamActive_).
+    // raop discard/stop/reset.
     void onRaopDeviceClosed() {
         // Runs on the sender's io thread: flag only. The streamLoop decides
         // between a transparent session retry and reporting to LMS.
         deviceLost_.store(true);
-        streamActive_.store(false);
     }
 
     // ICY in-band metadata block (squeezelite parity): forward the raw
@@ -481,7 +482,7 @@ private:
         if (raop_) raop_->setNowPlaying(title, "", "");
     }
 
-    void pushToRaop(std::span<const std::byte> data, const PcmFormat& fmt) {
+    void pushToRaop(std::stop_token st, std::span<const std::byte> data, const PcmFormat& fmt) {
         std::vector<int16_t> samples;
         const size_t count = data.size() / 2;
         samples.reserve(count);
@@ -501,15 +502,17 @@ private:
                 stereo.push_back(s);
                 stereo.push_back(s);
             }
-            feedRing(stereo);
+            feedRing(st, stereo);
         } else {
-            feedRing(samples);
+            feedRing(st, samples);
         }
     }
 
-    void feedMp3(std::span<const std::byte> data, PcmFormat& fmt, PcmFileSink* sink) {
+    // Returns false when the decoder failed and the stream must abort.
+    bool feedMp3(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
+                 PcmFileSink* sink) {
         constexpr size_t kPcmChunk = size_t{1152} * 2;
-        if (!mp3_) return;
+        if (!mp3_) return true;
         mp3_->feed(data);
         std::array<int16_t, kPcmChunk> pcm{};
         for (;;) {
@@ -518,7 +521,7 @@ private:
                 if (mp3_->hasError()) {
                     log::error("mp3 decode failed; dropping stream");
                     client_->sendStat("STMn", currentStats());
-                    streamActive_.store(false);
+                    return false;
                 }
                 break;
             }
@@ -539,18 +542,20 @@ private:
             }
             const size_t byteLen = n * sizeof(int16_t);
             if (sink) sink->feed(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
-            if (raop_) pushToRaop(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
+            if (raop_) pushToRaop(st, std::as_bytes(std::span{pcm}).first(byteLen), fmt);
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 fedSamples_ += n / (fmt.channels ? fmt.channels : 2);
                 fedBytes_ = receivedBytes_ - mp3_->pendingBytes();
             }
         }
+        return true;
     }
 
-    void feedRing(const std::vector<int16_t>& samples) {
+    void feedRing(std::stop_token st, const std::vector<int16_t>& samples) {
         size_t offset = 0;
-        while (offset < samples.size() && g_run.load() && streamActive_.load()) {
+        while (offset < samples.size() && !st.stop_requested() && g_run.load() &&
+               !deviceLost_.load()) {
             size_t freeSpace = raop_->availableWrite();
             if (freeSpace == 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(4));
@@ -567,7 +572,7 @@ private:
 
     void stopPlayback() {
         if (streamThread_.joinable()) {
-            streamActive_.store(false);
+            streamThread_.request_stop();
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 pauseUntilMs_ = 0;
@@ -589,8 +594,7 @@ private:
     std::unique_ptr<SlimProtoClient> client_;
 
     HttpStreamReader reader_;
-    std::thread streamThread_;
-    std::atomic<bool> streamActive_{false};
+    std::jthread streamThread_;
     bool autostartPending_ = false;
 
     PcmFormat format_{};
