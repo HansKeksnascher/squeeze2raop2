@@ -51,8 +51,7 @@ void runBridge(const Settings& settings) {
 
     if (settings.mdnsDebug) {
         MdnsBrowser browser;
-        MdnsBrowser::RecordCallback cb = [&registry](const MdnsRecord& rec,
-                                                     MdnsBrowser::RecordEvent ev) {
+        MdnsBrowser::RecordCallback cb = [](const MdnsRecord& rec, MdnsBrowser::RecordEvent ev) {
             const char* what = (ev == MdnsBrowser::RecordEvent::Added) ? "added" : "removed";
             log::info("mdns[{}] {} {} -> {}\n  txt:", what, rec.type, rec.instance,
                       rec.port ? rec.host + ":" + std::to_string(rec.port) : std::string());
