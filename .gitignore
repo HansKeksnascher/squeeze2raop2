@@ -2,6 +2,7 @@ build/
 out/
 install/
 sqraop2.state
+squeeze2raop2.state
 *.wav
 *.raw
 *.log
