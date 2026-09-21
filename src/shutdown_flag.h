@@ -7,9 +7,10 @@ namespace squeeze2raop2 {
 
 // Flip-flops to false on SIGINT/SIGTERM; polled by every run/stream loop so
 // shutdown propagates without dedicated teardown signaling. Namespace-scope
-// inline variable: constant-initialized, so the signal handler touches no
-// runtime-initialized state and stays async-signal-safe.
-inline std::atomic<bool> g_run{true};
+// inline constinit variable: constant-initialized (and guaranteed so), the
+// signal handler touches no runtime-initialized state and stays
+// async-signal-safe.
+inline constinit std::atomic<bool> g_run{true};
 static_assert(std::atomic<bool>::is_always_lock_free,
               "the signal handler must be async-signal-safe");
 

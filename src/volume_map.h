@@ -34,7 +34,7 @@ public:
     // last to its dB; between anchors the interpolation is linear in dB
     // per slider step (philippe44 SetVolumeMapping semantics, with his
     // implicit mapping[0] = -144 handled by the mute rule instead).
-    static std::optional<VolumeAnchors> parse(std::string_view spec);
+    [[nodiscard]] static std::optional<VolumeAnchors> parse(std::string_view spec);
 
     // AirPlay attenuation in dB for a slider percent (0..100).
     double dbAt(double pct) const;

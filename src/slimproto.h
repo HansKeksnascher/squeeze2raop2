@@ -117,8 +117,8 @@ private:
     bool connectOnce(bool reconnect);
     // opcode must be a 4-character string literal (the array reference makes
     // null/short opcodes unrepresentable at every call site).
-    bool sendPacket(const char (&opcode)[5], std::span<const std::byte> payload);
-    bool sendRaw(std::span<const std::byte> data);
+    [[nodiscard]] bool sendPacket(const char (&opcode)[5], std::span<const std::byte> payload);
+    [[nodiscard]] bool sendRaw(std::span<const std::byte> data);
     void sendHelo(bool reconnect);
     void maybeHeartbeat();
     // Snapshot of the last stats passed to sendStat(); guarded by sendMutex_

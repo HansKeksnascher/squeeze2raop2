@@ -93,7 +93,7 @@ void SlimProtoClient::stop() {
         // reacts to the old SDK upgrade reason), but it is correct protocol
         // and makes the intent visible in LMS logs before the socket drops.
         const uint8_t bye = 0;
-        sendPacket("BYE!", std::as_bytes(std::span{&bye, 1}));
+        (void)sendPacket("BYE!", std::as_bytes(std::span{&bye, 1}));   // best effort
         if (sock_ >= 0) {
             ::shutdown(sock_, SHUT_RDWR);
         }

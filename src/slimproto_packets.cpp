@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <span>
+#include <string_view>
 #include <vector>
 
 // Wire half of the slimproto client: opcode/packet encoding (HELO, STAT,
@@ -16,6 +17,26 @@
 // tables. Connection lifecycle lives in slimproto.cpp.
 
 namespace squeeze2raop2 {
+
+namespace {
+
+// Big-endian field access into assembled/received packets, replacing the
+// as_writable_bytes(std::span{pkt}).subspan() ceremony at every call site.
+std::span<std::byte> beField(std::vector<uint8_t>& pkt, size_t off, size_t len) {
+    return std::as_writable_bytes(std::span{pkt}).subspan(off, len);
+}
+std::span<const std::byte> beField(const std::string& pkt, size_t off, size_t len) {
+    return std::as_bytes(std::span{pkt}).subspan(off, len);
+}
+uint64_t beAt(const std::string& pkt, size_t off, size_t len) {
+    return unpackN(beField(pkt, off, len));
+}
+
+// Opcodes LMS sends that this client intentionally ignores.
+constexpr std::array<std::string_view, 10> kIgnoredOps{
+    "aude", "DBUG", "SYST", "visu", "IR  ", "GRFe", "GRFh", "GRFb", "GRFm", "OCOB"};
+
+} // namespace
 
 uint32_t sampleRateFromCode(uint8_t code) {
     switch (code) {
@@ -65,8 +86,8 @@ void SlimProtoClient::sendHelo(bool reconnect) {
     uint32_t bodyLen = 36 + static_cast<uint32_t>(caps.size());
     std::vector<uint8_t> pkt(8 + bodyLen);
     std::memcpy(pkt.data(), "HELO", 4);
-    packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), bodyLen, 4);
-    std::span<std::byte> p = std::as_writable_bytes(std::span{pkt}).subspan(8);
+    packN(beField(pkt, 4, 4), bodyLen, 4);
+    std::span<std::byte> p = beField(pkt, 8, pkt.size() - 8);
     p[0] = std::byte{12};   // deviceid 12 = squeezeplay class (squeezelite parity)
     p[1] = std::byte{1};    // revision: single byte, shown as player firmware rev
     std::memcpy(p.data() + 2, mac_.data(), 6);
@@ -93,8 +114,8 @@ void SlimProtoClient::sendStat(const char* event, StreamStats stats,
     }
     std::vector<uint8_t> pkt(8 + 53);
     std::memcpy(pkt.data(), "STAT", 4);
-    packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), 53, 4);
-    std::span<std::byte> p = std::as_writable_bytes(std::span{pkt}).subspan(8);
+    packN(beField(pkt, 4, 4), 53, 4);
+    std::span<std::byte> p = beField(pkt, 8, 53);
     std::memcpy(p.data(), event, 4);
     p[6] = std::byte{0};
     packN(p.subspan(7, 4), stats.streamBufferSize, 4);
@@ -135,7 +156,8 @@ void SlimProtoClient::sendMeta(std::string_view data) {
     // The ICY de-interleaver only invokes this with a non-empty block; an
     // empty block carries no information for LMS either way.
     if (data.empty()) return;
-    sendPacket("META", std::as_bytes(std::span{data}));
+    (void)sendPacket("META", std::as_bytes(std::span{data}));   // best effort:
+    // metadata is cosmetic; connection health is the read loop's job
 }
 
 void SlimProtoClient::process(const std::string& pkt) {
@@ -150,7 +172,7 @@ void SlimProtoClient::process(const std::string& pkt) {
         case 't': {
             // heartbeat timestamp sits at packet bytes 18..21
             if (len < 22) return;
-            uint32_t ts = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
+            uint32_t ts = static_cast<uint32_t>(beAt(pkt, 18, 4));
             sendStat("STMt", {}, ts);
             lastHeartbeatMs_ = nowMs();
             break;
@@ -164,20 +186,20 @@ void SlimProtoClient::process(const std::string& pkt) {
             break;
         case 'p': {
             if (len < 22) return;
-            uint32_t ms = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
+            uint32_t ms = static_cast<uint32_t>(beAt(pkt, 18, 4));
             if (events_.onPause) events_.onPause(ms);
             if (!ms) sendStat("STMp", lastStats());
             break;
         }
         case 'a': {
             if (len < 22) return;
-            uint32_t ms = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
+            uint32_t ms = static_cast<uint32_t>(beAt(pkt, 18, 4));
             if (events_.onSkipAhead) events_.onSkipAhead(ms);
             break;
         }
         case 'u': {
             if (len < 22) return;
-            uint32_t jiffies = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
+            uint32_t jiffies = static_cast<uint32_t>(beAt(pkt, 18, 4));
             if (events_.onUnpause) events_.onUnpause(jiffies);
             sendStat("STMr", lastStats());
             break;
@@ -196,9 +218,9 @@ void SlimProtoClient::process(const std::string& pkt) {
             st.transitionType = static_cast<uint8_t>(pkt[14] - '0');
             st.flags = static_cast<uint8_t>(pkt[15]);
             st.outputThresholdTenths = static_cast<uint8_t>(pkt[16]);
-            st.replayGain = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
-            st.serverPort = static_cast<uint16_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(22, 2)));
-            st.serverIp = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(24, 4)));
+            st.replayGain = static_cast<uint32_t>(beAt(pkt, 18, 4));
+            st.serverPort = static_cast<uint16_t>(beAt(pkt, 22, 2));
+            st.serverIp = static_cast<uint32_t>(beAt(pkt, 24, 4));
             st.request.assign(pkt.data() + 28, len - 28);
             log::debug("strm s autostart={} format={} threshold={}", st.autostart,
                        static_cast<char>(st.format), st.thresholdKb);
@@ -212,7 +234,7 @@ void SlimProtoClient::process(const std::string& pkt) {
         }
     } else if (op == "cont") {
         if (len < 8) return;
-        uint32_t metaint = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(4, 4)));
+        uint32_t metaint = static_cast<uint32_t>(beAt(pkt, 4, 4));
         if (events_.onCont) events_.onCont(metaint);
     } else if (op == "codc") {
         if (len < 10) return;
@@ -222,8 +244,8 @@ void SlimProtoClient::process(const std::string& pkt) {
         if (events_.onCodc) events_.onCodc(f, pcm);
     } else if (op == "audg") {
         if (len < 22) return;
-        uint32_t gainL = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(14, 4)));
-        uint32_t gainR = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
+        uint32_t gainL = static_cast<uint32_t>(beAt(pkt, 14, 4));
+        uint32_t gainR = static_cast<uint32_t>(beAt(pkt, 18, 4));
         uint8_t adjust = static_cast<uint8_t>(pkt[12]);
         // dvc=0 is LMS's fixed-output mode: the gains are the no-op 1.0 and
         // applying them would push 0 dB = full blast. Leave the receiver at
@@ -261,12 +283,10 @@ void SlimProtoClient::process(const std::string& pkt) {
         }
     } else if (op == "serv") {
         if (len >= 8) {
-            uint32_t ip = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(4, 4)));
+            uint32_t ip = static_cast<uint32_t>(beAt(pkt, 4, 4));
             if (events_.onServerSwitch) events_.onServerSwitch(ip);
         }
-    } else if (op == "aude" || op == "DBUG" || op == "SYST" || op == "visu" ||
-               op == "IR  " || op == "GRFe" || op == "GRFh" || op == "GRFb" ||
-               op == "GRFm" || op == "OCOB") {
+    } else if (std::ranges::find(kIgnoredOps, op) != kIgnoredOps.end()) {
         log::debug("ignored {}", op);
     } else {
         log::warn("unhandled opcode {}", op);

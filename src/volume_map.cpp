@@ -4,8 +4,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <optional>
-#include <string>
 
 namespace squeeze2raop2 {
 
@@ -27,17 +27,12 @@ std::optional<VolumeAnchors> VolumeAnchors::parse(std::string_view spec) {
 
         size_t colon = item.find(':');
         if (colon == std::string_view::npos) return std::nullopt;
-        size_t used = 0;
         double db = 0, pct = 0;
-        try {
-            db = std::stod(std::string(item.substr(0, colon)), &used);
-            if (used != colon) return std::nullopt;
-            size_t off = colon + 1;
-            pct = std::stod(std::string(item.substr(off)), &used);
-            if (used != item.size() - off) return std::nullopt;
-        } catch (const std::exception&) {
-            return std::nullopt;
-        }
+        auto [dbEnd, dbEc] = std::from_chars(item.data(), item.data() + colon, db);
+        if (dbEc != std::errc{} || dbEnd != item.data() + colon) return std::nullopt;
+        auto [pctEnd, pctEc] = std::from_chars(item.data() + colon + 1,
+                                               item.data() + item.size(), pct);
+        if (pctEc != std::errc{} || pctEnd != item.data() + item.size()) return std::nullopt;
         // pct 0 is the mute sentinel, kept out of the anchor table
         if (db > 0.0 || db < -144.0 || pct < 1.0 || pct > 100.0) return std::nullopt;
         out.points_.emplace_back(pct, db);
