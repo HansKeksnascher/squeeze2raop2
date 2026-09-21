@@ -392,19 +392,25 @@ void SlimProtoClient::process(const std::string& pkt) {
         uint32_t gainL = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(14, 4)));
         uint32_t gainR = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
         uint8_t adjust = static_cast<uint8_t>(pkt[12]);
+        // dvc=0 is LMS's fixed-output mode: the gains are the no-op 1.0 and
+        // applying them would push 0 dB = full blast. Leave the receiver at
+        // its current level.
+        if (!adjust) {
+            log::debug("audg dvc=0 ignored (fixed-output mode)");
+            return;
+        }
         // new_left/new_right are 16.16 fixed-point linear amplitude
-        // multipliers (1.0 = full volume). LMS encodes its slider through a
-        // linear dB curve (Squeezebox2 getVolume: 0.495 dB/step over
-        // -50..0 dB, maximumVolume 0). Invert it to recover the slider
-        // percent: pct = 100 + dB*101/50, then hand that to the AirPlay
-        // sender whose 0..100 % mapping covers the protocol's -30..0 dB
-        // range (0 % = -144 mute sentinel). AirPlay cannot go below -30 dB,
-        // so LMS gain below ~slider 40 falls at pct 0 (clamped), which the
-        // receiver plays as its quietest level; LMS mute (gain 0) -> pct 0.
+        // multipliers (1.0 = full volume). Invert LMS's linear dB slider
+        // curve (Squeezebox2 getVolume: 0.495 dB/step over -50..0 dB,
+        // maximumVolume 0) to recover the slider percent:
+        // pct = 100 + dB*101/50. The bridge passes this straight to the
+        // AirPlay sender's 0..100 % domain, whose 0 % is the -144 mute
+        // sentinel and 100 % is 0 dB: the full LMS slider span maps onto
+        // AirPlay's -30..0 dB protocol range at 0.3 dB per slider step
+        // (LMS minimum = receiver mute, LMS maximum = full scale).
         auto pctOf = [&](uint32_t raw) {
-            uint32_t gain = adjust ? raw : 65536;  // dvc=0 => full volume
-            if (gain == 0) return 0.0;             // LMS mute
-            double db = 20.0 * std::log10(static_cast<double>(gain) / 65536.0);
+            if (raw == 0) return 0.0;              // LMS mute
+            double db = 20.0 * std::log10(static_cast<double>(raw) / 65536.0);
             double pct = 100.0 + db * 101.0 / 50.0;
             return std::clamp(pct, 0.0, 100.0);
         };

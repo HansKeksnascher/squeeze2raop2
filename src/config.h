@@ -17,6 +17,13 @@ struct PlayerSettings {
     bool explicitName = false;
 };
 
+enum class VolumeMode {
+    Lms,   // follow the LMS slider: the AUDG-recovered slider percent passes
+           // straight to the receiver (LMS minimum = receiver mute, LMS
+           // maximum = 0 dB; 0.3 dB per slider step)
+    Fixed, // ignore AUDG, play every session at volPct
+};
+
 struct Settings {
     std::optional<std::string> lmsHost;
     uint16_t lmsPort = 3483;
@@ -29,10 +36,14 @@ struct Settings {
     std::string mdnsIface;
     bool mdnsDebug = false;
     bool discovery = true;
-    // Fixed AirPlay volume percent sent to receivers (bypasses the LMS mixer
-    // mapping while volume control is being designed). Maps onto AirPlay's
-    // -30..0 dB protocol range via db = 0.3*pct - 30. 0 would be the receiver
-    // mute sentinel (-144 dB), so the floor is 0.5.
+    // Volume control: 'lms' tracks the LMS slider via AUDG (recovered slider
+    // percent -> receiver 0..100 pct); 'fixed' ignores AUDG and plays at
+    // volPct.
+    VolumeMode volumeMode = VolumeMode::Lms;
+    // Fixed AirPlay volume percent (--vol-pct): the fixed-mode level, and in
+    // lms mode the pre-AUDG fallback until LMS pushes the slider. Maps onto
+    // AirPlay's -30..0 dB protocol range via db = 0.3*pct - 30. 0 would be
+    // the receiver mute sentinel (-144 dB), so the floor is 0.5.
     float volPct = 0.7f;
     // Scheduled AirPlay latency in ms (22050+44100 frames = 1.5 s is the
     // sender's default; 500 ms is Apple's own iPhone ballpark). The

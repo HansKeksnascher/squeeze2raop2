@@ -209,6 +209,41 @@ static void testHeloFramingAndStatRoundTrip() {
     expect(volumeSeen.load(), "audg fired onVolume");
     expect(volumePct.load() > 99.9 && volumePct.load() <= 100.0, "full-scale gain maps to 100%");
 
+    // --- audg mid-range gain -> ~50 % (LMS slider 50 = -24.75 dB) ---
+    // linear amplitude 10^(-24.75/20) = 0.05783 -> 16.16 fixed point 3790
+    const uint32_t midGain = 3790;
+    volumeSeen.store(false);
+    for (int i = 0; i < 4; ++i) {
+        audg[10 + static_cast<size_t>(i)] = static_cast<unsigned char>(midGain >> (24 - 8 * i));
+        audg[14 + static_cast<size_t>(i)] = static_cast<unsigned char>(midGain >> (24 - 8 * i));
+    }
+    server.sendPacket("audg", audg);
+    for (int i = 0; i < 100 && !volumeSeen.load(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    expect(volumeSeen.load(), "mid-range audg fired onVolume");
+    expect(volumePct.load() > 49.9 && volumePct.load() < 50.1,
+           "slider-50 gain decodes to ~50%");
+
+    // --- audg mute (gain 0) -> pct 0 (the receiver's -144 mute sentinel) ---
+    volumeSeen.store(false);
+    for (int i = 10; i < 18; ++i) audg[static_cast<size_t>(i)] = 0;
+    server.sendPacket("audg", audg);
+    for (int i = 0; i < 100 && !volumeSeen.load(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    expect(volumeSeen.load(), "zero-gain audg fired onVolume");
+    expect(volumePct.load() == 0.0, "LMS mute decodes to pct 0");
+
+    // --- audg dvc=0 -> no onVolume (LMS fixed-output mode) ---
+    volumeSeen.store(false);
+    std::vector<unsigned char> audgNoAdj(18);
+    audgNoAdj[10] = 0x40;  // nonzero gains: if the dvc=0 short-circuit were
+    audgNoAdj[11] = 0x00;  // missing, this would decode to a very loud pct
+    audgNoAdj[14] = 0x40;
+    audgNoAdj[15] = 0x00;
+    server.sendPacket("audg", audgNoAdj);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    expect(!volumeSeen.load(), "dvc=0 audg does not fire onVolume");
+
     // --- stop(): BYE! + EOF, clean join ---
     client.stop();
     server.expectClosedByClient();

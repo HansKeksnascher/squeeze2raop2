@@ -57,8 +57,13 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
                 "  --iface <name>        mdns network interface (default: all)\n"
                 "  --mdns-debug          browse-only mDNS debug mode (no LMS/AirPlay sessions)\n"
                 "  --discovery on|off    spawn sessions for discovered devices (default on)\n"
-                "  --vol-pct <N>         fixed AirPlay volume percent 0.5-100 (default 0.7,\n"
-                "                        maps to -30..0 dB; 25 was ear-measured as loud)\n"
+                "  --vol-mode lms|fixed  follow the LMS slider via AUDG (default; LMS"
+                "\n"
+                "                        minimum = receiver mute, maximum = 0 dB) or\n"
+                "                        ignore LMS volume and play at --vol-pct\n"
+                "  --vol-pct <N>         AirPlay volume percent 0.5-100 (default 0.7,\n"
+                "                        about -29.8 dB; fixed-mode level and the\n"
+                "                        fallback until LMS pushes the slider)\n"
                 "  --ap-latency-ms <N>   scheduled AirPlay latency 250-2000 ms (default 500;\n"
                 "                        lower = snappier but more dropout-prone)\n"
                 "  --log <level>         off|error|warn|info|debug\n"
@@ -141,6 +146,11 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             if (v == "on") s.discovery = true;
             else if (v == "off") s.discovery = false;
             else { log::error("--discovery must be on|off"); return std::nullopt; }
+        } else if (arg == "--vol-mode") {
+            if (!requireValue(arg, value(), v)) return std::nullopt;
+            if (v == "lms") s.volumeMode = VolumeMode::Lms;
+            else if (v == "fixed") s.volumeMode = VolumeMode::Fixed;
+            else { log::error("--vol-mode must be lms|fixed"); return std::nullopt; }
         } else if (arg == "--vol-pct") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
             try {

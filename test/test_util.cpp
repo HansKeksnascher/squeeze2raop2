@@ -131,6 +131,21 @@ static void testParseTxtKeyValues() {
     if (txt.size() != 1 || txt["ab"] != "cd") exit(1);
 }
 
+static void testClampAirVolumePct() {
+    // exactly 0 keeps the -144 dB mute sentinel
+    if (clampAirVolumePct(0.0) != 0.0) exit(1);
+    if (clampAirVolumePct(-3.0) != 0.0) exit(1);
+    // tiny nonzero gains quantize near 0: clamp to the floor, never mute
+    if (clampAirVolumePct(0.001) != 0.05) exit(1);
+    if (clampAirVolumePct(0.049) != 0.05) exit(1);
+    // in-range values pass through unchanged
+    if (clampAirVolumePct(0.05) != 0.05) exit(1);
+    if (clampAirVolumePct(50.22) != 50.22) exit(1);
+    if (clampAirVolumePct(100.0) != 100.0) exit(1);
+    // overshoot clamps to full scale
+    if (clampAirVolumePct(123.0) != 100.0) exit(1);
+}
+
 int main() {
     testPackN();
     testPcmCodes();
@@ -138,6 +153,7 @@ int main() {
     testShortPackets();
     testUrlDecode();
     testParseTxtKeyValues();
+    testClampAirVolumePct();
     printf("ok\n");
     return 0;
 }

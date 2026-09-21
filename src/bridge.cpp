@@ -53,7 +53,8 @@ public:
                   std::optional<std::string> lmsHost, uint16_t lmsPort,
                   bool paceRealtime, std::optional<std::string> sinkPath,
                   std::optional<RaopTarget> raopTarget,
-                  RaopPlayer::CredentialSink credSink, float volPct, int latencyMs)
+                  RaopPlayer::CredentialSink credSink, VolumeMode volumeMode,
+                  float volPct, int latencyMs)
         : deviceId_(std::move(deviceId)),
           name_(std::move(name)),
           mac_(mac),
@@ -63,6 +64,7 @@ public:
           sinkPath_(std::move(sinkPath)),
           raopTarget_(std::move(raopTarget)),
           credSink_(std::move(credSink)),
+          volumeMode_(volumeMode),
           fixedVolumePct_(volPct),
           latencyMs_(latencyMs) {}
 
@@ -141,13 +143,33 @@ public:
             pauseUntilMs_ = 0;
         };
         events.onVolume = [this](double l, double r) {
-            // Volume control via LMS mixer is deferred (LMS 9.1 sends mute-form
-            // AUDG gains at low sliders and the mapping needs a calibration
-            // pass); sessions run at the fixed --vol-pct level instead.
+            // The recovered LMS slider percent passes straight onto the
+            // AirPlay sender's 0..100 % domain (0 % = -144 mute sentinel,
+            // 100 % = 0 dB), i.e. LMS minimum = receiver mute, LMS maximum =
+            // full scale.
             double pct = (l == r) ? r : (l + r) / 2.0;
-            log::info("volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})",
-                      l, r, pct, fixedVolumePct_);
-            (void)pct;
+            if (volumeMode_ == VolumeMode::Fixed) {
+                log::info("volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})",
+                          l, r, pct, fixedVolumePct_);
+                return;
+            }
+            pct = clampAirVolumePct(pct);
+            // NB: targetMutex_ also guards raop_ mutation in ensureRaop() and
+            // the streamLoop teardown paths; no mutex_ nesting here (see the
+            // onCont comment).
+            std::lock_guard<std::mutex> lock(targetMutex_);
+            // Remember the slider, not mute pushes: LMS's stop-fade ends at
+            // gain 0 and fresh players get a 0-gain push on registration, so
+            // a stored 0 would mute the next session until the first AUDG.
+            if (pct > 0.0) lastLmsPct_ = pct;
+            if (raop_ && raop_->active()) {
+                raop_->setVolume(pct);
+                log::info("[ap] volume {:.1f} pct applied (lms)", pct);
+            } else {
+                log::info("volume -> {:.1f} pct ({})", pct,
+                          pct > 0.0 ? "remembered for next session"
+                                    : "mute, not remembered");
+            }
         };
 
         client_ = std::make_unique<SlimProtoClient>(
@@ -205,9 +227,18 @@ public:
         // ("never carry volume between devices"), so a pre-start setVolume is
         // lost and startStreaming_ falls back to 0 dB = full blast. Post-start
         // it only stores until the handshake finishes; startStreaming_ sends
-        // the stored value before the audio pacer starts.
-        raop_->setVolume(static_cast<double>(fixedVolumePct_));
-        log::info("[ap] fixed volume {} pct applied (post-start)", fixedVolumePct_);
+        // the stored value before the audio pacer starts. In lms mode the
+        // last AUDG slider value wins; without one yet the fixed --vol-pct
+        // level covers the first seconds until LMS pushes the slider.
+        if (volumeMode_ == VolumeMode::Lms && lastLmsPct_ > 0.0) {
+            raop_->setVolume(lastLmsPct_);
+            log::info("[ap] volume {:.1f} pct applied (remembered lms slider)",
+                      lastLmsPct_);
+        } else {
+            raop_->setVolume(static_cast<double>(fixedVolumePct_));
+            log::info("[ap] fixed volume {} pct applied (post-start)",
+                      fixedVolumePct_);
+        }
         if (raop_) log::info("[ap] session launching for {} ({})", name_,
                              raopTarget_->airplay2 ? "ap2" : "ap1");
         return true;
@@ -659,9 +690,15 @@ private:
     std::atomic<bool> deviceLost_{false};  // receiver ended the session
     std::atomic<bool> retryUsed_{false};   // one transparent retry per stream
     std::string lastTitle_;                // re-applied on session recreate
-    // Fixed AirPlay volume percent (--vol-pct), applied to every session
-    // before RECORD so audio never starts at the receiver's hardware default.
+    // --vol-pct: fixed-mode level, and in lms mode the pre-AUDG fallback
+    // applied to every new session before RECORD (so audio never starts at
+    // the receiver's hardware default).
+    VolumeMode volumeMode_;
     float fixedVolumePct_;
+    // Last LMS slider percent seen via AUDG (lms mode); 0 = none. Re-applied
+    // by ensureRaop() on session recreation. Mute pushes (0) are not stored
+    // so LMS's end-of-fade zero gain can't mute the next session.
+    double lastLmsPct_ = 0.0;
     // Scheduled AirPlay latency in ms (--ap-latency-ms).
     int latencyMs_;
 };
@@ -743,7 +780,7 @@ public:
                 (void)deviceId;
                 store_.saveCreds(devId, creds);
             },
-            settings_.volPct, settings_.apLatencyMs);
+            settings_.volumeMode, settings_.volPct, settings_.apLatencyMs);
         session->start();
         sessions_[dev.id] = std::move(session);
     }
