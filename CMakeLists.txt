@@ -96,6 +96,21 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   squeeze2raop2_target_settings(squeeze2raop2_tests)
   add_test(NAME util_test COMMAND squeeze2raop2_tests)
 
+  add_executable(squeeze2raop2_state_tests test/test_state_store.cpp)
+  target_link_libraries(squeeze2raop2_state_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_state_tests)
+  add_test(NAME state_store_test COMMAND squeeze2raop2_state_tests)
+
+  add_executable(squeeze2raop2_wav_tests test/test_wav_sink.cpp)
+  target_link_libraries(squeeze2raop2_wav_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_wav_tests)
+  add_test(NAME wav_sink_test COMMAND squeeze2raop2_wav_tests)
+
+  add_executable(squeeze2raop2_wire_tests test/test_slimproto_wire.cpp)
+  target_link_libraries(squeeze2raop2_wire_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_wire_tests)
+  add_test(NAME slimproto_wire_test COMMAND squeeze2raop2_wire_tests)
+
   add_executable(mp3_smoke test/mp3_smoke.cpp)
   target_link_libraries(mp3_smoke PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(mp3_smoke)

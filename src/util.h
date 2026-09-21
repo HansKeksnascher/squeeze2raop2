@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -26,6 +27,11 @@ inline uint64_t unpackN(std::span<const std::byte> src) {
 }
 
 uint32_t hash32(std::string_view s);
+
+// Parses mDNS TXT wire format: a sequence of (len byte, len-1 data bytes),
+// each data chunk split at its first '=' into key/value. First occurrence
+// of a key wins.
+std::map<std::string, std::string> parseTxtKeyValues(std::string_view raw);
 
 std::string macToString(const std::array<uint8_t, 6>& mac);
 bool macFromString(std::string_view s, std::array<uint8_t, 6>& out);

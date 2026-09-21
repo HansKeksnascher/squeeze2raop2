@@ -92,11 +92,52 @@ static void testShortPackets() {
     }
 }
 
+static void testUrlDecode() {
+    // well-formed percent escapes and '+'-for-space
+    if (urlDecode("a%20b+c") != "a b c") exit(1);
+    if (urlDecode("%2B") != "+") exit(1);
+    if (urlDecode("%00") != std::string(1, '\0')) exit(1);
+    // malformed escapes pass through literally
+    if (urlDecode("100%") != "100%") exit(1);
+    if (urlDecode("%zz") != "%zz") exit(1);
+    if (urlDecode("%2") != "%2") exit(1);
+    if (urlDecode("%2g") != "%2g") exit(1);
+    // unchanged strings
+    if (urlDecode("plain") != "plain") exit(1);
+    if (!urlDecode("").empty()) exit(1);
+}
+
+static void testParseTxtKeyValues() {
+    // wire format: (len byte, len-1 data bytes); first occurrence of a key wins
+    const std::string wire =
+        std::string("\x06", 1) + "br=128" + std::string("\x03", 1) + "a=b" +
+        std::string("\x02", 1) + "br" + std::string("\x08", 1) + "name=x=y";
+    auto txt = parseTxtKeyValues(wire);
+    if (txt.size() != 3) exit(1);
+    if (txt["br"] != "128") exit(1);   // first occurrence wins over bare "br"
+    if (txt["a"] != "b") exit(1);
+    if (txt["name"] != "x=y") exit(1); // only the first '=' splits
+
+    // key without '=' yields an empty value
+    txt = parseTxtKeyValues(std::string("\x03", 1) + "key");
+    if (txt.size() != 1 || txt["key"] != "") exit(1);
+
+    // zero-length or truncated records stop the parse cleanly
+    txt = parseTxtKeyValues(std::string("\x00", 1) + "ignored");
+    if (!txt.empty()) exit(1);
+    txt = parseTxtKeyValues(std::string("\x0A", 1) + "short");
+    if (!txt.empty()) exit(1);
+    txt = parseTxtKeyValues(std::string("\x05", 1) + "ab=cd" + std::string("\xFF", 1) + "junk");
+    if (txt.size() != 1 || txt["ab"] != "cd") exit(1);
+}
+
 int main() {
     testPackN();
     testPcmCodes();
     testMac();
     testShortPackets();
+    testUrlDecode();
+    testParseTxtKeyValues();
     printf("ok\n");
     return 0;
 }

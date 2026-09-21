@@ -168,17 +168,18 @@ bool SlimProtoClient::sendRaw(std::span<const std::byte> data) {
     return sent == len;
 }
 
-bool SlimProtoClient::sendPacket(std::string_view opcode, std::span<const std::byte> payload) {
+bool SlimProtoClient::sendPacket(const char (&opcode)[5], std::span<const std::byte> payload) {
     if (sock_ < 0) return false;
-    if (opcode.size() != 4) return false;  // opcodes are exactly 4 bytes
     // client -> LMS framing (per squeezelite/HELO spec):
     // [4b opcode][4b big-endian length = payload bytes][payload]
-    std::vector<uint8_t> pkt(8 + payload.size());
-    std::memcpy(pkt.data(), opcode.data(), 4);
-    packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), payload.size(), 4);
-    if (!payload.empty())
-        std::memcpy(pkt.data() + 8, payload.data(), payload.size());
-    return sendRaw(std::as_bytes(std::span{pkt}));
+    std::array<std::byte, 8> header{};
+    std::memcpy(header.data(), opcode, 4);
+    packN(std::span{header}.subspan(4, 4), payload.size(), 4);
+    std::vector<std::byte> pkt;
+    pkt.reserve(8 + payload.size());
+    pkt.insert(pkt.end(), header.begin(), header.end());
+    if (!payload.empty()) pkt.insert(pkt.end(), payload.begin(), payload.end());
+    return sendRaw(std::span{pkt});
 }
 
 void SlimProtoClient::sendHelo(bool reconnect) {
@@ -253,6 +254,9 @@ void SlimProtoClient::sendMeta(const char* data, size_t len) {
     // squeezelite parity: forward the raw ICY metadata block to LMS so its
     // track display follows the stream (LMS also watches direct streams
     // itself; this is redundant there but keeps proxied streams in sync).
+    // The ICY de-interleaver only invokes this with a non-empty block; an
+    // empty block carries no information for LMS either way.
+    if (!data || len == 0) return;
     sendPacket("META", std::as_bytes(std::span{data, len}));
 }
 

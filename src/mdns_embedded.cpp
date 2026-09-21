@@ -118,23 +118,6 @@ std::string stripServiceSuffix(const std::string& fqdnIn, const std::string& ser
     return fqdn;
 }
 
-std::map<std::string, std::string> parseTxtKeyValues(std::string_view raw) {
-    // raw is TXT wire format: a sequence of (len byte, len-1 bytes of data)
-    std::map<std::string, std::string> out;
-    size_t idx = 0;
-    while (idx < raw.size()) {
-        uint8_t len = static_cast<uint8_t>(raw[idx]);
-        if (len == 0 || idx + 1 + len > raw.size()) break;
-        std::string item(raw.substr(idx + 1, len));
-        auto eq = item.find('=');
-        std::string key = (eq != std::string::npos) ? item.substr(0, eq) : item;
-        std::string value = (eq != std::string::npos) ? item.substr(eq + 1) : std::string();
-        if (out.find(key) == out.end()) out[key] = value;
-        idx += 1 + len;
-    }
-    return out;
-}
-
 } // namespace
 
 // All mDNS core access happens on the loop thread: mDNS is single-threaded

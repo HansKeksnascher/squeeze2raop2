@@ -115,7 +115,9 @@ public:
 private:
     void run(std::stop_token st);
     bool connectOnce(bool reconnect);
-    bool sendPacket(std::string_view opcode, std::span<const std::byte> payload);
+    // opcode must be a 4-character string literal (the array reference makes
+    // null/short opcodes unrepresentable at every call site).
+    bool sendPacket(const char (&opcode)[5], std::span<const std::byte> payload);
     bool sendRaw(std::span<const std::byte> data);
     void sendHelo(bool reconnect);
     void maybeHeartbeat();
