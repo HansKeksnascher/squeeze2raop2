@@ -17,7 +17,7 @@
 #include <cstring>
 #include <span>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 
@@ -28,7 +28,7 @@ std::string ipv4ToString(const in_addr& addr) {
     char buf[INET_ADDRSTRLEN];
     if (!inet_ntop(AF_INET, &addr, buf, sizeof(buf))) return std::string();
     return std::string(buf);
-}
+} // namespace
 
 } // namespace
 
@@ -72,7 +72,7 @@ bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
     }
     ::close(fd);
     return false;
-}
+} // namespace squeeze2raop2
 
 uint32_t sampleRateFromCode(uint8_t code) {
     switch (code) {
@@ -397,7 +397,7 @@ void SlimProtoClient::process(const std::string& pkt) {
     } else if (op == "setd") {
         if (len >= 5 && pkt[4] == '\0') {
             if (len == 5) {
-                sendSetdName(playerName_.empty() ? "sqraop2" : playerName_);
+                sendSetdName(playerName_.empty() ? "squeeze2raop2" : playerName_);
             } else if (len > 5) {
                 std::string name(pkt.data() + 5, len - 5);
                 while (!name.empty() && name.back() == '\0') name.pop_back();

@@ -5,7 +5,7 @@
 #include <cctype>
 #include <charconv>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 std::string DeviceRegistry::normalizeHexKey(const std::string& raw) {
     std::string hex;
@@ -17,7 +17,7 @@ std::string DeviceRegistry::normalizeHexKey(const std::string& raw) {
     }
     if (hex.size() < 12) return std::string();
     return hex.substr(0, 12);
-}
+} // namespace squeeze2raop2
 
 std::string DeviceRegistry::keyFor(const std::string& instance) {
     if (instance.size() >= 12) {

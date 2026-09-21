@@ -1,5 +1,5 @@
-// sqraop2 - bridge between LMS slimproto and AirPlay senders.
-// This wrapper is sqraop2's own code; minimp3 itself is public domain / CC0
+// squeeze2raop2 - bridge between LMS slimproto and AirPlay senders.
+// This wrapper is squeeze2raop2's own code; minimp3 itself is public domain / CC0
 // (third_party/minimp3/minimp3.h).
 
 #define MINIMP3_IMPLEMENTATION
@@ -27,7 +27,7 @@
 #include "log.h"
 #include "mp3_decoder.h"
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 // Only decode while at least this many compressed bytes are pending: a full
@@ -49,12 +49,12 @@ void Mp3Decoder::feed(std::span<const std::byte> data) {
     if (data.empty()) return;
     buffer_.insert(buffer_.end(), data.begin(), data.end());
     decodeMore();
-}
+} // namespace
 
 void Mp3Decoder::finish() {
     eof_ = true;
     decodeMore();
-}
+} // namespace squeeze2raop2
 
 void Mp3Decoder::decodeMore() {
     if (failed_) return;
@@ -112,4 +112,4 @@ size_t Mp3Decoder::drain(std::span<int16_t> out) {
     return n;
 }
 
-}  // namespace sq2
+}  // namespace squeeze2raop2

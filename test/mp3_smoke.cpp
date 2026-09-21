@@ -9,7 +9,7 @@
 #include <span>
 #include <vector>
 
-using sq2::Mp3Decoder;
+using squeeze2raop2::Mp3Decoder;
 
 namespace {
 

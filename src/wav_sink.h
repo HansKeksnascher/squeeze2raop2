@@ -7,7 +7,7 @@
 #include <span>
 #include <string>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 class PcmFileSink {
 public:
@@ -28,4 +28,4 @@ private:
     bool headerWritten_ = false;
 };
 
-}
+} // namespace squeeze2raop2

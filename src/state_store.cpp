@@ -13,7 +13,7 @@
 #include <sstream>
 #include <string>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 
@@ -32,7 +32,7 @@ std::array<uint8_t, 6> uniqueMacFor(std::map<std::string, StateStoreEntry>& entr
         candidate[5] = static_cast<uint8_t>((candidate[5] + 1) & 0xFF);
     }
     return fakeMacFor(deviceId);
-}
+} // namespace
 
 } // namespace
 
@@ -45,7 +45,7 @@ std::string encodeId(const std::string& id) {
         else out.push_back(c);
     }
     return out;
-}
+} // namespace squeeze2raop2
 
 bool StateStore::open(const std::string& path, std::string& errorOut) {
     {
@@ -131,7 +131,7 @@ bool StateStore::save() {
         log::error("cannot write state file {}", path_);
         return false;
     }
-    out << "# sqraop2 state: stable virtual MACs, AirPlay pairing credentials\n";
+    out << "# squeeze2raop2 state: stable virtual MACs, AirPlay pairing credentials\n";
     for (const auto& kv : entries_) {
         if (kv.second.hasMac)
             out << "mac  " << encodeId(kv.first) << " " << macToString(kv.second.mac) << "\n";

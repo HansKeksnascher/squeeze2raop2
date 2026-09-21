@@ -6,7 +6,7 @@
 #include <memory>
 #include <string>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 struct MdnsRecord {
     std::string type;
@@ -37,4 +37,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}
+} // namespace squeeze2raop2

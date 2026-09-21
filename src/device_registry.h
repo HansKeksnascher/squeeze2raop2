@@ -6,7 +6,7 @@
 #include <mutex>
 #include <string>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 struct AirplayDevice {
     std::string id;
@@ -62,4 +62,4 @@ private:
     Callback cb_;
 };
 
-}
+} // namespace squeeze2raop2

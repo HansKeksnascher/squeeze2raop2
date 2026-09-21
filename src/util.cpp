@@ -5,7 +5,7 @@
 #include <cctype>
 #include <format>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 uint32_t hash32(std::string_view s) {
     uint32_t h = 2166136261u;
@@ -15,7 +15,7 @@ uint32_t hash32(std::string_view s) {
         h *= 16777619u;
     }
     return h;
-}
+} // namespace squeeze2raop2
 
 std::string macToString(const std::array<uint8_t, 6>& mac) {
     return std::format("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2],

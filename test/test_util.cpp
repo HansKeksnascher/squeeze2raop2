@@ -6,7 +6,7 @@
 #include <span>
 #include <string>
 
-using namespace sq2;
+using namespace squeeze2raop2;
 
 static void testPackN() {
     uint8_t buf[8] = {};

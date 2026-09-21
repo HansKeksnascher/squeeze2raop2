@@ -6,7 +6,7 @@
 #include <charconv>
 #include <optional>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 
@@ -17,7 +17,7 @@ bool requireValue(const std::string& flag, const char* value, std::string& out) 
     }
     out = value;
     return true;
-}
+} // namespace
 
 std::optional<uint16_t> parsePort(const std::string& text) {
     unsigned port = 0;
@@ -25,7 +25,7 @@ std::optional<uint16_t> parsePort(const std::string& text) {
     if (ec != std::errc{} || ptr != text.data() + text.size() || port < 1 || port > 65535)
         return std::nullopt;
     return static_cast<uint16_t>(port);
-}
+} // namespace squeeze2raop2
 
 } // namespace
 
@@ -41,8 +41,8 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
 
         if (arg == "-h" || arg == "--help") {
             std::printf(
-                "sqraop2 - Squeezebox to AirPlay 2 bridge\n"
-                "usage: sqraop2 [options]\n\n"
+                "squeeze2raop2 - Squeezebox to AirPlay 2 bridge\n"
+                "usage: squeeze2raop2 [options]\n\n"
                 "  --lms <host[:port]>   connect to this LMS (default: UDP discovery on 3483)\n"
                 "  --name <name>         player name (default: AirPlay)\n"
                 "  --mac <xx:..>         player MAC override\n"
@@ -53,7 +53,7 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
                 "  --ap-password <pw>    RTSP digest password for pw=true receivers\n"
                 "  --device <NAME>       also register this name as static player\n"
                 "                        (used when discovery is unavailable)\n"
-                "  --state <file>        persistent MAC/credential store (default sqraop2.state)\n"
+                "  --state <file>        persistent MAC/credential store (default squeeze2raop2.state)\n"
                 "  --iface <name>        mdns network interface (default: all)\n"
                 "  --mdns-debug          browse-only mDNS debug mode (no LMS/AirPlay sessions)\n"
                 "  --discovery on|off    spawn sessions for discovered devices (default on)\n"

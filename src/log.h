@@ -3,7 +3,7 @@
 #include <format>
 #include <string_view>
 
-namespace sq2::log {
+namespace squeeze2raop2::log {
 
 enum class Level : std::uint8_t { Off = 0, Error, Warn, Info, Debug };
 
@@ -19,7 +19,7 @@ void log(Level l, std::string_view fmt, const A&... a) {
     } else {
         write(l, std::vformat(fmt, std::make_format_args(a...)));
     }
-}
+} // namespace squeeze2raop2
 
 inline void fatal(std::string_view fmt, auto&&... a) { log(Level::Error, fmt, std::forward<decltype(a)>(a)...); }
 inline void error(std::string_view fmt, auto&&... a) { log(Level::Error, fmt, std::forward<decltype(a)>(a)...); }

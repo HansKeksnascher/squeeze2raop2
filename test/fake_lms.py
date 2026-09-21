@@ -195,7 +195,7 @@ class FakeLms:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fake LMS for sqraop2 testing")
+    parser = argparse.ArgumentParser(description="fake LMS for squeeze2raop2 testing")
     parser.add_argument("--tcp-port", type=int, default=3483)
     parser.add_argument("--http-port", type=int, default=9000)
     parser.add_argument("--stream-seconds", type=float, default=8.0)

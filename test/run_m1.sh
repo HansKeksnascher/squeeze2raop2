@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run M1 loop test: fake LMS + sqraop2 (file sink), dump logs, cleanup.
+# run M1 loop test: fake LMS + squeeze2raop2 (file sink), dump logs, cleanup.
 set -u
 LOGDIR=${LOGDIR:-/tmp/opencode}
 rm -f "$LOGDIR"/m1_*.log "$LOGDIR"/kitchen_*.wav
@@ -10,7 +10,7 @@ python3 test/fake_lms.py --tcp-port 3483 --http-port 9000 \
     --stop-after-sec "${STOP_AFTER:-0}" > "$LOGDIR/m1_lms.log" 2>&1 &
 LMS_PID=$!
 sleep 0.7
-./build/sqraop2 --lms 127.0.0.1 --discovery off --name Kitchen --sink "$LOGDIR/kitchen_test.wav" \
+./build/squeeze2raop2 --lms 127.0.0.1 --discovery off --name Kitchen --sink "$LOGDIR/kitchen_test.wav" \
     --pace "${PACE:-fast}" --log ${BRIDGE_LOG:-info} > "$LOGDIR/m1_bridge.log" 2>&1 &
 BRIDGE_PID=$!
 

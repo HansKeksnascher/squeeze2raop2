@@ -17,7 +17,7 @@
 #include <cstring>
 #include <thread>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 
@@ -57,7 +57,7 @@ int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
         return -1;
     }
     return fd;
-}
+} // namespace
 
 bool sendAll(int fd, const void* data, size_t len) {
     const char* p = static_cast<const char*>(data);
@@ -74,7 +74,7 @@ bool sendAll(int fd, const void* data, size_t len) {
         len -= static_cast<size_t>(n);
     }
     return true;
-}
+} // namespace squeeze2raop2
 
 } // namespace
 
@@ -109,7 +109,7 @@ uint32_t parseIcyMetaint(const std::string& headers) {
     // Absurd interval (or unparseable): treat as absent.
     if (ec != std::errc{} || v == 0 || v > (1u << 20)) return 0;
     return static_cast<uint32_t>(v);
-}
+} // namespace
 
 } // namespace
 

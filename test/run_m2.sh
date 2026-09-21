@@ -9,7 +9,7 @@ python3 test/fake_lms.py --tcp-port 3483 --http-port 9000 > "$LOGDIR/m2_lms.log"
 LMS_PID=$!
 sleep 0.7
 
-./build/sqraop2 --lms 127.0.0.1 --discovery off --device Kitchen --device "Living Room" \
+./build/squeeze2raop2 --lms 127.0.0.1 --discovery off --device Kitchen --device "Living Room" \
     --sink "$LOGDIR/m2_audio.wav" --pace fast --log info > "$LOGDIR/m2_bridge.log" 2>&1 &
 BRIDGE_PID=$!
 
@@ -26,5 +26,5 @@ kill -9 "$LMS_PID" "$BRIDGE_PID" 2>/dev/null
 wait 2>/dev/null
 echo "===== LMS ====="; cat "$LOGDIR/m2_lms.log"
 echo "===== BRIDGE ====="; cat "$LOGDIR/m2_bridge.log"
-echo "===== STATE ====="; cat sqraop2.state 2>/dev/null | tail -5
+echo "===== STATE ====="; cat squeeze2raop2.state 2>/dev/null | tail -5
 exit 0

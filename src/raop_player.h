@@ -12,7 +12,7 @@
 #include <string>
 #include <thread>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 struct RaopTarget {
     std::string host;
@@ -70,4 +70,4 @@ private:
     std::function<void()> onClosed_;
 };
 
-}
+} // namespace squeeze2raop2

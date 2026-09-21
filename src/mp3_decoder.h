@@ -21,7 +21,7 @@
 #pragma GCC diagnostic pop
 #endif
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 // Incremental MP3 decoder wrapper around the public-domain minimp3 single header.
 // Compressed bytes accumulate in one contiguous window (the consumed prefix is
@@ -59,4 +59,4 @@ private:
     bool failed_ = false;
 };
 
-}  // namespace sq2
+}  // namespace squeeze2raop2

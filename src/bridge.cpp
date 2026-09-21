@@ -28,7 +28,7 @@
 #include <string>
 #include <thread>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 
@@ -42,7 +42,7 @@ std::string ipToString(uint32_t netOrder) {
     char buf[INET_ADDRSTRLEN];
     if (!inet_ntop(AF_INET, &a, buf, sizeof(buf))) return std::string();
     return std::string(buf);
-}
+} // namespace
 
 class PlayerSession {
 public:
@@ -132,9 +132,9 @@ public:
 
         client_ = std::make_unique<SlimProtoClient>(
             mac_,
-            "Model=sqraop2,ModelName=" + name_ +
+            "Model=squeeze2raop2,ModelName=" + name_ +
                 ",AccuratePlayPoints=1,HasDigitalOut=1,MaxSampleRate=96000,"
-                "Firmware=sqraop2-m1,aac,flc,alc,wav,aif,pcm,mp3",
+                "Firmware=squeeze2raop2-m1,aac,flc,alc,wav,aif,pcm,mp3",
             std::move(events));
         client_->setPlayerName(name_);
         client_->setStatsProvider([this] { return currentStats(); });
@@ -785,6 +785,6 @@ void runBridge(const Settings& settings) {
 
     browser.stop();
     log::info("bye");
-}
+} // namespace squeeze2raop2
 
 }

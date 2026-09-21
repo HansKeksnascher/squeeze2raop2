@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# debug M1: run fake LMS + sqraop2 under strace, dump, cleanup.
+# debug M1: run fake LMS + squeeze2raop2 under strace, dump, cleanup.
 set -u
 LOGDIR=/tmp/opencode
 rm -f "$LOGDIR"/dbg_*.log "$LOGDIR"/dbg.wav "$LOGDIR"/dbg_syscall
@@ -11,7 +11,7 @@ LMS_PID=$!
 sleep 0.7
 
 strace -f -e trace=connect,accept4,accept,bind,read,write,poll -o "$LOGDIR/dbg_syscall" \
-    ./build/sqraop2 --lms 127.0.0.1 --name Kitchen --sink "$LOGDIR/dbg.wav" \
+    ./build/squeeze2raop2 --lms 127.0.0.1 --name Kitchen --sink "$LOGDIR/dbg.wav" \
     --pace fast --log debug > "$LOGDIR/dbg_brd.log" 2>&1 &
 BRIDGE_PID=$!
 

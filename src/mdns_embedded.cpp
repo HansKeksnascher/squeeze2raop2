@@ -44,7 +44,7 @@
 #include <thread>
 #include <type_traits>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 // DNSQuestion value-init replaces memset-0 below; that swap is only sound
 // for a plain C aggregate.
@@ -53,13 +53,13 @@ static_assert(std::is_trivially_copyable_v<DNSQuestion>,
 
 namespace {
 
-#define SQRAOP_RR_CACHE_SIZE 900
-CacheEntity gRRCache[SQRAOP_RR_CACHE_SIZE];
+#define SQUEEZE2RAOP2_RR_CACHE_SIZE 900
+CacheEntity gRRCache[SQUEEZE2RAOP2_RR_CACHE_SIZE];
 
 extern "C" {
 mDNS mDNSStorage;          // the vendored code references this client-owned global
-extern const char ProgramName[] = "sqraop2";
-}
+extern const char ProgramName[] = "squeeze2raop2";
+} // namespace
 mDNS& gMdns = mDNSStorage; // keep C++-side name
 mDNS_PlatformSupport gMdnsPlatformSupport;
 
@@ -70,7 +70,7 @@ std::string domainToString(const domainname* name) {
     char buffer[MAX_ESCAPED_DOMAIN_NAME];
     ConvertDomainNameToCString(name, buffer);
     return std::string(buffer);
-}
+} // namespace squeeze2raop2
 
 uint16_t ipPortHostOrder(const mDNSIPPort& port) {
     return static_cast<uint16_t>((port.b[0] << 8) | port.b[1]);
@@ -208,7 +208,7 @@ void publishResolved(ResolveTracker& t) {
     log::info("mdns: {} resolved {}:{} ({} txt keys)", t.instance, record.host,
               record.port, record.txt.size());
     g_cb(record, MdnsBrowser::RecordEvent::Added);
-}
+} // namespace
 
 void stopTracker(ResolveTracker& t) {
     if (t.srvActive) {
@@ -302,7 +302,7 @@ void resetTracker(ResolveTracker& t) {
     t.targetHost.clear();
     t.address.clear();
     t.txt.clear();
-}
+} // namespace
 
 bool startTracker(ResolveTracker& t, const std::string& instance,
                   const std::string& serviceType) {
@@ -430,7 +430,7 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
 
     // Everything below runs on this thread while no loop thread exists yet:
     // mDNS_Init and the browse questions are therefore race-free here.
-    mStatus status = mDNS_Init(&gMdns, &gMdnsPlatformSupport, gRRCache, SQRAOP_RR_CACHE_SIZE,
+    mStatus status = mDNS_Init(&gMdns, &gMdnsPlatformSupport, gRRCache, SQUEEZE2RAOP2_RR_CACHE_SIZE,
                                mDNS_Init_DontAdvertiseLocalAddresses,
                                mDNS_Init_NoInitCallback, mDNS_Init_NoInitCallbackContext);
     if (status != mStatus_NoError) {

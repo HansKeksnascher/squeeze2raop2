@@ -7,7 +7,7 @@
 
 #include "log.h"
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 struct PlayerSettings {
     std::string deviceId;
@@ -25,7 +25,7 @@ struct Settings {
     std::optional<std::string> sinkPath;
     bool paceRealtime = true;
     log::Level logLevel = log::Level::Info;
-    std::string statePath = "sqraop2.state";
+    std::string statePath = "squeeze2raop2.state";
     std::string mdnsIface;
     bool mdnsDebug = false;
     bool discovery = true;
@@ -47,4 +47,4 @@ struct Settings {
 
 std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode);
 
-}
+} // namespace squeeze2raop2

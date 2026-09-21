@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 
@@ -15,12 +15,12 @@ void packLe32(char* p, uint32_t v) {
     p[1] = static_cast<char>((v >> 8) & 0xFF);
     p[2] = static_cast<char>((v >> 16) & 0xFF);
     p[3] = static_cast<char>((v >> 24) & 0xFF);
-}
+} // namespace
 
 void packLe16(char* p, uint16_t v) {
     p[0] = static_cast<char>(v & 0xFF);
     p[1] = static_cast<char>((v >> 8) & 0xFF);
-}
+} // namespace squeeze2raop2
 
 } // namespace
 

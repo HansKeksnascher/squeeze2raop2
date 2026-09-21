@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 enum class StreamFormat : uint8_t {
     Unknown = '?',
@@ -136,4 +136,4 @@ private:
     std::function<StreamStats()> statsProvider_;
 };
 
-}
+} // namespace squeeze2raop2

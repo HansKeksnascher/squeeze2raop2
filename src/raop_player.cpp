@@ -5,7 +5,7 @@
 
 #include <atomic>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 namespace {
 
@@ -13,16 +13,16 @@ fxchain::RaopDeviceInfo::Auth authFor(const RaopTarget& target) {
     if (!target.password.empty()) return fxchain::RaopDeviceInfo::Auth::Password;
     if (!target.storedCreds.empty()) return fxchain::RaopDeviceInfo::Auth::HapPin;
     return fxchain::RaopDeviceInfo::Auth::HapTransient;
-}
+} // namespace
 
 void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
-    sq2::log::Level mapped = sq2::log::Level::Debug;
+    squeeze2raop2::log::Level mapped = squeeze2raop2::log::Level::Debug;
     switch (level) {
-    case fxchain::RaopLogLevel::Info: mapped = sq2::log::Level::Info; break;
-    case fxchain::RaopLogLevel::Warn: mapped = sq2::log::Level::Warn; break;
+    case fxchain::RaopLogLevel::Info: mapped = squeeze2raop2::log::Level::Info; break;
+    case fxchain::RaopLogLevel::Warn: mapped = squeeze2raop2::log::Level::Warn; break;
     }
-    sq2::log::write(mapped, std::string("[ap] ") + msg);
-}
+    squeeze2raop2::log::write(mapped, std::string("[ap] ") + msg);
+} // namespace squeeze2raop2
 
 } // namespace
 

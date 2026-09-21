@@ -4,7 +4,7 @@
 #include <functional>
 #include <string>
 
-namespace sq2 {
+namespace squeeze2raop2 {
 
 class HttpStreamReader {
 public:
@@ -45,4 +45,4 @@ private:
     std::function<void(const char*, size_t)> metaCb_;
 };
 
-}
+} // namespace squeeze2raop2
