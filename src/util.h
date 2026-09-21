@@ -36,4 +36,7 @@ uint64_t nowMs();
 
 std::string urlDecode(std::string_view s);
 
+// Thread-safe errno -> text (strerror_r/std::generic_category under the hood).
+std::string errnoMessage(int err);
+
 }

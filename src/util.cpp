@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cctype>
 #include <format>
+#include <system_error>
 
 namespace squeeze2raop2 {
 
@@ -50,6 +51,10 @@ uint64_t nowMs() {
     using namespace std::chrono;
     return static_cast<uint64_t>(
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+std::string errnoMessage(int err) {
+    return std::generic_category().message(err);
 }
 
 std::string urlDecode(std::string_view s) {

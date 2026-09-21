@@ -35,7 +35,7 @@ std::string ipv4ToString(const in_addr& addr) {
 bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
     int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
-        log::error("discovery socket failed: {}", strerror(errno));
+        log::error("discovery socket failed: {}", errnoMessage(errno));
         return false;
     }
     int one = 1;
@@ -50,7 +50,7 @@ bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
     sockaddr_in from{};
     while (nowMs() < deadline) {
         if (sendto(fd, "e", 1, 0, reinterpret_cast<sockaddr*>(&d), sizeof(d)) < 0)
-            log::warn("discovery send failed: {}", strerror(errno));
+            log::warn("discovery send failed: {}", errnoMessage(errno));
 
         pollfd pfd{fd, POLLIN, 0};
         uint32_t wait = std::min<uint32_t>(2000, static_cast<uint32_t>(deadline - nowMs()));
@@ -198,26 +198,36 @@ void SlimProtoClient::sendHelo(bool reconnect) {
 }
 
 
+StreamStats SlimProtoClient::lastStats() {
+    std::lock_guard<std::mutex> lock(sendMutex_);
+    return stats_;
+}
+
 void SlimProtoClient::sendStat(const char* event, StreamStats stats,
                                uint32_t serverTimestamp) {
-    stats_ = stats;
+    {
+        // stats_ is read back by the run thread ('f'/'p'/'u' handlers) and
+        // written from stream threads; sendMutex_ serializes both.
+        std::lock_guard<std::mutex> lock(sendMutex_);
+        stats_ = stats;
+    }
     std::vector<uint8_t> pkt(8 + 53);
     std::memcpy(pkt.data(), "STAT", 4);
     packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), 53, 4);
     std::span<std::byte> p = std::as_writable_bytes(std::span{pkt}).subspan(8);
     std::memcpy(p.data(), event, 4);
     p[6] = std::byte{0};
-    packN(p.subspan(7, 4), stats_.streamBufferSize, 4);
-    packN(p.subspan(11, 4), stats_.streamBufferFullness, 4);
-    packN(p.subspan(15, 4), stats_.bytesReceived >> 32, 4);
-    packN(p.subspan(19, 4), stats_.bytesReceived & 0xFFFFFFFF, 4);
+    packN(p.subspan(7, 4), stats.streamBufferSize, 4);
+    packN(p.subspan(11, 4), stats.streamBufferFullness, 4);
+    packN(p.subspan(15, 4), stats.bytesReceived >> 32, 4);
+    packN(p.subspan(19, 4), stats.bytesReceived & 0xFFFFFFFF, 4);
     packN(p.subspan(23, 2), 0xFFFF, 2);
     packN(p.subspan(25, 4), nowMs(), 4);
-    packN(p.subspan(29, 4), stats_.outputBufferSize, 4);
-    packN(p.subspan(33, 4), stats_.outputBufferFullness, 4);
-    packN(p.subspan(37, 4), stats_.elapsedMs / 1000, 4);
+    packN(p.subspan(29, 4), stats.outputBufferSize, 4);
+    packN(p.subspan(33, 4), stats.outputBufferFullness, 4);
+    packN(p.subspan(37, 4), stats.elapsedMs / 1000, 4);
     packN(p.subspan(41, 2), 0, 2);
-    packN(p.subspan(43, 4), stats_.elapsedMs, 4);
+    packN(p.subspan(43, 4), stats.elapsedMs, 4);
     packN(p.subspan(47, 4), serverTimestamp, 4);
     packN(p.subspan(51, 2), 0, 2);
     if (!sendRaw(std::as_bytes(std::span{pkt}))) log::warn("STAT send failed");
@@ -312,13 +322,13 @@ void SlimProtoClient::process(const std::string& pkt) {
             break;
         case 'f':
             if (events_.onFlush) events_.onFlush(true);
-            sendStat("STMf", stats_);
+            sendStat("STMf", lastStats());
             break;
         case 'p': {
             if (len < 22) return;
             uint32_t ms = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
             if (events_.onPause) events_.onPause(ms);
-            if (!ms) sendStat("STMp", stats_);
+            if (!ms) sendStat("STMp", lastStats());
             break;
         }
         case 'a': {
@@ -331,7 +341,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (len < 22) return;
             uint32_t jiffies = static_cast<uint32_t>(unpackN(std::as_bytes(std::span{pkt}).subspan(18, 4)));
             if (events_.onUnpause) events_.onUnpause(jiffies);
-            sendStat("STMr", stats_);
+            sendStat("STMr", lastStats());
             break;
         }
         case 's': {
@@ -354,7 +364,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             st.request.assign(pkt.data() + 28, len - 28);
             log::debug("strm s autostart={} format={} threshold={}", st.autostart,
                        static_cast<char>(st.format), st.thresholdKb);
-            sendStat("STMf", stats_);
+            sendStat("STMf", lastStats());
             if (events_.onStart) events_.onStart(st);
             break;
         }

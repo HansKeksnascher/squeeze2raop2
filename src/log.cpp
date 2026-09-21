@@ -1,5 +1,6 @@
 #include "log.h"
 
+#include <atomic>
 #include <chrono>
 #include <format>
 #include <cstdio>
@@ -8,7 +9,8 @@
 namespace squeeze2raop2::log {
 
 namespace {
-Level g_level = Level::Info;
+std::atomic<Level> g_level{Level::Info};
+static_assert(std::atomic<Level>::is_always_lock_free);
 std::mutex g_mutex;
 
 const char* tag(Level l) {
@@ -33,8 +35,8 @@ std::string stamp() {
 } // namespace squeeze2raop2
 }
 
-void setLevel(Level l) { g_level = l; }
-Level level() { return g_level; }
+void setLevel(Level l) { g_level.store(l, std::memory_order_relaxed); }
+Level level() { return g_level.load(std::memory_order_relaxed); }
 
 void write(Level l, std::string_view msg) {
     std::lock_guard<std::mutex> g(g_mutex);

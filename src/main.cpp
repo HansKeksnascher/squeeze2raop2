@@ -16,7 +16,13 @@ int main(int argc, char** argv) {
     log::setLevel(settings->logLevel);
     log::info("squeeze2raop2 starting v0.1.0-m1");
 
-    ::signal(SIGPIPE, SIG_IGN);
+    // SA_RESTART matches glibc's signal() default; poll/select still return
+    // EINTR (they are never restarted), which the read loops handle.
+    struct sigaction sa{};
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    ::sigaction(SIGPIPE, &sa, nullptr);
 
     runBridge(*settings);
     log::info("bye");

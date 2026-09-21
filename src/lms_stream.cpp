@@ -1,6 +1,7 @@
 #include "lms_stream.h"
 
 #include "log.h"
+#include "util.h"
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -52,7 +53,7 @@ int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
     lg.l_linger = 3;
     setsockopt(fd, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
     if (::connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0) {
-        errorOut = std::string("connect: ") + strerror(errno);
+        errorOut = std::string("connect: ") + errnoMessage(errno);
         ::close(fd);
         return -1;
     }
@@ -133,7 +134,7 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
         char raw[4096];
         ssize_t n = ::recv(fd_, raw, sizeof(raw), 0);
         if (n <= 0) {
-            errorOut = n < 0 ? std::string("header recv: ") + strerror(errno)
+            errorOut = n < 0 ? std::string("header recv: ") + errnoMessage(errno)
                              : "closed while reading headers";
             close();
             return false;

@@ -118,6 +118,9 @@ private:
     bool sendRaw(std::span<const std::byte> data);
     void sendHelo(bool reconnect);
     void maybeHeartbeat();
+    // Snapshot of the last stats passed to sendStat(); guarded by sendMutex_
+    // because sendStat() also runs on stream threads (STMn/STMu/STMd paths).
+    StreamStats lastStats();
 
     std::array<uint8_t, 6> mac_;
     std::string caps_;

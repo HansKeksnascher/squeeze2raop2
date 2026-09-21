@@ -33,6 +33,8 @@ namespace squeeze2raop2 {
 namespace {
 
 std::atomic<bool> g_run{true};
+static_assert(std::atomic<bool>::is_always_lock_free,
+              "onSignal() must be async-signal-safe");
 
 void onSignal(int) { g_run.store(false); }
 
@@ -713,8 +715,13 @@ void runBridge(const Settings& settings) {
     // Signals are registered here so SIGINT/SIGTERM flip the g_run flag the
     // run loops actually poll (main.cpp's handler used to set a separate
     // anonymous-namespace flag nobody read, so the process ignored SIGTERM).
-    ::signal(SIGINT, onSignal);
-    ::signal(SIGTERM, onSignal);
+    // sigaction with SA_RESTART matches glibc's signal() default exactly.
+    struct sigaction sa{};
+    sa.sa_handler = onSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    ::sigaction(SIGINT, &sa, nullptr);
+    ::sigaction(SIGTERM, &sa, nullptr);
 
     StateStore store;
     std::string error;
