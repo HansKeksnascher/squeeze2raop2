@@ -104,7 +104,7 @@ void PlayerSession::start() {
             return;
         }
         pct = anchors_.airplayPctFromLms(pct);
-        // NB: targetMutex_ also guards raop_ mutation in ensureRaop() and
+        // NB: targetMutex_ also guards raop_ mutation in prepareAirplaySession() and
         // the streamLoop teardown paths; no mutex_ nesting here (see the
         // onCont comment).
         std::lock_guard<std::mutex> lock(targetMutex_);
@@ -148,17 +148,21 @@ void PlayerSession::start() {
                            [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     std::erase(identity, ':');
     raopIdentity_ = identity;
-    // the AirPlay session is launched lazily in ensureRaop() when the
-    // first audio arrives; connecting eagerly hits receivers that
+    // the AirPlay session is prepared lazily in prepareAirplaySession()
+    // when the first audio arrives; connecting eagerly hits receivers that
     // immediately drop idle sessions (HomePod/Sonos)
 }
 
-bool PlayerSession::ensureRaop(uint32_t sampleRate) {
+// Creates or reuses the AirPlay player WITHOUT starting it: the streamLoop
+// prebuffers 50% of the ring capacity first and only calls
+// launchAirplaySession() once the reserve is in hand (a sender that starts
+// on an empty ring silence-pads its way into the session).
+bool PlayerSession::prepareAirplaySession(uint32_t sampleRate) {
     // raop_/raopTarget_ are also read (locked) from SessionManager's
     // thread via updateTarget(); everything here runs on the stream
     // thread and must therefore hold targetMutex_ while mutating them.
     std::lock_guard<std::mutex> lock(targetMutex_);
-    if (raop_ && raop_->active()) return true;
+    if (raop_ && (raop_->active() || !raop_->launched())) return true;
     if (raop_) {   // dead session (e.g. receiver teardown): recreate
         raop_->stop();
         raop_.reset();
@@ -172,14 +176,25 @@ bool PlayerSession::ensureRaop(uint32_t sampleRate) {
     // Scheduled stream latency: must be set BEFORE start() (it is part
     // of the RTP timeline the receiver schedules against).
     raop_->setLatencyMs(latencyMs_);
-    raop_->start();
-    // Set volume AFTER start(): RaopSender::start() wipes pendingVolumeDb_
-    // ("never carry volume between devices"), so a pre-start setVolume is
-    // lost and startStreaming_ falls back to 0 dB = full blast. Post-start
-    // it only stores until the handshake finishes; startStreaming_ sends
-    // the stored value before the audio pacer starts. In lms mode the
-    // last AUDG slider value wins; without one yet the fixed --vol-pct
-    // level covers the first seconds until LMS pushes the slider.
+    return true;
+}
+
+// Start the AirPlay sender (fresh session) or leave a live one running.
+// Volume must be applied AFTER start(): RaopSender::start() wipes
+// pendingVolumeDb_ ("never carry volume between devices"), so a pre-start
+// setVolume is lost and startStreaming_ falls back to 0 dB = full blast.
+// Post-start it only stores until the handshake finishes; startStreaming_
+// sends the stored value before the audio pacer starts. In lms mode the
+// last AUDG slider value wins; without one yet the fixed --vol-pct level
+// covers the first seconds until LMS pushes the slider.
+void PlayerSession::launchAirplaySession() {
+    std::lock_guard<std::mutex> lock(targetMutex_);
+    if (!raop_) return;
+    if (!raop_->active()) {
+        log::info("[ap] session launching for {} ({})", name_,
+                  raopTarget_ && raopTarget_->airplay2 ? "ap2" : "ap1");
+        raop_->start();
+    }
     if (volumeMode_ == VolumeMode::Lms && lastLmsPct_ > 0.0) {
         raop_->setVolume(lastLmsPct_);
         log::info("[ap] volume {:.1f} pct applied (remembered lms slider)",
@@ -189,9 +204,6 @@ bool PlayerSession::ensureRaop(uint32_t sampleRate) {
         log::info("[ap] fixed volume {} pct applied (post-start)",
                   fixedVolumePct_);
     }
-    log::info("[ap] session launching for {} ({})", name_,
-              raopTarget_->airplay2 ? "ap2" : "ap1");
-    return true;
 }
 
 void PlayerSession::updateTarget(RaopTarget t) {
@@ -287,11 +299,20 @@ void PlayerSession::startStream(const StrmStart& st) {
         fedBytes_ = 0;
         fedSamples_ = 0;
         pauseUntilMs_ = 0;
+ringStatsMin_ = SIZE_MAX;
+        ringStatsMax_ = 0;
+        ringStatsMarkMs_ = 0;
+        ringStarvedMs_ = 0;
         format_ = pcmFormat(st.pcm, 44100);
         bytesPerFrame_ = format_.channels * (format_.bitsPerSample / 8);
         if (!bytesPerFrame_) bytesPerFrame_ = 4;
-        // One decoder per stream format, one feed pipeline for both.
-        decoder_ = Decoder::create(st.format, format_);
+                pcmInputFrameBytes_ = bytesPerFrame_;
+        pcmWindowReceivedBytes_ = 0;
+        pcmAppliedRate_ = 0.0;
+        // One decoder per stream format, one feed pipeline for both. PCM
+        // regulates to the AirPlay output clock (44100) so a source that
+        // under-delivers cannot drain the pipeline.
+        decoder_ = Decoder::create(st.format, format_, 44100);
         if (decoder_) {
             log::info("strm s: {} stream via decoder pipeline",
                       decoder_->name());
@@ -331,18 +352,33 @@ void PlayerSession::streamLoop(std::stop_token st) {
         std::lock_guard<std::mutex> lock(targetMutex_);
         target = raopTarget_;
     }
-    if (target && target->port) {
-        if (!ensureRaop(fmt.sampleRate)) {
+    const bool haveTarget = target && target->port;
+    if (haveTarget) {
+        if (!prepareAirplaySession(fmt.sampleRate)) {
             log::error("[ap] cannot start airplay session for {}", name_);
             client_->sendStat("STMn", currentStats());
             if (sink) sink->close();
             return;
         }
-        // (input rate is applied inside ensureRaop; the only later
+        // (input rate is applied inside prepareAirplaySession; the only later
         // setInputRate is feedStream's mid-stream format-adoption update)
         if (fmt.channels != 2)
             log::warn("input is {}-channel; bridges Apple receivers expect stereo", fmt.channels);
     }
+
+    // Startup fill gate: pump into the ring until it holds 50% of capacity
+    // (~1.5 s of audio at 44.1 kHz stereo) before the first RTP packet
+    // leaves, so playback launches from a deep reserve instead of a sender
+    // silence-padding its way into the session.
+    size_t prebufferSamples = 0;
+    if (haveTarget) {
+        std::lock_guard<std::mutex> lock(targetMutex_);
+        prebufferSamples = raop_ ? raop_->bufferCapacity() / 2 : 0;
+    }
+    bool streaming = !haveTarget || prebufferSamples == 0;
+    const uint64_t prebufferStartMs = nowMs();
+    if (!streaming)
+        log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
 
     uint64_t activeMs = 0;
     char buf[4096];
@@ -357,6 +393,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             if (pauseUntilMs_ && nowMs() < pauseUntilMs_) paused = true;
             else pauseUntilMs_ = 0;
         }
+        if (!paused && streaming) sampleRingTelemetry();
         if (paused) {
             // Drain instead of sleep: a paused player that stops reading
             // backpressures the LMS proxy, and LMS un-pauses the stream
@@ -389,6 +426,19 @@ void PlayerSession::streamLoop(std::stop_token st) {
             }
             if (!feedStream(st, audio, fmt, sink.get()))
                 break;
+            if (!streaming) {
+                size_t avail = 0;
+                {
+                    std::lock_guard<std::mutex> lock(targetMutex_);
+                    avail = raop_ ? raop_->availableRead() : 0;
+                }
+                if (avail >= prebufferSamples) {
+                    log::info("[ap] prebuffered {} samples in {} ms; launching",
+                              avail, nowMs() - prebufferStartMs);
+                    streaming = true;
+                    launchAirplaySession();
+                }
+            }
             // The pacing clock must include the feed cost, not just the
             // read: pushToRaop/feedRing can block on ring backpressure and
             // an under-counted clock makes the pacer over-sleep relative
@@ -413,7 +463,13 @@ void PlayerSession::streamLoop(std::stop_token st) {
             break;
         }
 
-        if (paceRealtime_) {
+                // Pacing must stand down while the rate stage regulates: the
+        // decoder intentionally emits ahead of the source (stretching), so
+        // an emitted-timeline pacer would throttle the reads, starve the
+        // measurement, and spiral the step down. LMS paces the source
+        // anyway; without regulation (step 1.0) the pacing keeps the
+        // baseline read cadence.
+        if (paceRealtime_ && streaming && pcmAppliedRate_ == 0.0) {
             uint64_t timeline;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -424,7 +480,9 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // pass-through path's only jitter headroom (44.1 kHz PCM goes
             // ring -> RTP packet with no staging, unlike the resampler's
             // 8192-frame inBuf_); too small and any LMS proxy/transcode
-            // burst silence-pads RTP packets = crackle.
+            // burst silence-pads RTP packets = crackle. Skipped while
+            // prebuffering: the gate wants the ring filled as fast as the
+            // source allows.
             if (timeline > activeMs + 60) {
                 uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs + 60), 120);
                 std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
@@ -466,7 +524,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
         }
         log::info("[ap] receiver session lost; retrying in 2s");
         std::this_thread::sleep_for(std::chrono::seconds(2));
-        if (!ensureRaop(fmt.sampleRate)) {
+        if (!prepareAirplaySession(fmt.sampleRate)) {
             log::error("[ap] cannot restart airplay session for {}", name_);
             client_->sendStat("STMn", currentStats());
             break;
@@ -576,6 +634,106 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
         }
     }
     return true;
+}
+
+// One occupancy sample per stream-loop iteration while streaming. Gaps
+// between samples are bounded by the read timeout + pacing sleep (~270 ms),
+// so sub-iteration zero-crossings can be missed — the min/max summary still
+// shows the trend and the warn/recover pair catches real starvation.
+void PlayerSession::sampleRingTelemetry() {
+    size_t avail = 0;
+    {
+        std::lock_guard<std::mutex> lock(targetMutex_);
+        if (!raop_) return;
+        avail = raop_->availableRead();
+    }
+
+    const uint64_t now = nowMs();
+    if (avail < ringStatsMin_) ringStatsMin_ = avail;
+    if (avail > ringStatsMax_) ringStatsMax_ = avail;
+
+            if (ringStatsMarkMs_ == 0) {
+        ringStatsMarkMs_ = now;
+        pcmWindowReceivedBytes_ = 0;
+    } else if (now - ringStatsMarkMs_ >= 10000) {
+        log::info("[ap] ring 10s: cur={} min={} max={} samples", avail,
+                  ringStatsMin_, ringStatsMax_);
+        regulateSourceRate(now - ringStatsMarkMs_);
+        ringStatsMin_ = SIZE_MAX;
+        ringStatsMax_ = 0;
+        ringStatsMarkMs_ = now;
+    }
+
+    if (avail == 0) {
+        if (!ringStarvedMs_) {
+            ringStarvedMs_ = now;
+            log::warn("[ap] ring starved (0 samples)");
+        }
+    } else if (ringStarvedMs_) {
+        log::info("[ap] ring recovered after {} ms", now - ringStarvedMs_);
+        ringStarvedMs_ = 0;
+    }
+}
+
+// Measure the source's arrival rate over the telemetry window. The
+// socket feed IS the arrival: the reader strips icy meta and hands every
+// audio byte to the decoder, so Δ(receivedBytes) is the source rate —
+// any backlog/emission correction feeds back on itself and spirals.
+// Regulate the pcm decoder to the 44100 output clock. Hysteresis: engage
+// beyond 0.1% deviation, release below 0.045%. While the ring is below
+// the prebuffer reserve, a 0.2% overdrive gently rebuilds the reserve (an
+// inaudible ~8 cent pitch offset).
+void PlayerSession::regulateSourceRate(uint64_t windowMs) {
+    if (!decoder_ || decoder_->name() != "pcm" || !pcmInputFrameBytes_)
+        return;
+    const double sec = double(windowMs) / 1000.0;
+    if (sec < 5.0) return;
+
+    const uint64_t receivedNow = receivedBytes_;
+    const uint64_t prevReceived = pcmWindowReceivedBytes_;
+    pcmWindowReceivedBytes_ = receivedNow;
+    if (prevReceived == 0 || receivedNow < prevReceived) return;
+
+    constexpr double kNominal = 44100.0;
+    const double fps = double(receivedNow - prevReceived) /
+                       double(pcmInputFrameBytes_) / sec;
+    if (fps < 0.95 * kNominal || fps > 1.05 * kNominal) return;   // stall/burst
+
+    const double off = std::abs(fps - kNominal);
+    if (pcmAppliedRate_ == 0.0) {
+        if (off > 44.0) {   // 0.1%
+            size_t avail = 0;
+            {
+                std::lock_guard<std::mutex> lock(targetMutex_);
+                avail = raop_ ? raop_->availableRead() : 0;
+            }
+            // Gentle rebuild while below the prebuffer reserve.
+            const double overdrive = avail < 131072 ? 1.002 : 1.0;
+            pcmAppliedRate_ = fps / overdrive;
+            decoder_->setSourceRate(pcmAppliedRate_);
+            log::warn("[ap] pcm source {} fps ({} ppm off): regulating", fps,
+                      int((fps - kNominal) / kNominal * 1e6));
+        }
+        return;
+    }
+    if (off <= 20.0) {   // back within ~0.045%: release to pass-through
+        pcmAppliedRate_ = 0.0;
+        decoder_->setSourceRate(kNominal);
+        log::info("[ap] pcm source rate nominal: pass-through");
+        return;
+    }
+    // Keep regulating; refresh the overdrive decision.
+    size_t avail = 0;
+    {
+        std::lock_guard<std::mutex> lock(targetMutex_);
+        avail = raop_ ? raop_->availableRead() : 0;
+    }
+    const double overdrive = avail < 131072 ? 1.002 : 1.0;
+    const double target = fps / overdrive;
+    if (std::abs(target - pcmAppliedRate_) > 2.0) {
+        pcmAppliedRate_ = target;
+        decoder_->setSourceRate(target);
+    }
 }
 
 void PlayerSession::feedRing(std::stop_token st, const std::vector<int16_t>& samples) {

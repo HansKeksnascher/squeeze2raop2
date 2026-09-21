@@ -41,7 +41,8 @@ public:
     PlayerSession& operator=(const PlayerSession&) = delete;
 
     void start();
-    bool ensureRaop(uint32_t sampleRate);
+    bool prepareAirplaySession(uint32_t sampleRate);
+    void launchAirplaySession();
     void updateTarget(RaopTarget t);
     void stop();
 
@@ -58,6 +59,14 @@ private:
     // abort.
     bool feedStream(std::stop_token st, std::span<const std::byte> data,
                     PcmFormat& fmt, PcmFileSink* sink, bool toOutput = true);
+    // Ring-occupancy telemetry while streaming: 10 s min/max/cur summary
+    // plus one warn/recover pair per starvation episode (ring sampled on
+    // the stream thread; user pauses are excluded — the ring draining
+    // there is the expected baseline behavior).
+    void sampleRingTelemetry();
+    // Measures the pcm source rate over the telemetry window and regulates
+    // the decoder to the 44100 output clock (see the definition).
+    void regulateSourceRate(uint64_t windowMs);
     void feedRing(std::stop_token st, const std::vector<int16_t>& samples);
     void stopPlayback();
     // Silence the receiver immediately and, with fullStop, end and destroy
@@ -86,6 +95,20 @@ private:
 
     // The stream format's decoder (mp3/pcm); null while no stream runs.
     std::unique_ptr<Decoder> decoder_;
+    // Ring telemetry state (stream-thread only): extremes between 10 s
+    // summaries and the latched starve episode start.
+    size_t ringStatsMin_ = SIZE_MAX;
+    size_t ringStatsMax_ = 0;
+    uint64_t ringStatsMarkMs_ = 0;
+    uint64_t ringStarvedMs_ = 0;
+    // Adaptive source-rate regulation (pcm streams): raw bytes received over
+    // the last 10 s boundary (the socket feed IS the source arrival — the
+    // reader already stripped icy meta and hands every byte to the
+    // decoder), the raw input frame size, and the decoder source rate
+    // currently applied (0 = pass-through).
+    uint64_t pcmWindowReceivedBytes_ = 0;
+    double pcmAppliedRate_ = 0.0;
+    size_t pcmInputFrameBytes_ = 0;
 
     std::mutex mutex_;
     std::mutex targetMutex_;
@@ -112,7 +135,8 @@ private:
     VolumeMode volumeMode_;
     float fixedVolumePct_;
     // Last LMS slider percent seen via AUDG (lms mode); 0 = none. Re-applied
-    // by ensureRaop() on session recreation. Mute pushes (0) are not stored
+    // by prepareAirplaySession() on session recreation. Mute pushes (0) are
+    // not stored
     // so LMS's end-of-fade zero gain can't mute the next session.
     double lastLmsPct_ = 0.0;
     // Scheduled AirPlay latency in ms (--ap-latency-ms).

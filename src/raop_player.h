@@ -5,6 +5,7 @@
 #include "raop_sender.h"
 #include "ring_buffer.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <span>
@@ -35,6 +36,13 @@ public:
 
     void start();
     void stop();
+
+    // Ring telemetry for the host: occupancy and capacity in interleaved
+    // samples, plus whether start() has ever run (a prepared-but-unlaunched
+    // player must not be recreated just because the receiver looks idle).
+    size_t availableRead() const { return ringStorage_->availableRead(); }
+    size_t bufferCapacity() const { return ringStorage_->capacity(); }
+    bool launched() const { return launched_.load(std::memory_order_relaxed); }
 
     size_t availableWrite() const { return ringStorage_->availableWrite(); }
     bool push(std::span<const int16_t> stereoSamples) {
@@ -74,6 +82,7 @@ private:
     std::jthread pumpThread_;
     CredentialSink onCredentials_;
     std::function<void()> onClosed_;
+    std::atomic<bool> launched_{false};
 };
 
 } // namespace squeeze2raop2

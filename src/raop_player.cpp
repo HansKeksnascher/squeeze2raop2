@@ -67,12 +67,14 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
 RaopPlayer::~RaopPlayer() { stop(); }
 
 void RaopPlayer::start() {
+    launched_.store(true);
     loop_.clearStopRequest();
     sender_->start(target_.host, target_.port, name_);
     pumpThread_ = std::jthread([this] { loop_.run(*sender_); });
 }
 
 void RaopPlayer::stop() {
+    launched_.store(false);
     if (sender_) sender_->stop();
     loop_.requestStop();
     if (pumpThread_.joinable()) pumpThread_.join();

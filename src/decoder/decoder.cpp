@@ -5,11 +5,11 @@
 
 namespace squeeze2raop2 {
 
-std::unique_ptr<Decoder> Decoder::create(StreamFormat format,
-                                         const PcmFormat& in) {
+std::unique_ptr<Decoder> Decoder::create(StreamFormat format, const PcmFormat& in,
+                                         uint32_t outputRate) {
     switch (format) {
     case StreamFormat::Mp3: return std::make_unique<Mp3Decoder>();
-    case StreamFormat::Pcm: return std::make_unique<PcmDecoder>(in);
+    case StreamFormat::Pcm: return std::make_unique<PcmDecoder>(in, outputRate);
     default: return nullptr;
     }
 }

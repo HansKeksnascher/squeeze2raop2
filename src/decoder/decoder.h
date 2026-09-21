@@ -36,10 +36,17 @@ public:
     virtual PcmFormat format() const = 0;
     virtual std::string_view name() const = 0;
 
-    // Factory for the supported stream formats; nullptr for others (the
-    // strm guard already rejects them, so this is a closed-world helper).
-    static std::unique_ptr<Decoder> create(StreamFormat format,
-                                           const PcmFormat& in);
+// Factory for the supported stream formats; nullptr for others (the
+// strm guard already rejects them, so this is a closed-world helper).
+// `outputRate` is the pipeline's target output clock (0 = no rate
+// regulation; the AirPlay pipeline passes 44100).
+static std::unique_ptr<Decoder> create(StreamFormat format, const PcmFormat& in,
+                                       uint32_t outputRate);
+
+// Tell the decoder the measured real-time input rate (frames/s) so it can
+// regulate its output to the pipeline's target clock. No-op for decoders
+// without a rate stage.
+virtual void setSourceRate(double framesPerSecond) { (void)framesPerSecond; }
 
 protected:
     Decoder(Decoder&&) = default;
