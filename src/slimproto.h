@@ -1,0 +1,135 @@
+#pragma once
+
+#include <array>
+#include <atomic>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace sq2 {
+
+enum class StreamFormat : uint8_t {
+    Unknown = '?',
+    Pcm = 'p',
+    Mp3 = 'm',
+    Flac = 'f',
+    Wma = 'w',
+    Ogg = 'o',
+    Aac = 'a',
+    Alac = 'l',
+};
+
+struct PcmParams {
+    uint8_t sampleSizeCode = '?';
+    uint8_t sampleRateCode = '?';
+    uint8_t channelsCode = '?';
+    uint8_t endianCode = '?';
+
+    bool operator==(const PcmParams&) const = default;
+};
+
+struct PcmFormat {
+    uint32_t sampleRate = 44100;
+    uint8_t bitsPerSample = 16;
+    uint8_t channels = 2;
+    bool bigEndian = false;
+
+    bool operator==(const PcmFormat&) const = default;
+};
+
+uint32_t sampleRateFromCode(uint8_t code);
+uint8_t bitsPerSampleFromCode(uint8_t code);
+uint8_t channelsFromCode(uint8_t code);
+PcmFormat pcmFormat(const PcmParams& params, uint32_t fallbackRate);
+
+bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs);
+
+struct StrmStart {
+    uint8_t autostart = 1;
+    StreamFormat format = StreamFormat::Unknown;
+    PcmParams pcm;
+    uint8_t thresholdKb = 0;
+    uint8_t outputThresholdTenths = 0;
+    uint8_t transitionType = 0;
+    uint8_t transitionPeriodS = 0;
+    uint8_t flags = 0;
+    uint32_t replayGain = 0;
+    uint32_t serverIp = 0;
+    uint16_t serverPort = 0;
+    std::string request;
+};
+
+struct StreamStats {
+    uint32_t streamBufferSize = 0;
+    uint32_t streamBufferFullness = 0;
+    uint64_t bytesReceived = 0;
+    uint32_t outputBufferSize = 0;
+    uint32_t outputBufferFullness = 0;
+    uint32_t elapsedMs = 0;
+};
+
+class SlimProtoClient {
+public:
+    struct Events {
+        std::function<void(const StrmStart&)> onStart;
+        std::function<void()> onStop;
+        std::function<void(uint32_t intervalMs)> onPause;
+        std::function<void(uint32_t resumeJiffies)> onUnpause;
+        std::function<void(bool expectFlush)> onFlush;
+        std::function<void(uint32_t skipMs)> onSkipAhead;
+        std::function<void(uint32_t metaint)> onCont;
+        std::function<void(StreamFormat format, const PcmParams& pcm)> onCodc;
+        std::function<void(double leftPct, double rightPct)> onVolume;  // 0..100; LMS slider percent
+        std::function<void(const std::string& name)> onSetName;
+        std::function<void(uint32_t serverIp)> onServerSwitch;
+    };
+
+    SlimProtoClient(std::array<uint8_t, 6> mac, std::string caps, Events events);
+    ~SlimProtoClient();
+
+    void setPlayerName(const std::string& name);
+    void setStatsProvider(std::function<StreamStats()> provider) {
+        statsProvider_ = std::move(provider);
+    }
+    const std::string& serverHost() const { return host_; }
+
+    void start(const std::string& host, uint16_t port);
+    void stop();
+
+    void sendStat(const char* event, StreamStats stats, uint32_t serverTimestamp = 0);
+    void sendResp(const std::string& header);
+    void sendSetdName(const std::string& name);
+    void sendDisco(uint8_t reason);
+    void sendMeta(const char* data, size_t len);
+
+    const std::array<uint8_t, 6>& mac() const { return mac_; }
+
+private:
+    void run();
+    bool connectOnce(bool reconnect);
+    bool sendPacket(const char* opcode, const void* payload, size_t len);
+    bool sendRaw(const void* data, size_t len);
+    void sendHelo(bool reconnect);
+    void process(const std::string& packet);
+    void maybeHeartbeat();
+
+    std::array<uint8_t, 6> mac_;
+    std::string caps_;
+    Events events_;
+    std::string host_;
+    uint16_t port_ = 3483;
+
+    int sock_ = -1;
+    std::atomic<bool> running_{false};
+    std::thread thread_;
+    StreamStats stats_{};
+    std::mutex sendMutex_;
+    uint64_t lastHeartbeatMs_ = 0;
+    std::string playerName_;
+    bool reconnect_ = false;
+    std::function<StreamStats()> statsProvider_;
+};
+
+}

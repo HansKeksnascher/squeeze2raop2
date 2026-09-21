@@ -1,0 +1,437 @@
+#include "mdns.h"
+
+#include "log.h"
+#include "util.h"
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
+
+#include "mDNSEmbeddedAPI.h"
+#include "mDNSPosix.h"
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/time.h>
+
+#include <atomic>
+#include <cstring>
+#include <deque>
+#include <functional>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+namespace sq2 {
+
+namespace {
+
+#define SQRAOP_RR_CACHE_SIZE 900
+CacheEntity gRRCache[SQRAOP_RR_CACHE_SIZE];
+
+extern "C" {
+mDNS mDNSStorage;          // the vendored code references this client-owned global
+extern const char ProgramName[] = "sqraop2";
+}
+mDNS& gMdns = mDNSStorage; // keep C++-side name
+mDNS_PlatformSupport gMdnsPlatformSupport;
+
+const char* kServiceTypes[] = {"_raop._tcp", "_airplay._tcp"};
+constexpr int kNumServiceTypes = 2;
+
+std::string domainToString(const domainname* name) {
+    char buffer[MAX_ESCAPED_DOMAIN_NAME];
+    ConvertDomainNameToCString(name, buffer);
+    return std::string(buffer);
+}
+
+uint16_t ipPortHostOrder(const mDNSIPPort& port) {
+    return static_cast<uint16_t>((port.b[0] << 8) | port.b[1]);
+}
+
+mDNSInterfaceID g_iface = mDNSInterface_Any;
+
+std::string addressFromRData4(const ResourceRecord* rr) {
+    in_addr addr{};
+    memcpy(&addr.s_addr, rr->rdata->u.data, 4);
+    return inet_ntoa(addr);
+}
+
+// one resolve tracker per service instance (owned by g_mdns_owner)
+struct ResolveTracker {
+    DNSQuestion srvQ;
+    DNSQuestion txtQ;
+    DNSQuestion addrQ;
+    bool srvActive = false;
+    bool txtActive = false;
+    bool addrActive = false;
+
+    uint16_t port = 0;
+    std::string targetHost;
+    std::string address;
+    std::map<std::string, std::string> txt;
+
+    std::string instance;
+    std::string serviceType;
+};
+
+MdnsBrowser* g_owner = nullptr;
+MdnsBrowser::RecordCallback g_cb;
+std::map<std::string, ResolveTracker> g_resolvers;
+
+std::string stripServiceSuffix(const std::string& fqdnIn, const std::string& serviceType) {
+    std::string fqdn = fqdnIn;
+    while (fqdn.size() > 1 && fqdn.back() == '.') fqdn.pop_back();
+    std::string suffix = std::string(".") + serviceType + ".local";
+    if (fqdn.size() >= suffix.size() &&
+        fqdn.compare(fqdn.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return fqdn.substr(0, fqdn.size() - suffix.size());
+    }
+    return fqdn;
+}
+
+std::map<std::string, std::string> parseTxtKeyValues(const std::string& raw) {
+    // raw is TXT wire format: a sequence of (len byte, len-1 bytes of data)
+    std::map<std::string, std::string> out;
+    size_t idx = 0;
+    while (idx < raw.size()) {
+        uint8_t len = static_cast<uint8_t>(raw[idx]);
+        if (len == 0 || idx + 1 + len > raw.size()) break;
+        std::string item(raw.substr(idx + 1, len));
+        auto eq = item.find('=');
+        std::string key = (eq != std::string::npos) ? item.substr(0, eq) : item;
+        std::string value = (eq != std::string::npos) ? item.substr(eq + 1) : std::string();
+        if (out.find(key) == out.end()) out[key] = value;
+        idx += 1 + len;
+    }
+    return out;
+}
+
+} // namespace
+
+struct MdnsBrowser::Impl {
+    RecordCallback cb;
+    std::thread loopThread;
+    std::atomic<bool> running{false};
+    mDNSInterfaceID iface = mDNSInterface_Any;
+    DNSQuestion browseQ[2];
+    bool browseActive[2] = {false, false};
+};
+
+namespace {
+
+void publishResolved(ResolveTracker& t) {
+    if (t.port == 0 || t.address.empty()) {
+        log::debug("mdns: resolve incomplete for {}", t.instance);
+        return;
+    }
+    if (!g_cb) return;
+    MdnsRecord record;
+    record.type = t.serviceType;
+    record.instance = t.instance;
+    record.host = t.address;
+    record.port = t.port;
+    record.txt = t.txt;
+    log::info("mdns: {} resolved {}:{} ({} txt keys)", t.instance, record.host,
+              record.port, record.txt.size());
+    g_cb(record, MdnsBrowser::RecordEvent::Added);
+}
+
+void stopTracker(ResolveTracker& t) {
+    if (t.srvActive) {
+        t.srvActive = false;
+        mDNS_StopQuery(&gMdns, &t.srvQ);
+    }
+    if (t.txtActive) {
+        t.txtActive = false;
+        mDNS_StopQuery(&gMdns, &t.txtQ);
+    }
+    if (t.addrActive) {
+        t.addrActive = false;
+        mDNS_StopQuery(&gMdns, &t.addrQ);
+    }
+}
+
+ResolveTracker* trackerForQuestion(DNSQuestion* q) {
+    return reinterpret_cast<ResolveTracker*>(q->QuestionContext);
+}
+
+void resolveQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr,
+                       QC_result add) {
+    (void)m;
+    {
+        char rrtypeName[16];
+        mDNS_snprintf(rrtypeName, sizeof(rrtypeName), "%u", rr->rrtype);
+        log::debug("mdns: A-cb add={} rrtype={}", static_cast<int>(add), rrtypeName);
+    }
+    if (add != QC_add) return;
+
+    ResolveTracker* owner = trackerForQuestion(q);
+    if (!owner) return;
+    ResolveTracker& t = *owner;
+
+    if (rr->rrtype == kDNSType_A) {
+        if (rr->rdlength >= 4) {
+            t.address = addressFromRData4(rr);
+        }
+        if (t.addrActive) {
+            t.addrActive = false;
+            mDNS_StopQuery(&gMdns, q);
+        }
+    } else if (rr->rrtype == kDNSType_SRV) {
+        const rdataSRV* srv = reinterpret_cast<const rdataSRV*>(rr->rdata->u.data);
+        t.port = ipPortHostOrder(srv->port);
+        t.targetHost = domainToString(&srv->target);
+        if (t.srvActive) {
+            t.srvActive = false;
+            mDNS_StopQuery(&gMdns, q);
+        }
+    } else if (rr->rrtype == kDNSType_TXT) {
+        t.txt = parseTxtKeyValues(
+            std::string(reinterpret_cast<const char*>(rr->rdata->u.data), rr->rdlength));
+        if (t.txtActive) {
+            t.txtActive = false;
+            mDNS_StopQuery(&gMdns, q);
+        }
+    } else {
+        return;
+    }
+
+    if (!t.srvActive && !t.txtActive && !t.addrActive) {
+        if (t.port && !t.targetHost.empty() && t.address.empty()) {
+            std::memset(&t.addrQ, 0, sizeof(t.addrQ));
+            t.addrQ.QuestionContext = &t;
+            MakeDomainNameFromDNSNameString(&t.addrQ.qname, t.targetHost.c_str());
+            t.addrQ.InterfaceID = g_iface;
+            t.addrQ.qtype = kDNSType_A;
+    t.addrQ.qclass = kDNSClass_IN;
+            t.addrQ.QuestionCallback = resolveQuestionCb;
+            t.addrQ.ForceMCast = mDNStrue;
+            if (mDNS_StartQuery(&gMdns, &t.addrQ) == mStatus_NoError) {
+                t.addrActive = true;
+                return;
+            }
+        }
+        publishResolved(t);
+    }
+}
+
+} // namespace
+
+namespace {
+
+void resetTracker(ResolveTracker& t) {
+    std::memset(&t.srvQ, 0, sizeof(t.srvQ));
+    std::memset(&t.txtQ, 0, sizeof(t.txtQ));
+    std::memset(&t.addrQ, 0, sizeof(t.addrQ));
+    t.srvActive = t.txtActive = t.addrActive = false;
+    t.port = 0;
+    t.targetHost.clear();
+    t.address.clear();
+    t.txt.clear();
+}
+
+bool startTracker(ResolveTracker& t, const std::string& instance,
+                  const std::string& serviceType) {
+    resetTracker(t);
+    t.instance = instance;
+    t.serviceType = serviceType;
+
+    std::string fqdn = instance + "." + serviceType + ".local";
+    std::string srvName = t.instance;
+    t.srvQ.QuestionContext = &t;
+    t.txtQ.QuestionContext = &t;
+    t.addrQ.QuestionContext = &t;
+
+    if (MakeDomainNameFromDNSNameString(&t.srvQ.qname, fqdn.c_str()) == (mDNSu8*)nullptr) {
+        log::warn("mdns: cannot form SRV name {}", fqdn);
+        return false;
+    }
+    t.srvQ.InterfaceID = g_iface;
+    t.srvQ.qtype = kDNSType_SRV;
+    t.srvQ.qclass = kDNSClass_IN;
+    t.srvQ.QuestionCallback = resolveQuestionCb;
+    t.srvQ.ForceMCast = mDNStrue;
+    if (mDNS_StartQuery(&gMdns, &t.srvQ) != mStatus_NoError) {
+        log::warn("mdns: SRV query failed for {}", fqdn);
+        return false;
+    }
+    t.srvActive = true;
+
+    MakeDomainNameFromDNSNameString(&t.txtQ.qname, fqdn.c_str());
+    t.txtQ.InterfaceID = g_iface;
+    t.txtQ.qtype = kDNSType_TXT;
+    t.txtQ.qclass = kDNSClass_IN;
+    t.txtQ.QuestionCallback = resolveQuestionCb;
+    t.txtQ.ForceMCast = mDNStrue;
+    if (mDNS_StartQuery(&gMdns, &t.txtQ) == mStatus_NoError) {
+        t.txtActive = true;
+    }
+    log::debug("mdns: resolver started for {}, srv={} txt={}", instance,
+               static_cast<int>(t.srvActive), static_cast<int>(t.txtActive));
+    return true;
+}
+
+void startResolveForInstance(const std::string& instance, const std::string& serviceType) {
+    std::string fqdn = instance + "." + serviceType + ".local";
+    auto it = g_resolvers.find(fqdn);
+    if (it != g_resolvers.end()) return;
+    ResolveTracker& t = g_resolvers[fqdn];
+    if (!startTracker(t, instance, serviceType)) {
+        g_resolvers.erase(fqdn);
+    }
+}
+
+void stopResolveForInstance(const std::string& instance, const std::string& serviceType) {
+    std::string fqdn = instance + "." + serviceType + ".local";
+    auto it = g_resolvers.find(fqdn);
+    if (it == g_resolvers.end()) return;
+    stopTracker(it->second);
+    g_resolvers.erase(it);
+}
+
+void browseQuestionCb(mDNS* m, DNSQuestion* q, const ResourceRecord* rr, QC_result add) {
+    (void)m;
+    (void)q;
+    if (rr->rrtype != kDNSType_PTR || rr->rdlength == 0) return;
+
+    std::string ptrName = domainToString(&rr->rdata->u.name);
+    log::debug("mdns: browse ptr '{}' type={} add={}", ptrName, rr->rrtype,
+               static_cast<int>(add));
+    std::string recordName = domainToString(rr->name);
+
+    for (int i = 0; i < kNumServiceTypes; ++i) {
+        std::string serviceType = kServiceTypes[i];
+        if (recordName.find(serviceType) == std::string::npos) continue;
+        std::string instance = stripServiceSuffix(ptrName, serviceType);
+        if (instance.empty()) continue;
+        if (add == QC_add || add == QC_addnocache) {
+            startResolveForInstance(instance, serviceType);
+        } else {
+            stopResolveForInstance(instance, serviceType);
+            if (g_cb) {
+                MdnsRecord record;
+                record.type = serviceType;
+                record.instance = instance;
+                g_cb(record, MdnsBrowser::RecordEvent::Removed);
+            }
+        }
+        return;
+    }
+}
+
+} // namespace
+
+MdnsBrowser::~MdnsBrowser() { stop(); }
+
+bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::string& errorOut) {
+    if (impl_ || g_owner) {
+        errorOut = "mDNS browser already running (single instance per process)";
+        return false;
+    }
+
+    auto impl = std::make_unique<Impl>();
+    impl->cb = cb;
+    g_cb = impl->cb;
+
+    if (!ifaceName.empty()) {
+        unsigned index = if_nametoindex(ifaceName.c_str());
+        if (index == 0) {
+            errorOut = std::string("cannot find interface ") + ifaceName;
+            return false;
+        }
+        log::warn("mdns: --iface filtering not supported by embedded mDNS v1; "
+                  "browsing on all interfaces");
+    }
+    g_iface = mDNSInterface_Any;
+
+    if (log::level() >= log::Level::Debug) {
+        mDNS_LoggingEnabled = mDNStrue;
+        mDNS_DebugMode = mDNStrue;
+    }
+
+    mStatus status = mDNS_Init(&gMdns, &gMdnsPlatformSupport, gRRCache, SQRAOP_RR_CACHE_SIZE,
+                               mDNS_Init_DontAdvertiseLocalAddresses,
+                               mDNS_Init_NoInitCallback, mDNS_Init_NoInitCallbackContext);
+    if (status != mStatus_NoError) {
+        errorOut = std::string("mDNS_Init failed: ") +
+                   std::to_string(static_cast<int>(status));
+        return false;
+    }
+
+    impl->running.store(true);
+    Impl* raw = impl.get();
+    raw->loopThread = std::thread([raw]() {
+        while (raw->running.load()) {
+            fd_set readfds;
+            fd_set writefds;
+            FD_ZERO(&readfds);
+            FD_ZERO(&writefds);
+            struct timeval timeout;
+            timeout.tv_sec = 2;
+            timeout.tv_usec = 0;
+            int nfds = 0;
+            mDNSPosixGetFDSet(&gMdns, &nfds, &readfds, &writefds, &timeout);
+            int rc = ::select(nfds, &readfds, &writefds, nullptr, &timeout);
+            if (rc > 0) {
+                mDNSPosixProcessFDSet(&gMdns, &readfds, &writefds);
+            }
+        }
+    });
+
+    impl_ = impl.get();
+    impl.release();
+    g_owner = this;
+
+    for (int i = 0; i < kNumServiceTypes; ++i) {
+        domainname srv;
+        domainname dom;
+        MakeDomainNameFromDNSNameString(&srv, kServiceTypes[i]);
+        MakeDomainNameFromDNSNameString(&dom, "local");
+        memset(&raw->browseQ[i], 0, sizeof(DNSQuestion));
+        mStatus st = mDNS_StartBrowse(&gMdns, &raw->browseQ[i], &srv, &dom,
+                                      raw->iface, 0, mDNSfalse, mDNSfalse,
+                                      browseQuestionCb, g_owner);
+        if (st != mStatus_NoError) {
+            errorOut = std::string("mDNS_StartBrowse(") + kServiceTypes[i] +
+                       ") failed: " + std::to_string(static_cast<int>(st));
+            stop();
+            return false;
+        }
+        raw->browseActive[i] = true;
+        log::info("mdns: browsing {}", kServiceTypes[i]);
+    }
+    return true;
+}
+
+void MdnsBrowser::stop() {
+    if (!impl_) return;
+    g_cb = nullptr;
+    Impl* raw = impl_;
+    for (int i = 0; i < kNumServiceTypes; ++i) {
+        if (raw->browseActive[i]) {
+            raw->browseActive[i] = false;
+            mDNS_StopQuery(&gMdns, &raw->browseQ[i]);
+        }
+    }
+    for (auto& kv : g_resolvers) stopTracker(kv.second);
+    g_resolvers.clear();
+    raw->running.store(false);
+    if (raw->loopThread.joinable()) raw->loopThread.join();
+    mDNS_Close(&gMdns);
+    impl_ = nullptr;
+    if (g_owner == this) g_owner = nullptr;
+    log::info("mdns: stopped");
+}
+}

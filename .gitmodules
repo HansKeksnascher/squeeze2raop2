@@ -1,0 +1,10 @@
+[submodule "third_party/airplay2-sender-cpp"]
+	path = third_party/airplay2-sender-cpp
+	url = https://github.com/akustikrausch/airplay2-sender-cpp
+[submodule "third_party/mDNSResponder"]
+	path = third_party/mDNSResponder
+	url = https://github.com/apple-oss-distributions/mDNSResponder
+	branch = main
+[submodule "third_party/minimp3"]
+	path = third_party/minimp3
+	url = https://github.com/lieff/minimp3

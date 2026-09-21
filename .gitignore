@@ -1,0 +1,10 @@
+build/
+out/
+install/
+sqraop2.state
+*.wav
+*.raw
+*.log
+__pycache__/
+compile_commands.json
+.lock-*
