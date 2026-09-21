@@ -436,10 +436,14 @@ void PlayerSession::streamLoop(std::stop_token st) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 timeline = fedSamples_ * 1000ULL / fmt.sampleRate;
             }
-            // Pace reads to playback time with a small lead: keeps the
-            // sender's ring fed without running far ahead of the wire.
-            if (timeline > activeMs + 20) {
-                uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs + 20), 120);
+            // Pace reads to playback time with a lead: keeps the sender's ring
+            // fed without running far ahead of the wire. The lead is the
+            // pass-through path's only jitter headroom (44.1 kHz PCM goes
+            // ring -> RTP packet with no staging, unlike the resampler's
+            // 8192-frame inBuf_); too small and any LMS proxy/transcode
+            // burst silence-pads RTP packets = crackle.
+            if (timeline > activeMs + 60) {
+                uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs + 60), 120);
                 std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
                 activeMs += sleepMs;
             }
@@ -512,6 +516,9 @@ void PlayerSession::onIcyMeta(const char* data, size_t len) {
     if (e == std::string::npos) return;
     const std::string title = raw.substr(p + key.size(), e - p - key.size());
     if (title.empty()) return;
+    // Some stations repeat the identical block every meta interval (~5/s);
+    // only log and push on an actual change.
+    if (title == lastTitle_) return;
     log::info("icy title: {}", title);
     lastTitle_ = title;
     if (raop_) raop_->setNowPlaying(title, "", "");
