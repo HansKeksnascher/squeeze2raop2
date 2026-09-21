@@ -1,0 +1,15 @@
+# Mirrors the codebase's hand-written style: 4-space indent, 100-column
+# limit, attached braces, compact single-line case/if bodies, includes
+# grouped project -> C system -> C++ std (existing block layout preserved).
+---
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+IndentCaseLabels: false
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortCaseExpressionOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: WithoutElse
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
+FixNamespaceComments: true

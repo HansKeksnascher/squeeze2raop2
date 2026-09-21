@@ -11,6 +11,8 @@ option(SQUEEZE2RAOP2_WITH_SENDER "integrate the vendored raop_sender library" ON
 
 find_package(Threads REQUIRED)
 
+find_program(CLANG_FORMAT_EXE NAMES clang-format)
+
 # First-party warning set (GCC 13+); third_party targets are excluded.
 set(SQUEEZE2RAOP2_CXX_WARNINGS
   -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
@@ -78,9 +80,6 @@ add_library(squeeze2raop2_core STATIC
   src/lms_stream.cpp
   src/slimproto.cpp
   src/slimproto_packets.cpp
-  src/lms_stream.cpp
-  src/slimproto.cpp
-  src/slimproto_packets.cpp
   src/decoder/decoder.cpp
   src/decoder/mp3_decoder.cpp
   src/decoder/pcm_decoder.cpp
@@ -129,6 +128,17 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   add_executable(mp3_smoke test/mp3_smoke.cpp)
   target_link_libraries(mp3_smoke PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(mp3_smoke)
+endif()
+
+if(CLANG_FORMAT_EXE)
+  file(GLOB_RECURSE SQUEEZE2RAOP2_FORMAT_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/*.cpp ${CMAKE_SOURCE_DIR}/src/*.h
+    ${CMAKE_SOURCE_DIR}/test/*.cpp ${CMAKE_SOURCE_DIR}/test/*.h)
+  add_custom_target(format
+    COMMAND ${CLANG_FORMAT_EXE} -i ${SQUEEZE2RAOP2_FORMAT_SOURCES}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "clang-format over first-party sources"
+    VERBATIM)
 endif()
 
 install(TARGETS squeeze2raop2 RUNTIME DESTINATION bin)
