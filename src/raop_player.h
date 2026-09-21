@@ -41,6 +41,9 @@ public:
         return ringStorage_->tryPush(stereoSamples);
     }
     void setVolume(double pct);
+    void setLatencyMs(int ms) {
+        if (sender_) sender_->setLatency(uint32_t(int64_t(ms) * 44100 / 1000));
+    }
     void setNowPlaying(const std::string& title, const std::string& artist,
                        const std::string& album);
     // Fires only for device-initiated closes / session failures (our own

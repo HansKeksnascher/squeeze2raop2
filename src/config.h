@@ -34,6 +34,11 @@ struct Settings {
     // -30..0 dB protocol range via db = 0.3*pct - 30. 0 would be the receiver
     // mute sentinel (-144 dB), so the floor is 0.5.
     float volPct = 0.7f;
+    // Scheduled AirPlay latency in ms (22050+44100 frames = 1.5 s is the
+    // sender's default; 500 ms is Apple's own iPhone ballpark). The
+    // receiver's announced range is 250..2000 ms (latencyMin/Max), below
+    // 250 ms it would underrun on any jitter.
+    int apLatencyMs = 500;
 
     struct {
         std::string host;

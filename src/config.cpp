@@ -59,6 +59,8 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
                 "  --discovery on|off    spawn sessions for discovered devices (default on)\n"
                 "  --vol-pct <N>         fixed AirPlay volume percent 0.5-100 (default 0.7,\n"
                 "                        maps to -30..0 dB; 25 was ear-measured as loud)\n"
+                "  --ap-latency-ms <N>   scheduled AirPlay latency 250-2000 ms (default 500;\n"
+                "                        lower = snappier but more dropout-prone)\n"
                 "  --log <level>         off|error|warn|info|debug\n"
                 "  -h --help             this text\n");
             return std::nullopt;
@@ -149,6 +151,19 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             }
             if (s.volPct < 0.5f || s.volPct > 100.f) {
                 log::error("--vol-pct must be 0.5-100 (0 would be mute)");
+                return std::nullopt;
+            }
+        } else if (arg == "--ap-latency-ms") {
+            if (!requireValue(arg, value(), v)) return std::nullopt;
+            try {
+                s.apLatencyMs = std::stoi(v);
+            } catch (const std::exception&) {
+                log::error("--ap-latency-ms must be a number, got '{}'", v);
+                return std::nullopt;
+            }
+            if (s.apLatencyMs < 250 || s.apLatencyMs > 2000) {
+                log::error("--ap-latency-ms must be 250-2000 "
+                           "(receiver latencyMin..Max)");
                 return std::nullopt;
             }
         } else if (arg == "--log") {

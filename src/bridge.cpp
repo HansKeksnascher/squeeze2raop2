@@ -53,7 +53,7 @@ public:
                   std::optional<std::string> lmsHost, uint16_t lmsPort,
                   bool paceRealtime, std::optional<std::string> sinkPath,
                   std::optional<RaopTarget> raopTarget,
-                  RaopPlayer::CredentialSink credSink, float volPct)
+                  RaopPlayer::CredentialSink credSink, float volPct, int latencyMs)
         : deviceId_(std::move(deviceId)),
           name_(std::move(name)),
           mac_(mac),
@@ -63,7 +63,8 @@ public:
           sinkPath_(std::move(sinkPath)),
           raopTarget_(std::move(raopTarget)),
           credSink_(std::move(credSink)),
-          fixedVolumePct_(volPct) {}
+          fixedVolumePct_(volPct),
+          latencyMs_(latencyMs) {}
 
     ~PlayerSession() { stop(); }
 
@@ -180,6 +181,9 @@ public:
         raop_->setCredentialSink(sink);
         raop_->setClosedCallback([this] { onRaopDeviceClosed(); });
         raop_->setInputRate(sampleRate);
+        // Scheduled stream latency: must be set BEFORE start() (it is part
+        // of the RTP timeline the receiver schedules against).
+        raop_->setLatencyMs(latencyMs_);
         raop_->start();
         // Set volume AFTER start(): RaopSender::start() wipes pendingVolumeDb_
         // ("never carry volume between devices"), so a pre-start setVolume is
@@ -403,8 +407,10 @@ private:
                     std::lock_guard<std::mutex> lock(mutex_);
                     timeline = fedSamples_ * 1000ULL / fmt.sampleRate;
                 }
-                if (timeline > activeMs + 60) {
-                    uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs + 60), 120);
+                // Pace reads to playback time with a small lead: keeps the
+                // sender's ring fed without running far ahead of the wire.
+                if (timeline > activeMs + 20) {
+                    uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs + 20), 120);
                     std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
                     activeMs += sleepMs;
                 }
@@ -622,6 +628,8 @@ private:
     // Fixed AirPlay volume percent (--vol-pct), applied to every session
     // before RECORD so audio never starts at the receiver's hardware default.
     float fixedVolumePct_;
+    // Scheduled AirPlay latency in ms (--ap-latency-ms).
+    int latencyMs_;
 };
 
 class SessionManager {
@@ -701,7 +709,7 @@ public:
                 (void)deviceId;
                 store_.saveCreds(devId, creds);
             },
-            settings_.volPct);
+            settings_.volPct, settings_.apLatencyMs);
         session->start();
         sessions_[dev.id] = std::move(session);
     }
