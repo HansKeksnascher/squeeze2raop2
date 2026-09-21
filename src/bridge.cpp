@@ -130,6 +130,7 @@ public:
                     // Silence now: the receiver's jitter buffer would keep
                     // the tail playing for ~latency after the feed stops.
                     raop_->flush();
+                    raop_->discardAudio();   // ring residue would follow the flush
                 }
             }
             log::debug("pause {}", ms);
