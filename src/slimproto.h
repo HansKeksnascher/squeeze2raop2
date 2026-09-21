@@ -105,7 +105,7 @@ public:
     void sendResp(const std::string& header);
     void sendSetdName(const std::string& name);
     void sendDisco(uint8_t reason);
-    void sendMeta(const char* data, size_t len);
+    void sendMeta(std::string_view data);
 
     const std::array<uint8_t, 6>& mac() const { return mac_; }
 

@@ -70,7 +70,7 @@ std::string domainToString(const domainname* name) {
     char buffer[MAX_ESCAPED_DOMAIN_NAME];
     ConvertDomainNameToCString(name, buffer);
     return std::string(buffer);
-} // namespace squeeze2raop2
+}
 
 uint16_t ipPortHostOrder(const mDNSIPPort& port) {
     return static_cast<uint16_t>((port.b[0] << 8) | port.b[1]);

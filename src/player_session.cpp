@@ -205,8 +205,8 @@ bool PlayerSession::ensureRaop(uint32_t sampleRate) {
         log::info("[ap] fixed volume {} pct applied (post-start)",
                   fixedVolumePct_);
     }
-    if (raop_) log::info("[ap] session launching for {} ({})", name_,
-                         raopTarget_->airplay2 ? "ap2" : "ap1");
+    log::info("[ap] session launching for {} ({})", name_,
+              raopTarget_->airplay2 ? "ap2" : "ap1");
     return true;
 }
 
@@ -259,14 +259,19 @@ void PlayerSession::startStream(const StrmStart& st) {
         client_->sendStat("STMn", currentStats());
         return;
     }
-
-    std::string error;
-    {
-        std::string firstLine = st.request.substr(0, st.request.find("\r\n"));
-        log::info("stream GET {}:{} icy={}", host, port,
-                  st.request.find("Icy-MetaData") != std::string::npos ? "req" : "none");
-        (void)firstLine;
+    // Only formats the streamLoop actually consumes. LMS should honor the
+    // HELO caps (pcm,mp3); a stray direct format would otherwise be pushed
+    // into the ring as raw PCM = noise.
+    if (st.format != StreamFormat::Pcm && st.format != StreamFormat::Mp3) {
+        log::error("strm s: unsupported stream format '{}'",
+                   static_cast<char>(st.format));
+        client_->sendStat("STMn", currentStats());
+        return;
     }
+
+    log::info("stream GET {}:{} icy={}", host, port,
+              st.request.find("Icy-MetaData") != std::string::npos ? "req" : "none");
+    std::string error;
     // Ask for in-band ICY metadata on LMS-proxied streams (the embedded
     // request is bare): LMS's /stream.mp3 only interleaves StreamTitle
     // blocks when the client sends Icy-MetaData: 1 — the same request
@@ -288,7 +293,7 @@ void PlayerSession::startStream(const StrmStart& st) {
         client_->sendStat("STMn", currentStats());
         return;
     }
-    reader_.setMetaCallback([this](const char* d, size_t n) { onIcyMeta(d, n); });
+    reader_.setMetaCallback([this](std::string_view block) { onIcyMeta(block); });
     client_->sendResp(reader_.headers());
     client_->sendStat("STMc", currentStats());
 
@@ -376,49 +381,58 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // up) when its writer stalls. Keep reading + decoding and
             // discard the PCM; the sender's timeline runs on silence,
             // so an unpause resumes with fresh live audio.
-            size_t got = 0;
             auto rr = reader_.read(std::span{buf}, 20);
-            got = rr.bytes;
-            if (rr.result == HttpStreamReader::ReadResult::Data && got > 0) {
-                if (isMp3_) {
-                    if (!feedMp3(st, std::as_bytes(std::span{buf}).first(got), fmt,
-                                 nullptr, /*toOutput=*/false))
-                        break;
-                }
+            if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
+                if (isMp3_ &&
+                    !feedMp3(st, std::as_bytes(std::span{buf}).first(rr.bytes), fmt,
+                             nullptr, /*toOutput=*/false))
+                    break;
                 // raw-pcm pause: nothing to decode, just dropped
+            } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
+                log::warn("stream socket error while paused; ending stream");
+                break;
+            } else if (rr.result == HttpStreamReader::ReadResult::AtEof) {
+                break;
             }
-            if (rr.result == HttpStreamReader::ReadResult::AtEof) break;
             continue;
         }
 
         uint64_t iterStart = nowMs();
-        size_t got = 0;
         auto rr = reader_.read(std::span{buf}, 150);
-        got = rr.bytes;
-        uint64_t iterCost = nowMs() - iterStart;
 
-        if (rr.result == HttpStreamReader::ReadResult::Data && got > 0) {
+        if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
+            const auto audio = std::as_bytes(std::span{buf}).first(rr.bytes);
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                receivedBytes_ += got;
+                receivedBytes_ += rr.bytes;
             }
             if (isMp3_) {
-                if (!feedMp3(st, std::as_bytes(std::span{buf}).first(got), fmt, sink.get()))
+                if (!feedMp3(st, audio, fmt, sink.get()))
                     break;
             } else {
-                if (sink) sink->feed(std::as_bytes(std::span{buf}).first(got), fmt);
+                if (sink) sink->feed(audio, fmt);
                 if (raop_ && fmt.bitsPerSample == 16) {
-                    pushToRaop(st, std::as_bytes(std::span{buf}).first(got), fmt);
+                    pushToRaop(st, audio, fmt);
                 } else if (raop_) {
-                    log::warn("raop feed requires 16-bit pcm; dropping {} bytes", got);
+                    log::warn("raop feed requires 16-bit pcm; dropping {} bytes",
+                              rr.bytes);
                 }
                 std::lock_guard<std::mutex> lock(mutex_);
-                fedBytes_ += got;
-                fedSamples_ += got / bytesPerFrame;
+                fedBytes_ += rr.bytes;
+                fedSamples_ += rr.bytes / bytesPerFrame;
             }
-            activeMs += iterCost;
-        } else {
-            activeMs += 150;
+            // The pacing clock must include the feed cost, not just the
+            // read: pushToRaop/feedRing can block on ring backpressure and
+            // an under-counted clock makes the pacer over-sleep relative
+            // to real elapsed time (ring dips -> receiver silence pads).
+            activeMs += nowMs() - iterStart;
+        } else if (rr.result == HttpStreamReader::ReadResult::Timeout) {
+            activeMs += nowMs() - iterStart;   // ~= the read timeout
+        } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
+            // Socket error, not a mere no-data timeout: without this branch
+            // the loop used to spin hot on a dead socket forever.
+            log::warn("stream socket error; ending stream");
+            break;
         }
 
         if (rr.result == HttpStreamReader::ReadResult::AtEof) {
@@ -506,15 +520,14 @@ void PlayerSession::onRaopDeviceClosed() {
 
 // ICY in-band metadata block (squeezelite parity): forward the raw
 // chunk to LMS and push the StreamTitle to the AirPlay receiver.
-void PlayerSession::onIcyMeta(const char* data, size_t len) {
-    client_->sendMeta(data, len);
-    const std::string raw(data, len);
-    const std::string key = "StreamTitle='";
-    const auto p = raw.find(key);
-    if (p == std::string::npos) return;
-    const auto e = raw.find('\'', p + key.size());
-    if (e == std::string::npos) return;
-    const std::string title = raw.substr(p + key.size(), e - p - key.size());
+void PlayerSession::onIcyMeta(std::string_view block) {
+    client_->sendMeta(block);
+    constexpr std::string_view key = "StreamTitle='";
+    const auto p = block.find(key);
+    if (p == std::string_view::npos) return;
+    const auto e = block.find('\'', p + key.size());
+    if (e == std::string_view::npos) return;
+    const std::string title(block.substr(p + key.size(), e - p - key.size()));
     if (title.empty()) return;
     // Some stations repeat the identical block every meta interval (~5/s);
     // only log and push on an actual change.

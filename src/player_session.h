@@ -16,6 +16,7 @@
 #include <span>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -49,7 +50,7 @@ private:
     void startStream(const StrmStart& st);
     void streamLoop(std::stop_token st);
     void onRaopDeviceClosed();
-    void onIcyMeta(const char* data, size_t len);
+    void onIcyMeta(std::string_view block);
     void pushToRaop(std::stop_token st, std::span<const std::byte> data, const PcmFormat& fmt);
     bool feedMp3(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
                  PcmFileSink* sink, bool toOutput = true);
@@ -91,7 +92,9 @@ private:
     std::atomic<bool> flushed_{false};     // strm f: keep session for next track
     std::atomic<bool> deviceLost_{false};  // receiver ended the session
     std::atomic<bool> retryUsed_{false};   // one transparent retry per stream
-    std::string lastTitle_;                // re-applied on session recreate
+    // Last ICY title: dedupes the repeated meta blocks some stations send,
+    // and is re-applied to a recreated receiver session after a retry.
+    std::string lastTitle_;
     // --vol-pct: fixed-mode level, and in lms mode the pre-AUDG fallback
     // applied to every new session before RECORD (so audio never starts at
     // the receiver's hardware default).

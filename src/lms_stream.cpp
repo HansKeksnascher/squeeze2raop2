@@ -122,6 +122,10 @@ ssize_t HttpStreamReader::pullRaw(std::span<char> dst, uint32_t timeoutMs) {
 HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
                                                     uint32_t timeoutMs) {
     size_t produced = 0;
+    // What a zero-progress return means: a read timeout, unless a pull
+    // reported EOF or a socket error first (with partial data produced,
+    // the Data return wins and the close/error surfaces on the next call).
+    ReadResult outcome = ReadResult::Timeout;
     while (produced < buffer.size()) {
         const uint32_t timeout = produced ? 0 : timeoutMs;
         if (metaBytesLeft_) {
@@ -129,14 +133,15 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
             const size_t want = std::min<size_t>(metaBytesLeft_, sizeof(tmp));
             ssize_t n = pullRaw(std::span{tmp}.first(want), timeout);
             if (n < 0) {
+                outcome = (n == -2) ? ReadResult::AtEof : ReadResult::Closed;
                 if (produced) break;
-                return {n == -2 ? ReadResult::AtEof : ReadResult::Closed};
+                return {outcome};
             }
             if (n == 0) break;
             metaBuf_.append(tmp, static_cast<size_t>(n));
             metaBytesLeft_ -= static_cast<uint32_t>(n);
             if (!metaBytesLeft_) {
-                if (metaCb_) metaCb_(metaBuf_.data(), metaBuf_.size());
+                if (metaCb_) metaCb_(std::string_view{metaBuf_.data(), metaBuf_.size()});
                 metaBuf_.clear();
                 metaCountdown_ = metaInterval_;
             }
@@ -146,8 +151,9 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
             char lenByte;
             const ssize_t n = pullRaw(std::span{&lenByte, 1}, timeout);
             if (n < 0) {
+                outcome = (n == -2) ? ReadResult::AtEof : ReadResult::Closed;
                 if (produced) break;
-                return {n == -2 ? ReadResult::AtEof : ReadResult::Closed};
+                return {outcome};
             }
             if (n == 0) break;
             metaBytesLeft_ = static_cast<uint32_t>(static_cast<unsigned char>(lenByte)) * 16;
@@ -159,15 +165,16 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
         if (metaCountdown_) want = std::min<size_t>(want, metaCountdown_);
         const ssize_t n = pullRaw(std::span{buffer}.subspan(produced, want), timeout);
         if (n < 0) {
+            outcome = (n == -2) ? ReadResult::AtEof : ReadResult::Closed;
             if (produced) break;
-            return {n == -2 ? ReadResult::AtEof : ReadResult::Closed};
+            return {outcome};
         }
         if (n == 0) break;
         if (metaCountdown_) metaCountdown_ -= static_cast<uint32_t>(n);
         produced += static_cast<size_t>(n);
     }
     if (produced) return {ReadResult::Data, produced};
-    return {ReadResult::Closed};
+    return {outcome};
 }
 
 } // namespace squeeze2raop2

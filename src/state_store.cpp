@@ -45,7 +45,7 @@ std::string encodeId(const std::string& id) {
         else out.push_back(c);
     }
     return out;
-} // namespace squeeze2raop2
+}
 
 bool StateStore::open(const std::string& path, std::string& errorOut) {
     {
@@ -126,17 +126,35 @@ void StateStore::saveCreds(const std::string& deviceId, const std::string& creds
 }
 
 bool StateStore::save() {
-    std::ofstream out(path_, std::ios::trunc);
-    if (!out) {
-        log::error("cannot write state file {}", path_);
-        return false;
+    // Write-then-rename: a crash mid-save must never truncate the real
+    // state file (lost MACs would re-register the players on LMS).
+    const std::string tmp = path_ + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out) {
+            log::error("cannot write state file {}", tmp);
+            return false;
+        }
+        out << "# squeeze2raop2 state: stable virtual MACs, AirPlay pairing credentials\n";
+        for (const auto& kv : entries_) {
+            if (kv.second.hasMac)
+                out << "mac  " << encodeId(kv.first) << " "
+                    << macToString(kv.second.mac) << "\n";
+            if (!kv.second.creds.empty())
+                out << "creds  " << encodeId(kv.first) << " " << kv.second.creds << "\n";
+        }
+        out.flush();
+        if (!out) {
+            log::error("cannot write state file {}", tmp);
+            out.close();
+            ::remove(tmp.c_str());
+            return false;
+        }
     }
-    out << "# squeeze2raop2 state: stable virtual MACs, AirPlay pairing credentials\n";
-    for (const auto& kv : entries_) {
-        if (kv.second.hasMac)
-            out << "mac  " << encodeId(kv.first) << " " << macToString(kv.second.mac) << "\n";
-        if (!kv.second.creds.empty())
-            out << "creds  " << encodeId(kv.first) << " " << kv.second.creds << "\n";
+    if (std::rename(tmp.c_str(), path_.c_str()) != 0) {
+        log::error("cannot replace state file {}: {}", path_, errnoMessage(errno));
+        ::remove(tmp.c_str());
+        return false;
     }
     return true;
 }

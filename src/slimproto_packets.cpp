@@ -128,14 +128,14 @@ void SlimProtoClient::sendDisco(uint8_t reason) {
     if (!sendPacket("DSCO", std::as_bytes(std::span{&reason, 1}))) log::warn("DSCO send failed");
 }
 
-void SlimProtoClient::sendMeta(const char* data, size_t len) {
+void SlimProtoClient::sendMeta(std::string_view data) {
     // squeezelite parity: forward the raw ICY metadata block to LMS so its
     // track display follows the stream (LMS also watches direct streams
     // itself; this is redundant there but keeps proxied streams in sync).
     // The ICY de-interleaver only invokes this with a non-empty block; an
     // empty block carries no information for LMS either way.
-    if (!data || len == 0) return;
-    sendPacket("META", std::as_bytes(std::span{data, len}));
+    if (data.empty()) return;
+    sendPacket("META", std::as_bytes(std::span{data}));
 }
 
 void SlimProtoClient::process(const std::string& pkt) {
