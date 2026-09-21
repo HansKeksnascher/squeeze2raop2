@@ -373,7 +373,24 @@ private:
                 else pauseUntilMs_ = 0;
             }
             if (paused) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                // Drain instead of sleep: a paused player that stops reading
+                // backpressures the LMS proxy, and LMS un-pauses the stream
+                // itself within seconds (observed ~5 s, with a volume fade
+                // up) when its writer stalls. Keep reading + decoding and
+                // discard the PCM; the sender's timeline runs on silence,
+                // so an unpause resumes with fresh live audio.
+                size_t got = 0;
+                auto rr = reader_.read(std::span{buf}, 20);
+                got = rr.bytes;
+                if (rr.result == HttpStreamReader::ReadResult::Data && got > 0) {
+                    if (isMp3_) {
+                        if (!feedMp3(st, std::as_bytes(std::span{buf}).first(got), fmt,
+                                     nullptr, /*toOutput=*/false))
+                            break;
+                    }
+                    // raw-pcm pause: nothing to decode, just dropped
+                }
+                if (rr.result == HttpStreamReader::ReadResult::AtEof) break;
                 continue;
             }
 
@@ -531,7 +548,7 @@ private:
 
     // Returns false when the decoder failed and the stream must abort.
     bool feedMp3(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
-                 PcmFileSink* sink) {
+                 PcmFileSink* sink, bool toOutput = true) {
         constexpr size_t kPcmChunk = size_t{1152} * 2;
         if (!mp3_) return true;
         mp3_->feed(data);
@@ -561,6 +578,7 @@ private:
                 if (raop_) raop_->setInputRate(fmt.sampleRate);
                 log::info("[ap] mp3 audio: {} Hz, {} ch", fmt.sampleRate, fmt.channels);
             }
+            if (!toOutput) continue;   // paused drain: decode, discard
             const size_t byteLen = n * sizeof(int16_t);
             if (sink) sink->feed(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
             if (raop_) pushToRaop(st, std::as_bytes(std::span{pcm}).first(byteLen), fmt);
