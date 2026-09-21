@@ -187,8 +187,8 @@ void SlimProtoClient::sendHelo(bool reconnect) {
     std::memcpy(pkt.data(), "HELO", 4);
     packN(std::as_writable_bytes(std::span{pkt}).subspan(4, 4), bodyLen, 4);
     std::span<std::byte> p = std::as_writable_bytes(std::span{pkt}).subspan(8);
-    p[0] = std::byte{12};
-    p[1] = std::byte{0};
+    p[0] = std::byte{12};   // deviceid 12 = squeezeplay class (squeezelite parity)
+    p[1] = std::byte{1};    // revision: single byte, shown as player firmware rev
     std::memcpy(p.data() + 2, mac_.data(), 6);
     packN(p.subspan(24, 2), reconnect ? 0x4000 : 0x0000, 2);
     std::memcpy(p.data() + 36, caps.data(), caps.size());

@@ -132,9 +132,19 @@ public:
 
         client_ = std::make_unique<SlimProtoClient>(
             mac_,
-            "Model=squeeze2raop2,ModelName=" + name_ +
-                ",AccuratePlayPoints=1,HasDigitalOut=1,MaxSampleRate=96000,"
-                "Firmware=squeeze2raop2-m1,aac,flc,alc,wav,aif,pcm,mp3",
+            // squeezelite-style caps: Model/ModelName drive the LMS web UI
+            // (player lists, settings); the player's display name is sent
+            // separately via SETD name. Firmware= is the free-text version
+            // LMS shows in player settings.
+            "Model=squeezelite,ModelName=squeeze2raop2,AccuratePlayPoints=1,"
+            "HasDigitalOut=1,MaxSampleRate=96000,"
+            // Only formats the bridge actually decodes: raw PCM (headerless,
+            // LMS transcode profiles like flc-pcm) and native MP3 (minimp3).
+            // pcm first: local FLAC etc. transcode losslessly on the LAN;
+            // mp3 second: MP3 sources (radio) stream direct regardless.
+            // Do NOT advertise wav/aif/aac/flc/alc: no decoder here, and
+            // direct-streamed wav/aif would ship their container headers.
+            "Firmware=squeeze2raop2 v0.1.0 (m1),pcm,mp3",
             std::move(events));
         client_->setPlayerName(name_);
         client_->setStatsProvider([this] { return currentStats(); });
