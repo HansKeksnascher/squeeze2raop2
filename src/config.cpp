@@ -17,7 +17,7 @@ bool requireValue(const std::string& flag, const char* value, std::string& out) 
     }
     out = value;
     return true;
-} // namespace
+}
 
 std::optional<uint16_t> parsePort(const std::string& text) {
     unsigned port = 0;
@@ -25,7 +25,7 @@ std::optional<uint16_t> parsePort(const std::string& text) {
     if (ec != std::errc{} || ptr != text.data() + text.size() || port < 1 || port > 65535)
         return std::nullopt;
     return static_cast<uint16_t>(port);
-} // namespace squeeze2raop2
+}
 
 } // namespace
 
@@ -207,4 +207,4 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
     return s;
 }
 
-}
+} // namespace squeeze2raop2

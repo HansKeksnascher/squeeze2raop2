@@ -22,7 +22,7 @@ const char* tag(Level l) {
     case Level::Debug: return "dbug";
     }
     return "?";
-} // namespace
+}
 
 std::string stamp() {
     using clock = std::chrono::system_clock;
@@ -32,8 +32,8 @@ std::string stamp() {
     gmtime_r(&t, &tm);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
     return std::format("[{:02}:{:02}:{:02}.{:03}]", tm.tm_hour, tm.tm_min, tm.tm_sec, ms.count());
-} // namespace squeeze2raop2
 }
+} // namespace
 
 void setLevel(Level l) { g_level.store(l, std::memory_order_relaxed); }
 Level level() { return g_level.load(std::memory_order_relaxed); }
@@ -44,4 +44,4 @@ void write(Level l, std::string_view msg) {
                  static_cast<int>(msg.size()), msg.data());
 }
 
-}
+} // namespace squeeze2raop2::log

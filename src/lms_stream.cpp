@@ -1,12 +1,10 @@
 #include "lms_stream.h"
 
 #include "log.h"
+#include "net_util.h"
 #include "util.h"
 
-#include <arpa/inet.h>
-#include <netdb.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -14,70 +12,9 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
-#include <chrono>
 #include <cstring>
-#include <thread>
 
 namespace squeeze2raop2 {
-
-namespace {
-
-int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(port);
-    if (inet_pton(AF_INET, host.c_str(), &sa.sin_addr) != 1) {
-        // getaddrinfo instead of gethostbyname2: the latter returns a
-        // thread-unsafe static hostent, and sessions resolve concurrently.
-        addrinfo hints{};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        addrinfo* res = nullptr;
-        if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || !res) {
-            errorOut = std::string("cannot resolve ") + host;
-            return -1;
-        }
-        const auto* ai = reinterpret_cast<const sockaddr_in*>(res->ai_addr);
-        sa.sin_addr = ai->sin_addr;
-        freeaddrinfo(res);
-    }
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        errorOut = "socket() failed";
-        return -1;
-    }
-    int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
-    linger lg{};
-    lg.l_onoff = 1;
-    lg.l_linger = 3;
-    setsockopt(fd, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0) {
-        errorOut = std::string("connect: ") + errnoMessage(errno);
-        ::close(fd);
-        return -1;
-    }
-    return fd;
-} // namespace
-
-bool sendAll(int fd, const void* data, size_t len) {
-    const char* p = static_cast<const char*>(data);
-    while (len > 0) {
-        ssize_t n = ::send(fd, p, len, MSG_NOSIGNAL);
-        if (n <= 0) {
-            if (n < 0 && (errno == EAGAIN || errno == EINTR)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
-            }
-            return false;
-        }
-        p += n;
-        len -= static_cast<size_t>(n);
-    }
-    return true;
-} // namespace squeeze2raop2
-
-} // namespace
 
 HttpStreamReader::~HttpStreamReader() { close(); }
 
@@ -110,7 +47,7 @@ uint32_t parseIcyMetaint(const std::string& headers) {
     // Absurd interval (or unparseable): treat as absent.
     if (ec != std::errc{} || v == 0 || v > (1u << 20)) return 0;
     return static_cast<uint32_t>(v);
-} // namespace
+}
 
 } // namespace
 
@@ -119,6 +56,11 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
     close();
     fd_ = connectTcp(host, port, errorOut);
     if (fd_ < 0) return false;
+    // Bounded close: an abandoned connection must not hang close() forever.
+    linger lg{};
+    lg.l_onoff = 1;
+    lg.l_linger = 3;
+    setsockopt(fd_, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
     std::string wire = request;
     if (wire.find("\r\n\r\n") == std::string::npos) {
         if (wire.size() < 4 || wire.compare(wire.size() - 2, 2, "\r\n") != 0) wire += "\r\n";
@@ -228,4 +170,4 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer,
     return {ReadResult::Closed};
 }
 
-}
+} // namespace squeeze2raop2

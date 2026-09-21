@@ -32,7 +32,7 @@ std::array<uint8_t, 6> uniqueMacFor(std::map<std::string, StateStoreEntry>& entr
         candidate[5] = static_cast<uint8_t>((candidate[5] + 1) & 0xFF);
     }
     return fakeMacFor(deviceId);
-} // namespace
+}
 
 } // namespace
 
@@ -141,4 +141,4 @@ bool StateStore::save() {
     return true;
 }
 
-}
+} // namespace squeeze2raop2

@@ -13,7 +13,7 @@ fxchain::RaopDeviceInfo::Auth authFor(const RaopTarget& target) {
     if (!target.password.empty()) return fxchain::RaopDeviceInfo::Auth::Password;
     if (!target.storedCreds.empty()) return fxchain::RaopDeviceInfo::Auth::HapPin;
     return fxchain::RaopDeviceInfo::Auth::HapTransient;
-} // namespace
+}
 
 void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
     squeeze2raop2::log::Level mapped = squeeze2raop2::log::Level::Debug;
@@ -22,7 +22,7 @@ void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
     case fxchain::RaopLogLevel::Warn: mapped = squeeze2raop2::log::Level::Warn; break;
     }
     squeeze2raop2::log::write(mapped, std::string("[ap] ") + msg);
-} // namespace squeeze2raop2
+}
 
 } // namespace
 
@@ -91,4 +91,4 @@ bool RaopPlayer::active() const {
     return sender_ && sender_->active();
 }
 
-}
+} // namespace squeeze2raop2

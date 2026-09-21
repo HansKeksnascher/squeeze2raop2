@@ -67,6 +67,7 @@ target_link_libraries(squeeze2raop2_apple_mdns PRIVATE Threads::Threads)
 add_library(squeeze2raop2_core STATIC
   src/util.cpp
   src/log.cpp
+  src/net_util.cpp
   src/config.cpp
   src/state_store.cpp
   src/device_registry.cpp
@@ -76,7 +77,10 @@ add_library(squeeze2raop2_core STATIC
   src/wav_sink.cpp
   src/lms_stream.cpp
   src/slimproto.cpp
+  src/slimproto_packets.cpp
   src/mp3_decoder.cpp
+  src/player_session.cpp
+  src/session_manager.cpp
 )
 target_include_directories(squeeze2raop2_core PUBLIC src third_party/minimp3)
 target_link_libraries(squeeze2raop2_core PUBLIC Threads::Threads squeeze2raop2_apple_mdns)

@@ -19,7 +19,7 @@ std::string DeviceRegistry::normalizeHexKey(const std::string& raw) {
     }
     if (hex.size() < 12) return std::string();
     return hex.substr(0, 12);
-} // namespace squeeze2raop2
+}
 
 std::string DeviceRegistry::keyFor(const std::string& instance) {
     if (instance.size() >= 12) {
@@ -177,4 +177,4 @@ void DeviceRegistry::onAirplayGone(const std::string& instance) {
     notify(notifyData->first, notifyData->second);
 }
 
-}
+} // namespace squeeze2raop2

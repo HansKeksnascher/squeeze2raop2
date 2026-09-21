@@ -49,12 +49,12 @@ void Mp3Decoder::feed(std::span<const std::byte> data) {
     if (data.empty()) return;
     buffer_.insert(buffer_.end(), data.begin(), data.end());
     decodeMore();
-} // namespace
+}
 
 void Mp3Decoder::finish() {
     eof_ = true;
     decodeMore();
-} // namespace squeeze2raop2
+}
 
 void Mp3Decoder::decodeMore() {
     if (failed_) return;
