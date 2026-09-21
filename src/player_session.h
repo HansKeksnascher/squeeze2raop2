@@ -56,6 +56,12 @@ private:
                  PcmFileSink* sink, bool toOutput = true);
     void feedRing(std::stop_token st, const std::vector<int16_t>& samples);
     void stopPlayback();
+    // Silence the receiver immediately and, with fullStop, end and destroy
+    // the session. flush() drops the receiver's jitter-buffer tail (a
+    // HomePod would keep playing it for ~latency otherwise) and
+    // discardAudio() removes the ring residue that would follow the flush.
+    // Caller must hold targetMutex_; no-op without a live session.
+    void teardownReceiverAudio(bool fullStop);
 
     std::string deviceId_;
     std::string name_;

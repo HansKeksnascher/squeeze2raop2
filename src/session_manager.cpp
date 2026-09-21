@@ -17,6 +17,15 @@ SessionManager::SessionManager(const Settings& settings, StateStore& store)
 
 void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevice& dev) {
     std::lock_guard<std::mutex> lock(mutex_);
+    auto makeTarget = [&](const std::string& host, uint16_t port, bool airplay2) {
+        RaopTarget t;
+        t.host = host;
+        t.port = port;
+        t.airplay2 = airplay2;
+        t.password = settings_.ap.password;
+        t.storedCreds = store_.credsFor(dev.id).value_or(std::string());
+        return t;
+    };
     if (ev == DeviceRegistry::Event::Removed) {
         auto it = sessions_.find(dev.id);
         if (it == sessions_.end()) return;
@@ -29,13 +38,11 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
         auto it = sessions_.find(dev.id);
         if (it == sessions_.end()) return;
         if (!dev.host.empty() && (dev.hasRaop() || dev.hasAirplay())) {
-            RaopTarget t;
-            t.host = dev.host;
-            t.port = dev.airplay2() ? (dev.airplayPort ? dev.airplayPort : dev.raopPort)
-                                    : (dev.raopPort ? dev.raopPort : dev.airplayPort);
-            t.airplay2 = dev.airplay2();
-            t.password = settings_.ap.password;
-            t.storedCreds = store_.credsFor(dev.id).value_or(std::string());
+            RaopTarget t = makeTarget(
+                dev.host,
+                dev.airplay2() ? (dev.airplayPort ? dev.airplayPort : dev.raopPort)
+                               : (dev.raopPort ? dev.raopPort : dev.airplayPort),
+                dev.airplay2());
             it->second->updateTarget(t);
             if (t.port)
                 log::debug("session target refreshed: {} {}:{}",
@@ -62,23 +69,13 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
               dev.pw ? " password" : "", assigned ? " new-mac" : "");
 
     std::optional<RaopTarget> raopTarget;
-    if (settings_.ap.enabled) {
-        RaopTarget target;
-        target.host = settings_.ap.host;
-        target.port = settings_.ap.port;
-        target.airplay2 = settings_.ap.airplay2;
-        target.password = settings_.ap.password;
-        target.storedCreds = store_.credsFor(dev.id).value_or(std::string());
-        raopTarget = target;
-    } else if (!dev.host.empty()) {
-        RaopTarget target;
-        target.host = dev.host;
-        target.port = dev.airplay2() ? dev.airplayPort : dev.raopPort;
-        target.airplay2 = dev.airplay2();
-        target.password = settings_.ap.password;
-        target.storedCreds = store_.credsFor(dev.id).value_or(std::string());
-        raopTarget = target;
-    }
+    if (settings_.ap.enabled)
+        raopTarget = makeTarget(settings_.ap.host, settings_.ap.port,
+                                settings_.ap.airplay2);
+    else if (!dev.host.empty())
+        raopTarget = makeTarget(dev.host,
+                                dev.airplay2() ? dev.airplayPort : dev.raopPort,
+                                dev.airplay2());
 
     auto session = std::make_unique<PlayerSession>(
         dev.id, dev.name, mac, settings_.lmsHost, settings_.lmsPort,

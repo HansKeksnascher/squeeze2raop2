@@ -56,15 +56,7 @@ void PlayerSession::start() {
         stopPlayback();
         {
             std::lock_guard<std::mutex> lock(targetMutex_);
-            if (raop_) {
-                // Drop the receiver's buffered audio BEFORE tearing
-                // down: a HomePod keeps playing its ~latency jitter
-                // buffer otherwise (~2-3 s tail on stop).
-                raop_->flush();
-                raop_->discardAudio();
-                raop_->stop();
-                raop_.reset();
-            }
+            teardownReceiverAudio(true);
         }
         client_->sendStat("STMf", currentStats());
     };
@@ -77,10 +69,7 @@ void PlayerSession::start() {
         stopPlayback();
         {
             std::lock_guard<std::mutex> lock(targetMutex_);
-            if (raop_) {
-                raop_->flush();
-                raop_->discardAudio();
-            }
+            teardownReceiverAudio(false);
         }
         client_->sendStat("STMf", currentStats());
     };
@@ -95,12 +84,7 @@ void PlayerSession::start() {
         }
         {
             std::lock_guard<std::mutex> lock(targetMutex_);
-            if (raop_) {
-                // Silence now: the receiver's jitter buffer would keep
-                // the tail playing for ~latency after the feed stops.
-                raop_->flush();
-                raop_->discardAudio();   // ring residue would follow the flush
-            }
+            teardownReceiverAudio(false);
         }
         log::debug("pause {}", ms);
         client_->sendStat("STMp", currentStats());
@@ -356,7 +340,8 @@ void PlayerSession::streamLoop(std::stop_token st) {
             if (sink) sink->close();
             return;
         }
-        raop_->setInputRate(fmt.sampleRate);
+        // (input rate is applied inside ensureRaop; the only later
+        // setInputRate is feedMp3's mid-stream rate-change update)
         if (fmt.channels != 2)
             log::warn("input is {}-channel; bridges Apple receivers expect stereo", fmt.channels);
     }
@@ -638,6 +623,16 @@ void PlayerSession::stopPlayback() {
         streamThread_.join();
     }
     reader_.close();
+}
+
+void PlayerSession::teardownReceiverAudio(bool fullStop) {
+    if (!raop_) return;
+    raop_->flush();
+    raop_->discardAudio();
+    if (fullStop) {
+        raop_->stop();
+        raop_.reset();
+    }
 }
 
 } // namespace squeeze2raop2
