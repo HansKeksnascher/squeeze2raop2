@@ -4,12 +4,15 @@
 #include <atomic>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <stop_token>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "net_util.h"  // UniqueFd
 
 namespace squeeze2raop2 {
 
@@ -125,6 +128,10 @@ private:
     // Snapshot of the last stats passed to sendStat(); guarded by sendMutex_
     // because sendStat() also runs on stream threads (STMn/STMu/STMd paths).
     StreamStats lastStats();
+    // Copy of the current socket, taken under sockMutex_. Callers hold the
+    // shared_ptr for as long as they touch the fd, so a concurrent reconnect
+    // or stop() can replace the socket without closing the fd under them.
+    [[nodiscard]] std::shared_ptr<UniqueFd> currentSock() const;
 
     std::array<uint8_t, 6> mac_;
     std::string caps_;
@@ -132,10 +139,16 @@ private:
     std::string host_;
     uint16_t port_ = 3483;
 
-    int sock_ = -1;
+    // Socket lifetime: guarded by sockMutex_, kept alive across sends by shared
+    // ownership. Replaced (never reset() in place) on reconnect. A socket is
+    // closed when its last shared_ptr owner drops it, so a send in flight on
+    // the old connection is never cut short by connectOnce().
+    std::shared_ptr<UniqueFd> sock_;
+    mutable std::mutex sockMutex_;
+
     std::jthread thread_;
     StreamStats stats_{};
-    std::mutex sendMutex_;
+    std::mutex sendMutex_;  // serializes packet writes and guards stats_
     uint64_t lastHeartbeatMs_ = 0;
     std::string playerName_;
     bool reconnect_ = false;

@@ -3,9 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
+
+#include "net_util.h"  // UniqueFd
 
 namespace squeeze2raop2 {
 
@@ -34,6 +37,12 @@ public:
 
     StreamRead read(std::span<char> buffer, uint32_t timeoutMs);
 
+    // Wake a reader blocked in read(): SHUT_RDWR on the socket without closing
+    // it. Safe to call from another thread while read() runs; the descriptor
+    // stays valid until close(). Intended for PlayerSession::stopPlayback(),
+    // which interrupts before joining the stream thread.
+    void interrupt();
+
     void close();
 
     const std::string& headers() const { return headers_; }
@@ -48,7 +57,13 @@ private:
     // >0 = bytes, 0 = no data yet (timeout), -1 = socket error, -2 = orderly EOF
     ssize_t pullRaw(std::span<char> dst, uint32_t timeoutMs);
 
-    int fd_ = -1;
+    // Current descriptor under fdMutex_, or -1. The descriptor is only ever
+    // closed by close(); interrupt() merely shuts it down, so a value read
+    // here stays valid for the duration of one pullRaw()/read() call.
+    [[nodiscard]] int fd() const;
+
+    UniqueFd fd_;
+    mutable std::mutex fdMutex_;
     std::string headers_;
     std::string leftover_;
 

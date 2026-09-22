@@ -11,17 +11,29 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
+#include <cstdint>
 #include <cstring>
 
 namespace squeeze2raop2 {
 
 HttpStreamReader::~HttpStreamReader() { close(); }
 
+int HttpStreamReader::fd() const {
+    std::lock_guard<std::mutex> lock(fdMutex_);
+    return fd_.get();
+}
+
+void HttpStreamReader::interrupt() {
+    std::lock_guard<std::mutex> lock(fdMutex_);
+    fd_.shutdown();
+}
+
 void HttpStreamReader::close() {
-    if (fd_ >= 0) {
-        ::close(fd_);
-        fd_ = -1;
+    {
+        std::lock_guard<std::mutex> lock(fdMutex_);
+        fd_.reset();
     }
     headers_.clear();
     leftover_.clear();
@@ -55,35 +67,61 @@ uint32_t parseIcyMetaint(const std::string& headers) {
 bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
                                     const std::string& request, std::string& errorOut) {
     close();
-    fd_ = connectTcp(host, port, errorOut);
-    if (fd_ < 0) return false;
+    const int raw = connectTcp(host, port, errorOut);
+    if (raw < 0) return false;
+    {
+        std::lock_guard<std::mutex> lock(fdMutex_);
+        fd_.reset(raw);
+    }
     // Bounded close: an abandoned connection must not hang close() forever.
     linger lg{};
     lg.l_onoff = 1;
     lg.l_linger = 3;
-    setsockopt(fd_, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
+    (void)setsockopt(raw, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
     std::string wire = request;
     if (wire.find("\r\n\r\n") == std::string::npos) {
         if (wire.size() < 4 || wire.compare(wire.size() - 2, 2, "\r\n") != 0) wire += "\r\n";
         wire += "\r\n";
     }
-    if (!sendAll(fd_, wire.data(), wire.size())) {
+    if (!sendAll(raw, wire.data(), wire.size())) {
         errorOut = "request send failed";
         close();
         return false;
     }
+
+    // Bound the header phase: a server that accepts the connection and then
+    // stalls must not wedge the stream thread (and thus stopPlayback) forever.
+    constexpr uint64_t kHeaderDeadlineMs = 10000;
+    const uint64_t deadline = nowMs() + kHeaderDeadlineMs;
     std::string buf;
     while (true) {
-        char raw[4096];
-        ssize_t n = ::recv(fd_, raw, sizeof(raw), 0);
+        const uint64_t now = nowMs();
+        if (now >= deadline) {
+            errorOut = "header read timed out";
+            close();
+            return false;
+        }
+        pollfd pfd{raw, POLLIN, 0};
+        const int wait = static_cast<int>(std::min<uint64_t>(1000, deadline - now));
+        const int pr = ::poll(&pfd, 1, wait);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            errorOut = std::string("header poll: ") + errnoMessage(errno);
+            close();
+            return false;
+        }
+        if (pr == 0) continue;
+
+        char chunk[4096];
+        const ssize_t n = ::recv(raw, chunk, sizeof(chunk), 0);
         if (n <= 0) {
             errorOut = n < 0 ? std::string("header recv: ") + errnoMessage(errno)
                              : "closed while reading headers";
             close();
             return false;
         }
-        buf.append(raw, static_cast<size_t>(n));
-        size_t pos = buf.find("\r\n\r\n");
+        buf.append(chunk, static_cast<size_t>(n));
+        const size_t pos = buf.find("\r\n\r\n");
         if (pos == std::string::npos) {
             if (buf.size() > 65536) {
                 errorOut = "headers too big";
@@ -110,10 +148,11 @@ ssize_t HttpStreamReader::pullRaw(std::span<char> dst, uint32_t timeoutMs) {
         leftover_.erase(0, n);
         return static_cast<ssize_t>(n);
     }
-    if (fd_ < 0) return -1;
-    pollfd pfd{fd_, POLLIN, 0};
+    const int fd = this->fd();
+    if (fd < 0) return -1;
+    pollfd pfd{fd, POLLIN, 0};
     if (poll(&pfd, 1, static_cast<int>(timeoutMs)) <= 0) return 0;
-    ssize_t n = ::recv(fd_, dst.data(), dst.size(), 0);
+    ssize_t n = ::recv(fd, dst.data(), dst.size(), 0);
     if (n > 0) return n;
     if (n == 0) return -2;
     if (errno == EAGAIN || errno == EINTR) return 0;

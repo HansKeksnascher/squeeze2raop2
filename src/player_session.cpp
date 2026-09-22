@@ -119,6 +119,16 @@ void PlayerSession::start() {
         }
     };
 
+    // Compute every immutable value a callback or thread reads BEFORE any
+    // thread is created: thread creation provides the happens-before edge, so
+    // setting raopIdentity_ after client_->start() would race the reader/stream
+    // thread that reads it in prepareAirplaySession().
+    std::string identity = macToString(mac_);
+    std::ranges::transform(identity, identity.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    std::erase(identity, ':');
+    raopIdentity_ = identity;
+
     // squeezelite-style caps: Model/ModelName drive the LMS web UI (player
     // lists, settings); the player's display name is sent separately via
     // SETD name. Firmware= is the free-text version LMS shows in player
@@ -142,16 +152,14 @@ void PlayerSession::start() {
     client_->setPlayerName(name_);
     client_->setStatsProvider([this] { return currentStats(); });
     client_->start(lmsHost_.value_or(""), lmsPort_);
-
-    std::string macText = macToString(mac_);
-    std::string identity = macText;
-    std::ranges::transform(identity, identity.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    std::erase(identity, ':');
-    raopIdentity_ = identity;
     // the AirPlay session is prepared lazily in prepareAirplaySession()
     // when the first audio arrives; connecting eagerly hits receivers that
     // immediately drop idle sessions (HomePod/Sonos)
+}
+
+std::shared_ptr<RaopPlayer> PlayerSession::raopSnapshot() const {
+    std::lock_guard<std::mutex> lock(targetMutex_);
+    return raop_;
 }
 
 // Creates or reuses the AirPlay player WITHOUT starting it: the streamLoop
@@ -170,7 +178,7 @@ bool PlayerSession::prepareAirplaySession(uint32_t sampleRate) {
     }
     if (!raopTarget_) return false;
     RaopPlayer::CredentialSink sink = credSink_;
-    raop_ = std::make_unique<RaopPlayer>(name_, raopIdentity_, *raopTarget_);
+    raop_ = std::make_shared<RaopPlayer>(name_, raopIdentity_, *raopTarget_);
     raop_->setCredentialSink(sink);
     raop_->setClosedCallback([this] { onRaopDeviceClosed(); });
     raop_->setInputRate(sampleRate);
@@ -361,142 +369,139 @@ void PlayerSession::streamLoop(std::stop_token st) {
             log::warn("input is {}-channel; bridges Apple receivers expect stereo", fmt.channels);
     }
 
-    // Startup fill gate: pump into the ring until it holds 50% of capacity
-    // (~1.5 s of audio at 44.1 kHz stereo) before the first RTP packet
-    // leaves, so playback launches from a deep reserve instead of a sender
-    // silence-padding its way into the session.
-    size_t prebufferSamples = 0;
-    if (haveTarget) {
-        std::lock_guard<std::mutex> lock(targetMutex_);
-        prebufferSamples = raop_ ? raop_->bufferCapacity() / 2 : 0;
-    }
-    bool streaming = !haveTarget || prebufferSamples == 0;
-    const uint64_t prebufferStartMs = nowMs();
-    if (!streaming) log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
-
     uint64_t activeMs = 0;
     char buf[4096];
 
-    // deviceLost_ doubles as the "receiver died" exit signal set from the
-    // sender's io thread (streamActive_ was removed with the stop_token
-    // conversion; stop requests arrive via st).
-    while (!st.stop_requested() && g_run.load() && !deviceLost_.load()) {
-        bool paused = false;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (pauseUntilMs_ && nowMs() < pauseUntilMs_)
-                paused = true;
-            else
-                pauseUntilMs_ = 0;
-        }
-        if (!paused && streaming) sampleRingTelemetry();
-        if (paused) {
-            // Drain instead of sleep: a paused player that stops reading
-            // backpressures the LMS proxy, and LMS un-pauses the stream
-            // itself within seconds (observed ~5 s, with a volume fade
-            // up) when its writer stalls. Keep reading + decoding and
-            // discard the PCM; the sender's timeline runs on silence,
-            // so an unpause resumes with fresh live audio.
-            auto rr = reader_.read(std::span{buf}, 20);
-            if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
-                if (!feedStream(st, std::as_bytes(std::span{buf}).first(rr.bytes), fmt, nullptr,
-                                /*toOutput=*/false))
-                    break;
-            } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
-                log::warn("stream socket error while paused; ending stream");
-                break;
-            } else if (rr.result == HttpStreamReader::ReadResult::AtEof) {
-                break;
-            }
-            continue;
-        }
-
-        uint64_t iterStart = nowMs();
-        auto rr = reader_.read(std::span{buf}, 150);
-
-        if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
-            const auto audio = std::as_bytes(std::span{buf}).first(rr.bytes);
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                receivedBytes_ += rr.bytes;
-            }
-            if (!feedStream(st, audio, fmt, sink.get())) break;
-            if (!streaming) {
-                size_t avail = 0;
-                {
-                    std::lock_guard<std::mutex> lock(targetMutex_);
-                    avail = raop_ ? raop_->availableRead() : 0;
-                }
-                if (avail >= prebufferSamples) {
-                    log::info("[ap] prebuffered {} samples in {} ms; launching", avail,
-                              nowMs() - prebufferStartMs);
-                    streaming = true;
-                    launchAirplaySession();
-                }
-            }
-            // The pacing clock must include the feed cost, not just the
-            // read: pushToRaop/feedRing can block on ring backpressure and
-            // an under-counted clock makes the pacer over-sleep relative
-            // to real elapsed time (ring dips -> receiver silence pads).
-            activeMs += nowMs() - iterStart;
-        } else if (rr.result == HttpStreamReader::ReadResult::Timeout) {
-            activeMs += nowMs() - iterStart;  // ~= the read timeout
-        } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
-            // Socket error, not a mere no-data timeout: without this branch
-            // the loop used to spin hot on a dead socket forever.
-            log::warn("stream socket error; ending stream");
-            break;
-        }
-
-        if (rr.result == HttpStreamReader::ReadResult::AtEof) {
-            if (decoder_) {
-                // Decode + emit the remaining tail frames of the stream
-                // (MP3); PCM's finish() is the base no-op.
-                decoder_->finish();
-                feedStream(st, {}, fmt, sink.get());
-            }
-            break;
-        }
-
-        // Pacing must stand down while the rate stage regulates: the
-        // decoder intentionally emits ahead of the source (stretching), so
-        // an emitted-timeline pacer would throttle the reads, starve the
-        // measurement, and spiral the step down. LMS paces the source
-        // anyway; without regulation (step 1.0) the pacing keeps the
-        // baseline read cadence.
-        if (paceRealtime_ && streaming && pcmAppliedRate_ == 0.0) {
-            uint64_t timeline;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                timeline = fedSamples_ * 1000ULL / fmt.sampleRate;
-            }
-            // Pace reads to playback time with a lead: keeps the sender's ring
-            // fed without running far ahead of the wire. The lead is the
-            // pass-through path's only jitter headroom (44.1 kHz PCM goes
-            // ring -> RTP packet with no staging, unlike the resampler's
-            // 8192-frame inBuf_); too small and any LMS proxy/transcode
-            // burst silence-pads RTP packets = crackle. Skipped while
-            // prebuffering: the gate wants the ring filled as fast as the
-            // source allows.
-            if (timeline > activeMs + 60) {
-                uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs + 60), 120);
-                std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
-                activeMs += sleepMs;
-            }
-        }
-    }
-
-    if (sink) sink->close();
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        log::info("stream ended, received={} bytes", receivedBytes_);
-    }
-
-    // Exit handling: a device-initiated session loss gets ONE transparent
-    // retry (the receiver may have been transiently busy); otherwise the
-    // stream ends for real. A flush transition keeps the session for the
-    // next track.
+    // Streaming phase: entered once and re-entered after a single transparent
+    // receiver-loss retry. Each entry re-arms the prebuffer gate because a
+    // retry creates a fresh ring.
     for (;;) {
+        // Startup fill gate: pump into the ring until it holds 50% of capacity
+        // (~1.5 s of audio at 44.1 kHz stereo) before the first RTP packet
+        // leaves, so playback launches from a deep reserve instead of a sender
+        // silence-padding its way into the session.
+        size_t prebufferSamples = 0;
+        if (haveTarget) {
+            std::lock_guard<std::mutex> lock(targetMutex_);
+            prebufferSamples = raop_ ? raop_->bufferCapacity() / 2 : 0;
+        }
+        bool streaming = !haveTarget || prebufferSamples == 0;
+        const uint64_t prebufferStartMs = nowMs();
+        if (!streaming) log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
+
+        // deviceLost_ doubles as the "receiver died" exit signal set from the
+        // sender's io thread (streamActive_ was removed with the stop_token
+        // conversion; stop requests arrive via st).
+        while (!st.stop_requested() && g_run.load() && !deviceLost_.load()) {
+            bool paused = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (pauseUntilMs_ && nowMs() < pauseUntilMs_)
+                    paused = true;
+                else
+                    pauseUntilMs_ = 0;
+            }
+            if (!paused && streaming) sampleRingTelemetry();
+            if (paused) {
+                // Drain instead of sleep: a paused player that stops reading
+                // backpressures the LMS proxy, and LMS un-pauses the stream
+                // itself within seconds (observed ~5 s, with a volume fade
+                // up) when its writer stalls. Keep reading + decoding and
+                // discard the PCM; the sender's timeline runs on silence,
+                // so an unpause resumes with fresh live audio.
+                auto rr = reader_.read(std::span{buf}, 20);
+                if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
+                    if (!feedStream(st, std::as_bytes(std::span{buf}).first(rr.bytes), fmt, nullptr,
+                                    /*toOutput=*/false))
+                        break;
+                } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
+                    log::warn("stream socket error while paused; ending stream");
+                    break;
+                } else if (rr.result == HttpStreamReader::ReadResult::AtEof) {
+                    break;
+                }
+                continue;
+            }
+
+            uint64_t iterStart = nowMs();
+            auto rr = reader_.read(std::span{buf}, 150);
+
+            if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
+                const auto audio = std::as_bytes(std::span{buf}).first(rr.bytes);
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    receivedBytes_ += rr.bytes;
+                }
+                if (!feedStream(st, audio, fmt, sink.get())) break;
+                if (!streaming) {
+                    size_t avail = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(targetMutex_);
+                        avail = raop_ ? raop_->availableRead() : 0;
+                    }
+                    if (avail >= prebufferSamples) {
+                        log::info("[ap] prebuffered {} samples in {} ms; launching", avail,
+                                  nowMs() - prebufferStartMs);
+                        streaming = true;
+                        launchAirplaySession();
+                    }
+                }
+                // The pacing clock must include the feed cost, not just the
+                // read: pushToRaop/feedRing can block on ring backpressure and
+                // an under-counted clock makes the pacer over-sleep relative
+                // to real elapsed time (ring dips -> receiver silence pads).
+                activeMs += nowMs() - iterStart;
+            } else if (rr.result == HttpStreamReader::ReadResult::Timeout) {
+                activeMs += nowMs() - iterStart;  // ~= the read timeout
+            } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
+                // Socket error, not a mere no-data timeout: without this branch
+                // the loop used to spin hot on a dead socket forever.
+                log::warn("stream socket error; ending stream");
+                break;
+            }
+
+            if (rr.result == HttpStreamReader::ReadResult::AtEof) {
+                if (decoder_) {
+                    // Decode + emit the remaining tail frames of the stream
+                    // (MP3); PCM's finish() is the base no-op.
+                    decoder_->finish();
+                    feedStream(st, {}, fmt, sink.get());
+                }
+                break;
+            }
+
+            // Pacing must stand down while the rate stage regulates: the
+            // decoder intentionally emits ahead of the source (stretching), so
+            // an emitted-timeline pacer would throttle the reads, starve the
+            // measurement, and spiral the step down. LMS paces the source
+            // anyway; without regulation (step 1.0) the pacing keeps the
+            // baseline read cadence.
+            if (paceRealtime_ && streaming && pcmAppliedRate_ == 0.0) {
+                uint64_t timeline;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    timeline = fedSamples_ * 1000ULL / fmt.sampleRate;
+                }
+                // Pace reads to playback time with a lead: keeps the sender's
+                // ring fed without running far ahead of the wire. The lead is
+                // the pass-through path's only jitter headroom (44.1 kHz PCM
+                // goes ring -> RTP packet with no staging, unlike the
+                // resampler's 8192-frame inBuf_); too small and any LMS
+                // proxy/transcode burst silence-pads RTP packets = crackle.
+                // Skipped while prebuffering: the gate wants the ring filled
+                // as fast as the source allows.
+                if (timeline > activeMs + 60) {
+                    uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs + 60), 120);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+                    activeMs += sleepMs;
+                }
+            }
+        }
+
+        // Exit handling: a device-initiated session loss gets ONE transparent
+        // retry (the receiver may have been transiently busy); otherwise the
+        // stream ends for real. A flush transition keeps the session for the
+        // next track.
         const bool keepSession = flushed_.exchange(false);
         const bool lost = deviceLost_.exchange(false);
         {
@@ -524,7 +529,17 @@ void PlayerSession::streamLoop(std::stop_token st) {
             client_->sendStat("STMn", currentStats());
             break;
         }
-        if (raop_ && !lastTitle_.empty()) raop_->setNowPlaying(lastTitle_, "", "");
+        if (auto raop = raopSnapshot(); raop && !lastTitle_.empty())
+            raop->setNowPlaying(lastTitle_, "", "");
+        // The HTTP source stays open across a receiver restart, so loop back
+        // into the read phase (with a fresh prebuffer) instead of tearing down.
+        log::info("[ap] receiver session re-established; resuming stream");
+    }
+
+    if (sink) sink->close();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        log::info("stream ended, received={} bytes", receivedBytes_);
     }
 }
 
@@ -555,11 +570,11 @@ void PlayerSession::onIcyMeta(std::string_view block) {
     if (title == lastTitle_) return;
     log::info("icy title: {}", title);
     lastTitle_ = title;
-    if (raop_) raop_->setNowPlaying(title, "", "");
+    if (auto raop = raopSnapshot()) raop->setNowPlaying(title, "", "");
 }
 
-void PlayerSession::pushToRaop(std::stop_token st, std::span<const std::byte> data,
-                               const PcmFormat& fmt) {
+void PlayerSession::pushToRaop(RaopPlayer& raop, std::stop_token st,
+                               std::span<const std::byte> data, const PcmFormat& fmt) {
     std::vector<int16_t> samples;
     const size_t count = data.size() / 2;
     samples.reserve(count);
@@ -579,9 +594,9 @@ void PlayerSession::pushToRaop(std::stop_token st, std::span<const std::byte> da
             stereo.push_back(s);
             stereo.push_back(s);
         }
-        feedRing(st, stereo);
+        feedRing(raop, st, stereo);
     } else {
-        feedRing(st, samples);
+        feedRing(raop, st, samples);
     }
 }
 
@@ -593,6 +608,10 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
                                PcmFileSink* sink, bool toOutput) {
     constexpr size_t kPcmChunk = size_t{1152} * 2;
     if (!decoder_) return true;
+    // Hold one reference for the whole call: teardown may reset raop_ on
+    // another thread, but the snapshot keeps this player alive and any audio
+    // pushed to a torn-down player is harmless (its ring is discarded).
+    const std::shared_ptr<RaopPlayer> raop = raopSnapshot();
     decoder_->feed(data);
     std::array<int16_t, kPcmChunk> pcm{};
     for (;;) {
@@ -613,14 +632,14 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
                 format_ = fmt;
                 bytesPerFrame_ = 2 * fmt.channels;
             }
-            if (raop_) raop_->setInputRate(fmt.sampleRate);
+            if (raop) raop->setInputRate(fmt.sampleRate);
             log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
                       fmt.channels);
         }
         if (!toOutput) continue;  // paused drain: decode, discard
         const size_t byteLen = n * sizeof(int16_t);
         if (sink) sink->feed(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
-        if (raop_) pushToRaop(st, std::as_bytes(std::span{pcm}).first(byteLen), fmt);
+        if (raop) pushToRaop(*raop, st, std::as_bytes(std::span{pcm}).first(byteLen), fmt);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             fedSamples_ += n / (fmt.channels ? fmt.channels : 2);
@@ -728,16 +747,17 @@ void PlayerSession::regulateSourceRate(uint64_t windowMs) {
     }
 }
 
-void PlayerSession::feedRing(std::stop_token st, const std::vector<int16_t>& samples) {
+void PlayerSession::feedRing(RaopPlayer& raop, std::stop_token st,
+                             const std::vector<int16_t>& samples) {
     size_t offset = 0;
     while (offset < samples.size() && !st.stop_requested() && g_run.load() && !deviceLost_.load()) {
-        size_t freeSpace = raop_->availableWrite();
+        size_t freeSpace = raop.availableWrite();
         if (freeSpace == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
             continue;
         }
         size_t take = std::min(freeSpace, samples.size() - offset);
-        if (!raop_->push(std::span<const int16_t>(samples.data() + offset, take))) {
+        if (!raop.push(std::span<const int16_t>(samples.data() + offset, take))) {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
             continue;
         }
@@ -753,6 +773,10 @@ void PlayerSession::stopPlayback() {
             pauseUntilMs_ = 0;
             autostartPending_ = false;
         }
+        // Unblock a read() parked in poll()/recv() before joining, so a stalled
+        // source cannot hold the join (and thus shutdown) for the read timeout.
+        // The descriptor stays valid: close() runs only after the join below.
+        reader_.interrupt();
         streamThread_.join();
     }
     reader_.close();

@@ -120,6 +120,11 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   squeeze2raop2_target_settings(squeeze2raop2_wire_tests)
   add_test(NAME slimproto_wire_test COMMAND squeeze2raop2_wire_tests)
 
+  add_executable(squeeze2raop2_transport_tests test/test_transport.cpp)
+  target_link_libraries(squeeze2raop2_transport_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_transport_tests)
+  add_test(NAME transport_test COMMAND squeeze2raop2_transport_tests)
+
   add_executable(squeeze2raop2_volume_tests test/test_volume_map.cpp)
   target_link_libraries(squeeze2raop2_volume_tests PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(squeeze2raop2_volume_tests)

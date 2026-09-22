@@ -51,7 +51,8 @@ private:
     void streamLoop(std::stop_token st);
     void onRaopDeviceClosed();
     void onIcyMeta(std::string_view block);
-    void pushToRaop(std::stop_token st, std::span<const std::byte> data, const PcmFormat& fmt);
+    void pushToRaop(RaopPlayer& raop, std::stop_token st, std::span<const std::byte> data,
+                    const PcmFormat& fmt);
     // One pipeline for every stream format: bytes go through the stream's
     // Decoder (mp3 decode / pcm normalization), drained in 1152-frame
     // chunks. Returns false when the decoder failed and the stream must
@@ -66,7 +67,12 @@ private:
     // Measures the pcm source rate over the telemetry window and regulates
     // the decoder to the 44100 output clock (see the definition).
     void regulateSourceRate(uint64_t windowMs);
-    void feedRing(std::stop_token st, const std::vector<int16_t>& samples);
+    void feedRing(RaopPlayer& raop, std::stop_token st, const std::vector<int16_t>& samples);
+    // Shared-snapshot access to raop_: any thread may take a reference to the
+    // current player; teardown may reset the member while the caller holds the
+    // snapshot, and the object stays alive until the caller drops it. This is
+    // what lets the stream thread push audio without holding targetMutex_.
+    [[nodiscard]] std::shared_ptr<RaopPlayer> raopSnapshot() const;
     void stopPlayback();
     // Silence the receiver immediately and, with fullStop, end and destroy
     // the session. flush() drops the receiver's jitter-buffer tail (a
@@ -110,7 +116,7 @@ private:
     size_t pcmInputFrameBytes_ = 0;
 
     std::mutex mutex_;
-    std::mutex targetMutex_;
+    mutable std::mutex targetMutex_;
     uint64_t pauseUntilMs_ = 0;
     uint64_t receivedBytes_ = 0;
     uint64_t fedBytes_ = 0;
@@ -118,7 +124,10 @@ private:
 
     std::optional<RaopTarget> raopTarget_;
     RaopPlayer::CredentialSink credSink_;
-    std::unique_ptr<RaopPlayer> raop_;
+    // Shared so the stream thread can hold a reference across blocking ring
+    // pushes while teardown on another thread resets the member (see
+    // raopSnapshot()).
+    std::shared_ptr<RaopPlayer> raop_;
     std::string raopIdentity_;
     // Session resilience flags (see streamLoop exit handling + callbacks).
     std::atomic<bool> flushed_{false};     // strm f: keep session for next track

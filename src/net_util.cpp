@@ -8,11 +8,30 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <thread>
 
 namespace squeeze2raop2 {
+
+void UniqueFd::reset(int fd) noexcept {
+    if (fd_ >= 0 && fd_ != fd) {
+        // Deliberately single-shot: see the header for why retrying close()
+        // after EINTR is unsafe on Linux.
+        const int rc = ::close(fd_);
+        (void)rc;
+    }
+    fd_ = fd;
+}
+
+void UniqueFd::shutdown() noexcept {
+    if (fd_ < 0) return;
+    int rc;
+    do {
+        rc = ::shutdown(fd_, SHUT_RDWR);
+    } while (rc < 0 && errno == EINTR);
+}
 
 std::string ipv4ToString(const in_addr& addr) {
     char buf[INET_ADDRSTRLEN];
@@ -45,19 +64,18 @@ int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
         sa.sin_addr = ai->sin_addr;
         freeaddrinfo(res);
     }
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        errorOut = "socket() failed";
+    UniqueFd fd{::socket(AF_INET, SOCK_STREAM, 0)};
+    if (!fd) {
+        errorOut = std::string("socket: ") + errnoMessage(errno);
         return -1;
     }
     int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0) {
+    (void)setsockopt(fd.get(), SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+    if (::connect(fd.get(), reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0) {
         errorOut = std::string("connect: ") + errnoMessage(errno);
-        ::close(fd);
-        return -1;
+        return -1;  // fd closes via RAII
     }
-    return fd;
+    return fd.release();
 }
 
 bool sendAll(int fd, const void* data, size_t len) {
