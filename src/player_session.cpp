@@ -16,7 +16,7 @@ PlayerSession::PlayerSession(std::string deviceId, std::string name, std::array<
                              std::optional<std::string> lmsHost, uint16_t lmsPort,
                              bool paceRealtime, std::optional<std::string> sinkPath,
                              std::optional<RaopTarget> raopTarget,
-                             RaopPlayer::CredentialSink credSink, VolumeMode volumeMode,
+                             CredentialSink credSink, VolumeMode volumeMode,
                              VolumeAnchors anchors, float volPct, int latencyMs)
     : deviceId_(std::move(deviceId)),
       name_(std::move(name)),

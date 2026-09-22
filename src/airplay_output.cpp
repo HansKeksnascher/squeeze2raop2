@@ -1,6 +1,7 @@
 #include "airplay_output.h"
 
 #include "log.h"
+#include "raop_player.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,7 +11,7 @@
 namespace squeeze2raop2 {
 
 AirplayOutput::AirplayOutput(std::string name, std::string identity,
-                             std::optional<RaopTarget> target, RaopPlayer::CredentialSink credSink,
+                             std::optional<RaopTarget> target, CredentialSink credSink,
                              int latencyMs)
     : name_(std::move(name)),
       identity_(std::move(identity)),
@@ -55,7 +56,7 @@ bool AirplayOutput::prepare(uint32_t sampleRate) {
         player_.reset();
     }
     if (!target_) return false;
-    RaopPlayer::CredentialSink sink = credSink_;
+    CredentialSink sink = credSink_;
     player_ = std::make_shared<RaopPlayer>(name_, identity_, *target_);
     player_->setCredentialSink(std::move(sink));
     player_->setClosedCallback([this] { onClosed(); });

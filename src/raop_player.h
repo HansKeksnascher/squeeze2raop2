@@ -3,6 +3,7 @@
 #include "raop_auth.h"
 #include "raop_loop.h"
 #include "raop_sender.h"
+#include "raop_types.h"
 #include "ring_buffer.h"
 
 #include <atomic>
@@ -14,18 +15,8 @@
 
 namespace squeeze2raop2 {
 
-struct RaopTarget {
-    std::string host;
-    uint16_t port = 7000;
-    bool airplay2 = true;
-    std::string password;
-    std::string storedCreds;
-};
-
 class RaopPlayer {
 public:
-    using CredentialSink = std::function<void(const std::string&, const std::string&)>;
-
     RaopPlayer(std::string deviceName, std::string identity, RaopTarget target);
     ~RaopPlayer();
     RaopPlayer(const RaopPlayer&) = delete;

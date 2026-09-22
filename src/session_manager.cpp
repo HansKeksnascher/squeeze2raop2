@@ -1,6 +1,7 @@
 #include "session_manager.h"
 
 #include "log.h"
+#include "raop_types.h"
 #include "util.h"
 
 #include <optional>

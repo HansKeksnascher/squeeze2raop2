@@ -1,6 +1,6 @@
 #pragma once
 
-#include "raop_player.h"
+#include "raop_types.h"
 
 #include <atomic>
 #include <cstdint>
@@ -13,6 +13,11 @@
 #include <vector>
 
 namespace squeeze2raop2 {
+
+// The bridge's fxchain binding (ring + sender + pump); AirplayOutput owns one
+// and recreates it per receiver session. Defined in raop_player.h so the
+// third-party sender headers stay out of this header's include graph.
+class RaopPlayer;
 
 // The bridge's live connection to one AirPlay receiver: owns the sender
 // (RaopPlayer) and its ring, the target/credentials, and the volume/metadata
@@ -30,7 +35,7 @@ public:
     using Abort = std::function<bool()>;
 
     AirplayOutput(std::string name, std::string identity, std::optional<RaopTarget> target,
-                  RaopPlayer::CredentialSink credSink, int latencyMs);
+                  CredentialSink credSink, int latencyMs);
     ~AirplayOutput();
     AirplayOutput(const AirplayOutput&) = delete;
     AirplayOutput& operator=(const AirplayOutput&) = delete;
@@ -84,7 +89,7 @@ private:
     std::string name_;
     std::string identity_;
     std::optional<RaopTarget> target_;
-    RaopPlayer::CredentialSink credSink_;
+    CredentialSink credSink_;
     int latencyMs_ = 500;
     mutable std::mutex mutex_;  // guards player_/target_/credSink_
     std::shared_ptr<RaopPlayer> player_;

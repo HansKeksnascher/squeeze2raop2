@@ -53,7 +53,7 @@ public:
     PlayerSession(std::string deviceId, std::string name, std::array<uint8_t, 6> mac,
                   std::optional<std::string> lmsHost, uint16_t lmsPort, bool paceRealtime,
                   std::optional<std::string> sinkPath, std::optional<RaopTarget> raopTarget,
-                  RaopPlayer::CredentialSink credSink, VolumeMode volumeMode, VolumeAnchors anchors,
+                  CredentialSink credSink, VolumeMode volumeMode, VolumeAnchors anchors,
                   float volPct, int latencyMs);
     ~PlayerSession();
     PlayerSession(const PlayerSession&) = delete;
