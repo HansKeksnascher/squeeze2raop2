@@ -244,7 +244,7 @@ StreamStats PlayerSession::currentStats() {
     st.bytesReceived = receivedBytes_;
     st.outputBufferSize = 0;
     st.outputBufferFullness = 0;
-    const uint32_t rate = format_.sampleRate ? format_.sampleRate : 44100;
+    const uint32_t rate = elapsedRate_.load(std::memory_order_relaxed);
     // Report played time, not decoded time: the pipeline decodes ahead into
     // the sender ring, so fedSamples_ leads the receiver by up to the ring
     // occupancy (~1.5 s). LMS derives the progress display from this value,
@@ -315,24 +315,14 @@ void PlayerSession::startStream(const StrmStart& st) {
         fedBytes_ = 0;
         fedSamples_ = 0;
         pauseUntilMs_ = 0;
-        ringStatsMin_ = SIZE_MAX;
-        ringStatsMax_ = 0;
-        ringStatsMarkMs_ = 0;
-        ringStarvedMs_ = 0;
         queuedSamples_.store(0, std::memory_order_relaxed);
-        format_ = pcmFormat(st.pcm, 44100);
-        bytesPerFrame_ = format_.channels * (format_.bitsPerSample / 8);
-        if (!bytesPerFrame_) bytesPerFrame_ = 4;
-        pcmInputFrameBytes_ = bytesPerFrame_;
-        pcmWindowReceivedBytes_ = 0;
-        pcmAppliedRate_ = 0.0;
-        // One decoder per stream format, one feed pipeline for both. PCM
+        const PcmFormat input = pcmFormat(st.pcm, 44100);
+        elapsedRate_.store(input.sampleRate ? input.sampleRate : 44100, std::memory_order_relaxed);
+        // One decode stage per stream format, one feed pipeline for both. PCM
         // regulates to the AirPlay output clock (44100) so a source that
         // under-delivers cannot drain the pipeline.
-        decoder_ = Decoder::create(st.format, format_, 44100);
-        if (decoder_) {
-            log::info("strm s: {} stream via decoder pipeline", decoder_->name());
-        }
+        stage_ = std::make_unique<DecodeStage>(st.format, input, 44100);
+        log::info("strm s: {} stream via decoder pipeline", stage_->name());
     }
 
     if (st.autostart >= 2) {
@@ -347,10 +337,7 @@ void PlayerSession::startStream(const StrmStart& st) {
 
 void PlayerSession::streamLoop(std::stop_token st) {
     PcmFormat fmt;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        fmt = format_;
-    }
+    if (stage_) fmt = stage_->format();
 
     std::unique_ptr<PcmFileSink> sink;
     if (sinkPath_) {
@@ -482,10 +469,10 @@ void PlayerSession::streamLoop(std::stop_token st) {
             }
 
             if (rr.result == HttpStreamReader::ReadResult::AtEof) {
-                if (decoder_) {
+                if (stage_) {
                     // Decode + emit the remaining tail frames of the stream
                     // (MP3); PCM's finish() is the base no-op.
-                    decoder_->finish();
+                    stage_->finish();
                     feedStream(st, {}, fmt, sink.get());
                 }
                 reachedEof = true;
@@ -498,7 +485,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // measurement, and spiral the step down. LMS paces the source
             // anyway; without regulation (step 1.0) the pacing keeps the
             // baseline read cadence.
-            if (paceRealtime_ && streaming && pcmAppliedRate_ == 0.0) {
+            if (paceRealtime_ && streaming && !(stage_ && stage_->regulating())) {
                 uint64_t timeline;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
@@ -668,46 +655,38 @@ void PlayerSession::pushToRaop(RaopPlayer& raop, std::stop_token st,
 // failed and the stream must abort.
 bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
                                PcmFileSink* sink, bool toOutput) {
-    constexpr size_t kPcmChunk = size_t{1152} * 2;
-    if (!decoder_) return true;
+    if (!stage_) return true;
     // Hold one reference for the whole call: teardown may reset raop_ on
     // another thread, but the snapshot keeps this player alive and any audio
     // pushed to a torn-down player is harmless (its ring is discarded).
     const std::shared_ptr<RaopPlayer> raop = raopSnapshot();
-    decoder_->feed(data);
-    std::array<int16_t, kPcmChunk> pcm{};
+    stage_->feed(data);
     for (;;) {
-        size_t n = decoder_->drain(pcm);
-        if (!n) {
-            if (decoder_->hasError()) {
-                log::error("{} decode failed; dropping stream", decoder_->name());
+        const std::span<const int16_t> chunk = stage_->nextChunk();
+        if (chunk.empty()) {
+            if (stage_->hasError()) {
+                log::error("{} decode failed; dropping stream", stage_->name());
                 client_->sendStat("STMn", currentStats());
                 return false;
             }
             break;
         }
-        const PcmFormat norm = decoder_->format();
+        const PcmFormat norm = stage_->format();
         if (norm.sampleRate != 0 && fmt != norm) {
             fmt = norm;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                format_ = fmt;
-                bytesPerFrame_ = 2 * fmt.channels;
-            }
+            elapsedRate_.store(fmt.sampleRate, std::memory_order_relaxed);
             if (raop) raop->setInputRate(fmt.sampleRate);
-            log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
-                      fmt.channels);
+            log::info("[ap] {} audio: {} Hz, {} ch", stage_->name(), fmt.sampleRate, fmt.channels);
         }
         if (!toOutput) continue;  // paused drain: decode, discard
-        const size_t byteLen = n * sizeof(int16_t);
-        if (sink) sink->feed(std::as_bytes(std::span{pcm}).first(byteLen), fmt);
-        if (raop) pushToRaop(*raop, st, std::as_bytes(std::span{pcm}).first(byteLen), fmt);
+        if (sink) sink->feed(std::as_bytes(chunk), fmt);
+        if (raop) pushToRaop(*raop, st, std::as_bytes(chunk), fmt);
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            fedSamples_ += n / (fmt.channels ? fmt.channels : 2);
+            fedSamples_ += chunk.size() / (fmt.channels ? fmt.channels : 2);
             // fedBytes is the consumed prefix; clamp so a decoder backlog
             // larger than what was received cannot underflow the counter.
-            const uint64_t pending = decoder_->pendingBytes();
+            const uint64_t pending = stage_->pendingBytes();
             fedBytes_ = receivedBytes_ > pending ? receivedBytes_ - pending : 0;
         }
     }
@@ -727,90 +706,7 @@ void PlayerSession::sampleRingTelemetry() {
         queuedSamples_.store(avail, std::memory_order_relaxed);
     }
 
-    const uint64_t now = nowMs();
-    if (avail < ringStatsMin_) ringStatsMin_ = avail;
-    if (avail > ringStatsMax_) ringStatsMax_ = avail;
-
-    if (ringStatsMarkMs_ == 0) {
-        ringStatsMarkMs_ = now;
-        pcmWindowReceivedBytes_ = 0;
-    } else if (now - ringStatsMarkMs_ >= 10000) {
-        log::info("[ap] ring 10s: cur={} min={} max={} samples", avail, ringStatsMin_,
-                  ringStatsMax_);
-        regulateSourceRate(now - ringStatsMarkMs_);
-        ringStatsMin_ = SIZE_MAX;
-        ringStatsMax_ = 0;
-        ringStatsMarkMs_ = now;
-    }
-
-    if (avail == 0) {
-        if (!ringStarvedMs_) {
-            ringStarvedMs_ = now;
-            log::warn("[ap] ring starved (0 samples)");
-        }
-    } else if (ringStarvedMs_) {
-        log::info("[ap] ring recovered after {} ms", now - ringStarvedMs_);
-        ringStarvedMs_ = 0;
-    }
-}
-
-// Measure the source's arrival rate over the telemetry window. The
-// socket feed IS the arrival: the reader strips icy meta and hands every
-// audio byte to the decoder, so Δ(receivedBytes) is the source rate —
-// any backlog/emission correction feeds back on itself and spirals.
-// Regulate the pcm decoder to the 44100 output clock. Hysteresis: engage
-// beyond 0.1% deviation, release below 0.045%. While the ring is below
-// the prebuffer reserve, a 0.2% overdrive gently rebuilds the reserve (an
-// inaudible ~8 cent pitch offset).
-void PlayerSession::regulateSourceRate(uint64_t windowMs) {
-    if (!decoder_ || decoder_->name() != "pcm" || !pcmInputFrameBytes_) return;
-    const double sec = double(windowMs) / 1000.0;
-    if (sec < 5.0) return;
-
-    const uint64_t receivedNow = receivedBytes_;
-    const uint64_t prevReceived = pcmWindowReceivedBytes_;
-    pcmWindowReceivedBytes_ = receivedNow;
-    if (prevReceived == 0 || receivedNow < prevReceived) return;
-
-    constexpr double kNominal = 44100.0;
-    const double fps = double(receivedNow - prevReceived) / double(pcmInputFrameBytes_) / sec;
-    if (fps < 0.95 * kNominal || fps > 1.05 * kNominal) return;  // stall/burst
-
-    const double off = std::abs(fps - kNominal);
-    if (pcmAppliedRate_ == 0.0) {
-        if (off > 44.0) {  // 0.1%
-            size_t avail = 0;
-            {
-                std::lock_guard<std::mutex> lock(targetMutex_);
-                avail = raop_ ? raop_->availableRead() : 0;
-            }
-            // Gentle rebuild while below the prebuffer reserve.
-            const double overdrive = avail < 131072 ? 1.002 : 1.0;
-            pcmAppliedRate_ = fps / overdrive;
-            decoder_->setSourceRate(pcmAppliedRate_);
-            log::warn("[ap] pcm source {} fps ({} ppm off): regulating", fps,
-                      int((fps - kNominal) / kNominal * 1e6));
-        }
-        return;
-    }
-    if (off <= 20.0) {  // back within ~0.045%: release to pass-through
-        pcmAppliedRate_ = 0.0;
-        decoder_->setSourceRate(kNominal);
-        log::info("[ap] pcm source rate nominal: pass-through");
-        return;
-    }
-    // Keep regulating; refresh the overdrive decision.
-    size_t avail = 0;
-    {
-        std::lock_guard<std::mutex> lock(targetMutex_);
-        avail = raop_ ? raop_->availableRead() : 0;
-    }
-    const double overdrive = avail < 131072 ? 1.002 : 1.0;
-    const double target = fps / overdrive;
-    if (std::abs(target - pcmAppliedRate_) > 2.0) {
-        pcmAppliedRate_ = target;
-        decoder_->setSourceRate(target);
-    }
+    if (stage_) stage_->observeOutput(avail, receivedBytes_, nowMs());
 }
 
 void PlayerSession::feedRing(RaopPlayer& raop, std::stop_token st,

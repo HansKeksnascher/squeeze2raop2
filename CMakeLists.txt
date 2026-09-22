@@ -83,6 +83,7 @@ add_library(squeeze2raop2_core STATIC
   src/decoder/decoder.cpp
   src/decoder/mp3_decoder.cpp
   src/decoder/pcm_decoder.cpp
+  src/decode_stage.cpp
   src/player_session.cpp
   src/session_manager.cpp
 )
@@ -144,6 +145,11 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   target_link_libraries(squeeze2raop2_pcm_tests PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(squeeze2raop2_pcm_tests)
   add_test(NAME pcm_decoder_test COMMAND squeeze2raop2_pcm_tests)
+
+  add_executable(squeeze2raop2_decode_tests test/test_decode_stage.cpp)
+  target_link_libraries(squeeze2raop2_decode_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_decode_tests)
+  add_test(NAME decode_stage_test COMMAND squeeze2raop2_decode_tests)
 
   add_executable(mp3_smoke test/mp3_smoke.cpp)
   target_link_libraries(mp3_smoke PRIVATE squeeze2raop2_core)

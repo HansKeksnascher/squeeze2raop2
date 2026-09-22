@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config.h"
-#include "decoder/decoder.h"
+#include "decode_stage.h"
 #include "lms_stream.h"
 #include "raop_player.h"
 #include "slimproto.h"
@@ -64,9 +64,6 @@ private:
     // the stream thread; user pauses are excluded — the ring draining
     // there is the expected baseline behavior).
     void sampleRingTelemetry();
-    // Measures the pcm source rate over the telemetry window and regulates
-    // the decoder to the 44100 output clock (see the definition).
-    void regulateSourceRate(uint64_t windowMs);
     // Blocks (bounded) until the sender ring has played out, so the receiver
     // finishes the track tail before we report the end of playback.
     void waitForOutputDrain(std::stop_token st);
@@ -98,28 +95,15 @@ private:
     std::jthread streamThread_;
     bool autostartPending_ = false;
 
-    PcmFormat format_{};
-    uint32_t bytesPerFrame_ = 4;
-
-    // The stream format's decoder (mp3/pcm); null while no stream runs.
-    std::unique_ptr<Decoder> decoder_;
+    // The stream's decode stage (mp3/pcm); null while no stream runs. Owns
+    // the decoder plus the stream-thread-only telemetry/rate-regulator state.
+    std::unique_ptr<DecodeStage> stage_;
     // Scratch for pushToRaop()'s byte->s16 conversion (stream thread only).
     // Reused across calls so the audio path stops allocating per chunk.
     std::vector<int16_t> pushScratch_;
-    // Ring telemetry state (stream-thread only): extremes between 10 s
-    // summaries and the latched starve episode start.
-    size_t ringStatsMin_ = SIZE_MAX;
-    size_t ringStatsMax_ = 0;
-    uint64_t ringStatsMarkMs_ = 0;
-    uint64_t ringStarvedMs_ = 0;
-    // Adaptive source-rate regulation (pcm streams): raw bytes received over
-    // the last 10 s boundary (the socket feed IS the source arrival — the
-    // reader already stripped icy meta and hands every byte to the
-    // decoder), the raw input frame size, and the decoder source rate
-    // currently applied (0 = pass-through).
-    uint64_t pcmWindowReceivedBytes_ = 0;
-    double pcmAppliedRate_ = 0.0;
-    size_t pcmInputFrameBytes_ = 0;
+    // Adopted output rate for the elapsed-time STAT field, updated by the
+    // stream thread when the decoder adopts a format (read by currentStats).
+    std::atomic<uint32_t> elapsedRate_{44100};
 
     std::mutex mutex_;
     mutable std::mutex targetMutex_;
