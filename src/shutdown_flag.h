@@ -1,7 +1,8 @@
 #pragma once
 
+#include <signal.h>
+
 #include <atomic>
-#include <csignal>
 
 namespace squeeze2raop2 {
 

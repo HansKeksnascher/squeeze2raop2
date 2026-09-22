@@ -1,8 +1,10 @@
 #include "wav_sink.h"
 
 #include "log.h"
+#include "util.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 
@@ -36,12 +38,13 @@ bool PcmFileSink::open(const PcmFormat& format, std::string& errorOut) {
         return false;
     }
     headerWritten_ = false;
+    writeFailed_ = false;
     total_ = 0;
     return true;
 }
 
 void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format) {
-    if (!fp_ || data.empty()) return;
+    if (!fp_ || writeFailed_ || data.empty()) return;
 
     if (!headerWritten_) {
         format_ = format;
@@ -60,7 +63,11 @@ void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format)
         packLe16(header.data() + 34, format_.bitsPerSample);
         std::ranges::copy(std::string_view{"data"}, header.begin() + 36);
         packLe32(header.data() + 40, 0xFFFFFFFF);
-        fwrite(header.data(), 1, header.size(), fp_);
+        if (fwrite(header.data(), 1, header.size(), fp_) != header.size()) {
+            writeFailed_ = true;
+            log::error("sink write failed {}: {}", path_, errnoMessage(errno));
+            return;
+        }
         headerWritten_ = true;
         log::info("sink opened {} ({} Hz, {} bit, {} ch)", path_, format_.sampleRate,
                   format_.bitsPerSample, format_.channels);
@@ -72,23 +79,30 @@ void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format)
         }
     }
 
+    std::string swapped;
+    const char* out = reinterpret_cast<const char*>(data.data());
+    size_t outLen = data.size();
     if (format_.bigEndian && format_.bitsPerSample == 16) {
-        std::string swapped;
         swapped.resize(data.size());
         for (size_t i = 0; i + 1 < data.size(); i += 2) {
             swapped[i] = std::to_integer<char>(data[i + 1]);
             swapped[i + 1] = std::to_integer<char>(data[i]);
         }
-        fwrite(swapped.data(), 1, swapped.size(), fp_);
-    } else {
-        fwrite(data.data(), 1, data.size(), fp_);
+        out = swapped.data();
+        outLen = swapped.size();
     }
-    total_ += data.size();
+
+    if (fwrite(out, 1, outLen, fp_) != outLen) {
+        writeFailed_ = true;
+        log::error("sink write failed {}: {}", path_, errnoMessage(errno));
+        return;
+    }
+    total_ += outLen;
 }
 
 void PcmFileSink::close() {
     if (fp_) {
-        if (headerWritten_ && total_ > 0) {
+        if (headerWritten_ && total_ > 0 && !writeFailed_) {
             // RIFF chunk size = file size - 8 = (44-byte header + data) - 8.
             // WAV tops out at 32-bit sizes; clamp like streaming writers do.
             const uint32_t dataSize =

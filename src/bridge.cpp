@@ -88,12 +88,10 @@ void runBridge(const Settings& settings) {
     if (settings.discovery) {
         if (!browser.start(settings.mdnsIface, cb, error)) {
             log::warn("mdns: {} (continuing without discovery)", error);
-        } else {
-            log::info("discovering airplay devices");
         }
     }
 
-    log::info("discovering airplay devices (ctrl-c to exit)");
+    log::info("running (ctrl-c to exit)");
     while (g_run.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     browser.stop();

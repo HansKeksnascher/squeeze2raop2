@@ -1,7 +1,7 @@
 #include "config.h"
 #include "log.h"
 
-#include <csignal>
+#include <signal.h>
 
 namespace squeeze2raop2 {
 void runBridge(const Settings& settings);

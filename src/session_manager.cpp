@@ -8,13 +8,22 @@
 
 namespace squeeze2raop2 {
 
+namespace {
+
+// parseCommandLine already validated the spec; the fallback keeps programmatic
+// Settings safe. Done explicitly rather than with value_or(), which would
+// evaluate (and dereference) the default even when the parsed value exists.
+VolumeAnchors anchorsFrom(const std::string& spec) {
+    if (auto parsed = VolumeAnchors::parse(spec)) return *parsed;
+    log::warn("volume map '{}' invalid; using default", spec);
+    if (auto fallback = VolumeAnchors::parse(kDefaultVolumeMap)) return *fallback;
+    return VolumeAnchors{};
+}
+
+}  // namespace
+
 SessionManager::SessionManager(const Settings& settings, StateStore& store)
-    : settings_(settings),
-      store_(store),
-      // parseCommandLine already validated the spec; the fallback is
-      // unreachable but keeps programmatic Settings safe
-      anchors_(VolumeAnchors::parse(settings.volumeMap)
-                   .value_or(*VolumeAnchors::parse(kDefaultVolumeMap))) {}
+    : settings_(settings), store_(store), anchors_(anchorsFrom(settings.volumeMap)) {}
 
 void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevice& dev) {
     std::lock_guard<std::mutex> lock(mutex_);

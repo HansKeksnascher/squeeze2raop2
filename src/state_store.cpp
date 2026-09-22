@@ -3,7 +3,9 @@
 #include "log.h"
 #include "util.h"
 
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <array>
@@ -152,6 +154,14 @@ bool StateStore::save() {
             ::remove(tmp.c_str());
             return false;
         }
+    }
+    // Durability: push the temp file's data to disk before the rename so a
+    // crash cannot leave a truncated state file. The directory entry itself is
+    // not fsync'd; losing the rename is acceptable (worst case: the entry is
+    // gone, never corrupt).
+    if (const int fd = ::open(tmp.c_str(), O_RDONLY); fd >= 0) {
+        (void)::fsync(fd);
+        (void)::close(fd);
     }
     if (std::rename(tmp.c_str(), path_.c_str()) != 0) {
         log::error("cannot replace state file {}: {}", path_, errnoMessage(errno));

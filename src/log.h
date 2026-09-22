@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
+#include <exception>
 #include <format>
 #include <string_view>
+#include <utility>
 
 namespace squeeze2raop2::log {
 
@@ -17,13 +20,16 @@ void log(Level l, std::string_view fmt, const A&... a) {
     if constexpr (sizeof...(a) == 0) {
         write(l, fmt);
     } else {
-        write(l, std::vformat(fmt, std::make_format_args(a...)));
+        // A malformed format string or argument mismatch must never take the
+        // process down: fall back to the unformatted pattern.
+        try {
+            write(l, std::vformat(fmt, std::make_format_args(a...)));
+        } catch (const std::exception&) {
+            write(l, fmt);
+        }
     }
-}  // namespace squeeze2raop2
-
-inline void fatal(std::string_view fmt, auto&&... a) {
-    log(Level::Error, fmt, std::forward<decltype(a)>(a)...);
 }
+
 inline void error(std::string_view fmt, auto&&... a) {
     log(Level::Error, fmt, std::forward<decltype(a)>(a)...);
 }

@@ -26,6 +26,7 @@ private:
     PcmFormat format_;
     uint64_t total_ = 0;
     bool headerWritten_ = false;
+    bool writeFailed_ = false;
 };
 
 }  // namespace squeeze2raop2

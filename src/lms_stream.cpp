@@ -30,7 +30,7 @@ void HttpStreamReader::interrupt() {
     fd_.shutdown();
 }
 
-void HttpStreamReader::close() {
+void HttpStreamReader::resetLocked() {
     {
         std::lock_guard<std::mutex> lock(fdMutex_);
         fd_.reset();
@@ -41,6 +41,11 @@ void HttpStreamReader::close() {
     metaCountdown_ = 0;
     metaBytesLeft_ = 0;
     metaBuf_.clear();
+}
+
+void HttpStreamReader::close() {
+    std::lock_guard<std::mutex> lock(lifecycleMutex_);
+    resetLocked();
 }
 
 namespace {
@@ -66,7 +71,11 @@ uint32_t parseIcyMetaint(const std::string& headers) {
 
 bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
                                     const std::string& request, std::string& errorOut) {
-    close();
+    // Serialize against a concurrent close() (PlayerSession::stop() racing a
+    // strm s). Held for the whole header phase; interrupt() still works because
+    // it does not need this lock.
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+    resetLocked();
     const int raw = connectTcp(host, port, errorOut);
     if (raw < 0) return false;
     {
@@ -85,7 +94,7 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
     }
     if (!sendAll(raw, wire.data(), wire.size())) {
         errorOut = "request send failed";
-        close();
+        resetLocked();
         return false;
     }
 
@@ -98,7 +107,7 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
         const uint64_t now = nowMs();
         if (now >= deadline) {
             errorOut = "header read timed out";
-            close();
+            resetLocked();
             return false;
         }
         pollfd pfd{raw, POLLIN, 0};
@@ -107,7 +116,7 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
         if (pr < 0) {
             if (errno == EINTR) continue;
             errorOut = std::string("header poll: ") + errnoMessage(errno);
-            close();
+            resetLocked();
             return false;
         }
         if (pr == 0) continue;
@@ -117,7 +126,7 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
         if (n <= 0) {
             errorOut = n < 0 ? std::string("header recv: ") + errnoMessage(errno)
                              : "closed while reading headers";
-            close();
+            resetLocked();
             return false;
         }
         buf.append(chunk, static_cast<size_t>(n));
@@ -125,7 +134,7 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
         if (pos == std::string::npos) {
             if (buf.size() > 65536) {
                 errorOut = "headers too big";
-                close();
+                resetLocked();
                 return false;
             }
             continue;

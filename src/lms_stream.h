@@ -62,8 +62,15 @@ private:
     // here stays valid for the duration of one pullRaw()/read() call.
     [[nodiscard]] int fd() const;
 
+    // Clear descriptor + header/ICY state. Caller must hold lifecycleMutex_.
+    void resetLocked();
+
     UniqueFd fd_;
     mutable std::mutex fdMutex_;
+    // Serializes openBlocking() against close() (they run on different threads
+    // when PlayerSession::stop() races a strm s); interrupt() deliberately does
+    // not take it, so it can unblock a header read still in progress.
+    std::mutex lifecycleMutex_;
     std::string headers_;
     std::string leftover_;
 

@@ -106,7 +106,8 @@ StreamStats SlimProtoClient::lastStats() {
     return stats_;
 }
 
-void SlimProtoClient::sendStat(const char* event, StreamStats stats, uint32_t serverTimestamp) {
+void SlimProtoClient::sendStat(const char (&event)[5], StreamStats stats,
+                               uint32_t serverTimestamp) {
     {
         // stats_ is read back by the run thread ('f'/'p'/'u' handlers) and
         // written from stream threads; sendMutex_ serializes both.

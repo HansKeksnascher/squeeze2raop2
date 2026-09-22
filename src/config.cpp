@@ -5,6 +5,7 @@
 
 #include <charconv>
 #include <optional>
+#include <system_error>
 
 namespace squeeze2raop2 {
 
@@ -186,24 +187,28 @@ std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
             s.volumeMap = v;
         } else if (arg == "--vol-pct") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
-            try {
-                s.volPct = std::stof(v);
-            } catch (const std::exception&) {
+            // from_chars (not stof) so the parse is locale-independent and
+            // cannot throw.
+            float parsed = 0.0f;
+            const auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), parsed);
+            if (ec != std::errc{} || ptr != v.data() + v.size()) {
                 log::error("--vol-pct must be a number, got '{}'", v);
                 return std::nullopt;
             }
+            s.volPct = parsed;
             if (s.volPct < 0.5f || s.volPct > 100.f) {
                 log::error("--vol-pct must be 0.5-100 (0 would be mute)");
                 return std::nullopt;
             }
         } else if (arg == "--ap-latency-ms") {
             if (!requireValue(arg, value(), v)) return std::nullopt;
-            try {
-                s.apLatencyMs = std::stoi(v);
-            } catch (const std::exception&) {
+            int parsed = 0;
+            const auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), parsed);
+            if (ec != std::errc{} || ptr != v.data() + v.size()) {
                 log::error("--ap-latency-ms must be a number, got '{}'", v);
                 return std::nullopt;
             }
+            s.apLatencyMs = parsed;
             if (s.apLatencyMs < 250 || s.apLatencyMs > 2000) {
                 log::error(
                     "--ap-latency-ms must be 250-2000 "

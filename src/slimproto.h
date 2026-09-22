@@ -105,7 +105,9 @@ public:
     void start(const std::string& host, uint16_t port);
     void stop();
 
-    void sendStat(const char* event, StreamStats stats, uint32_t serverTimestamp = 0);
+    // event must be a 4-character code (the array reference makes short/null
+    // event strings unrepresentable at every call site).
+    void sendStat(const char (&event)[5], StreamStats stats, uint32_t serverTimestamp = 0);
     void sendResp(const std::string& header);
     void sendSetdName(const std::string& name);
     void sendDisco(uint8_t reason);

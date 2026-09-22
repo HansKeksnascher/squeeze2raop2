@@ -100,6 +100,9 @@ private:
 
     // The stream format's decoder (mp3/pcm); null while no stream runs.
     std::unique_ptr<Decoder> decoder_;
+    // Scratch for pushToRaop()'s byte->s16 conversion (stream thread only).
+    // Reused across calls so the audio path stops allocating per chunk.
+    std::vector<int16_t> pushScratch_;
     // Ring telemetry state (stream-thread only): extremes between 10 s
     // summaries and the latched starve episode start.
     size_t ringStatsMin_ = SIZE_MAX;

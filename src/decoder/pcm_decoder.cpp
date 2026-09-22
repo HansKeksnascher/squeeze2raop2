@@ -112,6 +112,14 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                           srcChannels_);
             }
             if (tagIs(p + off, "SSND")) {
+                // The chunk header (tag + length) fits by the loop guard, but
+                // the 4-byte sound-data offset at +8 needs 12 bytes. Reading it
+                // with fewer would run past the probe buffer.
+                if (off + 12 > have) {
+                    log::error("pcm codec: truncated AIFF SSND header");
+                    failed_ = true;
+                    return size_t{0};
+                }
                 const uint32_t sndOffset = rd32be(p + off + 8);
                 const size_t skip = off + 8 + sndOffset;
                 if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
@@ -154,7 +162,6 @@ size_t PcmDecoder::normalizeMore() {
     if (!frames) return 0;
 
     const auto* ip = reinterpret_cast<const std::byte*>(buf_.data());
-    size_t written = 0;
     stage_.resize(stage_.size() + frames * 2);
     int16_t* op = stage_.data() + stageFrames * 2;
 
@@ -196,9 +203,7 @@ size_t PcmDecoder::normalizeMore() {
             }
         }
     }
-    written = frames;
     buf_.erase(buf_.begin(), buf_.begin() + std::ptrdiff_t(frames * bytesPerFrame_));
-    (void)written;
     return frames;
 }
 
@@ -285,7 +290,7 @@ size_t PcmDecoder::drain(std::span<int16_t> out) {
     for (;;) {
         const size_t got = rateStageEmit(out.subspan(totalSamples));
         totalSamples += got;
-        if (totalSamples * 2 >= out.size()) break;    // caller buffer full
+        if (totalSamples >= out.size()) break;        // caller buffer full
         if (got == 0 && normalizeMore() == 0) break;  // starved
     }
     return totalSamples;

@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <limits>
@@ -575,29 +576,28 @@ void PlayerSession::onIcyMeta(std::string_view block) {
 
 void PlayerSession::pushToRaop(RaopPlayer& raop, std::stop_token st,
                                std::span<const std::byte> data, const PcmFormat& fmt) {
-    std::vector<int16_t> samples;
     const size_t count = data.size() / 2;
-    samples.reserve(count);
+    pushScratch_.resize(count);
     for (size_t i = 0; i < count; ++i) {
         // memcpy extraction instead of reinterpret_cast: no int16_t
         // object ever lives in the receive buffer, so pointer-casting
         // the raw bytes is strict-aliasing UB.
         uint16_t raw = 0;
         std::memcpy(&raw, data.data() + 2 * i, 2);
-        samples.push_back(fmt.bigEndian ? static_cast<int16_t>(ntohs(raw))
-                                        : static_cast<int16_t>(raw));
+        pushScratch_[i] =
+            fmt.bigEndian ? static_cast<int16_t>(ntohs(raw)) : static_cast<int16_t>(raw);
     }
-    if (fmt.channels == 1 && !samples.empty()) {
-        std::vector<int16_t> stereo;
-        stereo.reserve(samples.size() * 2);
-        for (int16_t s : samples) {
-            stereo.push_back(s);
-            stereo.push_back(s);
+    if (fmt.channels == 1 && count) {
+        // Duplicate each sample in place, walking backwards so the unread
+        // lower-index samples are never overwritten by the expansion.
+        pushScratch_.resize(count * 2);
+        for (size_t i = count; i-- > 0;) {
+            const int16_t s = pushScratch_[i];
+            pushScratch_[2 * i] = s;
+            pushScratch_[2 * i + 1] = s;
         }
-        feedRing(raop, st, stereo);
-    } else {
-        feedRing(raop, st, samples);
     }
+    feedRing(raop, st, pushScratch_);
 }
 
 // One pipeline for every stream format: bytes go through the stream's
@@ -643,7 +643,10 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
         {
             std::lock_guard<std::mutex> lock(mutex_);
             fedSamples_ += n / (fmt.channels ? fmt.channels : 2);
-            fedBytes_ = receivedBytes_ - decoder_->pendingBytes();
+            // fedBytes is the consumed prefix; clamp so a decoder backlog
+            // larger than what was received cannot underflow the counter.
+            const uint64_t pending = decoder_->pendingBytes();
+            fedBytes_ = receivedBytes_ > pending ? receivedBytes_ - pending : 0;
         }
     }
     return true;
