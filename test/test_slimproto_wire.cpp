@@ -209,9 +209,10 @@ static void testHeloFramingAndStatRoundTrip() {
     expect(volumeSeen.load(), "audg fired onVolume");
     expect(volumePct.load() > 99.9 && volumePct.load() <= 100.0, "full-scale gain maps to 100%");
 
-    // --- audg mid-range gain -> ~50 % (LMS slider 50 = -24.75 dB) ---
-    // linear amplitude 10^(-24.75/20) = 0.05783 -> 16.16 fixed point 3790
-    const uint32_t midGain = 3790;
+    // --- audg mid-range gain -> ~50 % (LMS slider 50 = -24.67 dB) ---
+    // SqueezePlay curve: slider 50 -> -24.667 dB -> linear 0.058416 ->
+    // LMS dBToFixed quantizes to 8 fractional bits: 15*256 = 3840.
+    const uint32_t midGain = 3840;
     volumeSeen.store(false);
     for (int i = 0; i < 4; ++i) {
         audg[10 + static_cast<size_t>(i)] = static_cast<unsigned char>(midGain >> (24 - 8 * i));

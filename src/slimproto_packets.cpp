@@ -2,10 +2,10 @@
 
 #include "log.h"
 #include "util.h"
+#include "volume_map.h"
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstring>
 #include <span>
 #include <string_view>
@@ -254,21 +254,14 @@ void SlimProtoClient::process(const std::string& pkt) {
             return;
         }
         // new_left/new_right are 16.16 fixed-point linear amplitude
-        // multipliers (1.0 = full volume). Invert LMS's linear dB slider
-        // curve (Squeezebox2 getVolume: 0.495 dB/step over -50..0 dB,
-        // maximumVolume 0) to recover the slider percent:
-        // pct = 100 + dB*101/50. The bridge passes this straight to the
-        // AirPlay sender's 0..100 % domain, whose 0 % is the -144 mute
-        // sentinel and 100 % is 0 dB: the full LMS slider span maps onto
-        // AirPlay's -30..0 dB protocol range at 0.3 dB per slider step
-        // (LMS minimum = receiver mute, LMS maximum = full scale).
-        auto pctOf = [&](uint32_t raw) {
-            if (raw == 0) return 0.0;  // LMS mute
-            double db = 20.0 * std::log10(static_cast<double>(raw) / 65536.0);
-            double pct = 100.0 + db * 101.0 / 50.0;
-            return std::clamp(pct, 0.0, 100.0);
-        };
-        if (events_.onVolume) events_.onVolume(pctOf(gainL), pctOf(gainR));
+        // multipliers (1.0 = full volume). Recover the LMS slider percent
+        // with the curve for OUR player class (deviceid 12 = SqueezePlay,
+        // the Boom curve), not Squeezebox2's single ramp; see volume_map.h.
+        // The bridge passes the percent straight to the AirPlay sender's
+        // 0..100 % domain, whose 0 % is the -144 mute sentinel and 100 % is
+        // 0 dB.
+        if (events_.onVolume)
+            events_.onVolume(lmsSliderPctFromGain(gainL), lmsSliderPctFromGain(gainR));
     } else if (op == "setd") {
         if (len >= 5 && pkt[4] == '\0') {
             if (len == 5) {

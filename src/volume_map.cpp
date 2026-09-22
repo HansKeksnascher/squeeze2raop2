@@ -5,9 +5,35 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <optional>
 
 namespace squeeze2raop2 {
+
+namespace {
+
+// Slim::Player::SqueezePlay::getVolumeParameters, consumed by
+// Slim::Player::Squeezebox2::getVolume. See lmsSliderPctFromGain below.
+constexpr double kLmsTotalVolumeRange = -74.0;  // dB at slider 0
+constexpr double kLmsStepPoint = 25.0;          // slider position of the knee
+constexpr double kLmsStepFraction = 0.5;
+constexpr double kLmsMaxVolumeDb = 0.0;  // maximumVolume (slider 100)
+
+constexpr double kLmsStepDb = kLmsTotalVolumeRange * kLmsStepFraction;  // -37 dB
+constexpr double kLmsSlopeHigh =
+    (kLmsMaxVolumeDb - kLmsStepDb) / (100.0 - kLmsStepPoint);  // 37/75 dB/step
+constexpr double kLmsSlopeLow =
+    (kLmsStepDb - kLmsTotalVolumeRange) / (kLmsStepPoint - 0.0);  // 37/25 dB/step
+
+}  // namespace
+
+double lmsSliderPctFromGain(uint32_t newGain) {
+    if (newGain == 0) return 0.0;  // LMS mute
+    const double db = 20.0 * std::log10(static_cast<double>(newGain) / 65536.0);
+    const double pct = (db >= kLmsStepDb) ? kLmsStepPoint + (db - kLmsStepDb) / kLmsSlopeHigh
+                                          : (db - kLmsTotalVolumeRange) / kLmsSlopeLow;
+    return std::clamp(pct, 0.0, 100.0);
+}
 
 std::optional<VolumeAnchors> VolumeAnchors::parse(std::string_view spec) {
     VolumeAnchors out;
