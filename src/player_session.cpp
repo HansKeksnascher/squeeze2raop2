@@ -243,8 +243,17 @@ StreamStats PlayerSession::currentStats() {
     st.bytesReceived = receivedBytes_;
     st.outputBufferSize = 0;
     st.outputBufferFullness = 0;
-    uint32_t rate = format_.sampleRate ? format_.sampleRate : 44100;
-    st.elapsedMs = static_cast<uint32_t>(fedSamples_ * 1000ULL / rate);
+    const uint32_t rate = format_.sampleRate ? format_.sampleRate : 44100;
+    // Report played time, not decoded time: the pipeline decodes ahead into
+    // the sender ring, so fedSamples_ leads the receiver by up to the ring
+    // occupancy (~1.5 s). LMS derives the progress display from this value,
+    // and a decoded-ahead figure makes it run ahead and jump at track end
+    // (squeezelite reports frames_played the same way). queuedSamples_ is
+    // refreshed by the stream thread's telemetry; subtract the frames still
+    // queued to approximate the played position.
+    const uint64_t queuedFrames = queuedSamples_.load(std::memory_order_relaxed) / 2;
+    const uint64_t playedFrames = fedSamples_ > queuedFrames ? fedSamples_ - queuedFrames : 0;
+    st.elapsedMs = static_cast<uint32_t>(playedFrames * 1000ULL / rate);
     return st;
 }
 
@@ -309,6 +318,7 @@ void PlayerSession::startStream(const StrmStart& st) {
         ringStatsMax_ = 0;
         ringStatsMarkMs_ = 0;
         ringStarvedMs_ = 0;
+        queuedSamples_.store(0, std::memory_order_relaxed);
         format_ = pcmFormat(st.pcm, 44100);
         bytesPerFrame_ = format_.channels * (format_.bitsPerSample / 8);
         if (!bytesPerFrame_) bytesPerFrame_ = 4;
@@ -390,6 +400,10 @@ void PlayerSession::streamLoop(std::stop_token st) {
         const uint64_t prebufferStartMs = nowMs();
         if (!streaming) log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
 
+        // Set when the HTTP source reaches EOF (natural end of the track), as
+        // opposed to a stop request (new track / pause) or a socket error.
+        bool reachedEof = false;
+
         // deviceLost_ doubles as the "receiver died" exit signal set from the
         // sender's io thread (streamActive_ was removed with the stop_token
         // conversion; stop requests arrive via st).
@@ -468,6 +482,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
                     decoder_->finish();
                     feedStream(st, {}, fmt, sink.get());
                 }
+                reachedEof = true;
                 break;
             }
 
@@ -499,12 +514,54 @@ void PlayerSession::streamLoop(std::stop_token st) {
             }
         }
 
-        // Exit handling: a device-initiated session loss gets ONE transparent
-        // retry (the receiver may have been transiently busy); otherwise the
-        // stream ends for real. A flush transition keeps the session for the
-        // next track.
+        // Exit handling. A device-initiated session loss gets ONE transparent
+        // retry (the receiver may have been transiently busy). A stop request
+        // (new track via strm-s, user stop, shutdown) sends nothing here: the
+        // flush/stop handlers already told LMS. A natural end (HTTP EOF with
+        // the decoder drained) is reported with STMd — LMS advances the queue
+        // on "decoder ready" (`playerReadyToStream`) — then STMu once the
+        // sender ring has played out ("normal end of playback"), mirroring
+        // squeezelite's STMd-at-DECODE_COMPLETE / STMu-at-output-underrun.
         const bool keepSession = flushed_.exchange(false);
         const bool lost = deviceLost_.exchange(false);
+        const bool stopping = st.stop_requested() || !g_run.load();
+        log::debug("stream exit: stopping={} lost={} eof={} flushed={}", stopping, lost, reachedEof,
+                   keepSession);
+
+        if (!stopping && lost) {
+            if (retryUsed_.exchange(true)) {
+                log::info("[ap] receiver session lost again; giving up (STMd)");
+                client_->sendStat("STMd", currentStats());
+            } else {
+                log::info("[ap] receiver session lost; retrying in 2s");
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                if (prepareAirplaySession(fmt.sampleRate)) {
+                    if (auto raop = raopSnapshot(); raop && !lastTitle_.empty())
+                        raop->setNowPlaying(lastTitle_, "", "");
+                    // The HTTP source stays open across a receiver restart, so
+                    // loop back into the read phase (with a fresh prebuffer)
+                    // instead of tearing down.
+                    log::info("[ap] receiver session re-established; resuming stream");
+                    continue;
+                }
+                log::error("[ap] cannot restart airplay session for {}", name_);
+                client_->sendStat("STMn", currentStats());
+            }
+        } else if (!stopping && reachedEof) {
+            // Decoder complete: tell LMS we are ready for the next track.
+            client_->sendStat("STMd", currentStats());
+            // Then let the receiver play out the buffered tail before the
+            // output underrun (normal end of playback).
+            waitForOutputDrain(st);
+            if (!st.stop_requested() && g_run.load() && !deviceLost_.load())
+                client_->sendStat("STMu", currentStats());
+        } else if (!stopping) {
+            // Socket or decode error: the stream is dead, not merely finished.
+            client_->sendStat("STMu", currentStats());
+        }
+
+        // Tear down and leave. A flush transition (keepSession) leaves the
+        // AirPlay session running for the next track.
         {
             std::lock_guard<std::mutex> lock(targetMutex_);
             if (!keepSession && raop_) {
@@ -513,28 +570,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
                 raop_.reset();
             }
         }
-        if (!g_run.load()) break;
-        if (!lost) {
-            client_->sendStat("STMu", currentStats());  // normal end
-            break;
-        }
-        if (retryUsed_.exchange(true)) {
-            log::info("[ap] receiver session lost again; giving up (STMd)");
-            client_->sendStat("STMd", currentStats());
-            break;
-        }
-        log::info("[ap] receiver session lost; retrying in 2s");
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        if (!prepareAirplaySession(fmt.sampleRate)) {
-            log::error("[ap] cannot restart airplay session for {}", name_);
-            client_->sendStat("STMn", currentStats());
-            break;
-        }
-        if (auto raop = raopSnapshot(); raop && !lastTitle_.empty())
-            raop->setNowPlaying(lastTitle_, "", "");
-        // The HTTP source stays open across a receiver restart, so loop back
-        // into the read phase (with a fresh prebuffer) instead of tearing down.
-        log::info("[ap] receiver session re-established; resuming stream");
+        break;
     }
 
     if (sink) sink->close();
@@ -544,11 +580,31 @@ void PlayerSession::streamLoop(std::stop_token st) {
     }
 }
 
+// Play out the sender ring before reporting the end of playback: the decoder
+// can complete well before the receiver has consumed the buffered tail, so
+// STMu must wait for the ring to empty (bounded, and abortable by a stop
+// request from a new track or shutdown). Keeps queuedSamples_ current so the
+// final STMu reports the played position.
+void PlayerSession::waitForOutputDrain(std::stop_token st) {
+    const uint64_t deadline = nowMs() + 5000;
+    while (!st.stop_requested() && g_run.load() && !deviceLost_.load()) {
+        size_t avail = 0;
+        {
+            std::lock_guard<std::mutex> lock(targetMutex_);
+            if (!raop_) return;
+            avail = raop_->availableRead();
+            queuedSamples_.store(avail, std::memory_order_relaxed);
+        }
+        if (avail == 0) return;
+        if (nowMs() >= deadline) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
 // The receiver ended the session on its own (e.g. the phone took over the
-// HomePod). Stop the local stream and tell LMS with STMu so it stops the
-// track instead of streaming into a dead session. Runs on the sender's
-// io thread: only flag here — the streamLoop's normal exit path does the
-// raop discard/stop/reset.
+// HomePod). Flag it and let the streamLoop's exit path tell LMS (STMd, then
+// STMu) instead of streaming into a dead session. Runs on the sender's
+// io thread: only flag here — the streamLoop does the discard/stop/reset.
 void PlayerSession::onRaopDeviceClosed() {
     // Runs on the sender's io thread: flag only. The streamLoop decides
     // between a transparent session retry and reporting to LMS.
@@ -662,6 +718,7 @@ void PlayerSession::sampleRingTelemetry() {
         std::lock_guard<std::mutex> lock(targetMutex_);
         if (!raop_) return;
         avail = raop_->availableRead();
+        queuedSamples_.store(avail, std::memory_order_relaxed);
     }
 
     const uint64_t now = nowMs();

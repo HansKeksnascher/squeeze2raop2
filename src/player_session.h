@@ -67,6 +67,9 @@ private:
     // Measures the pcm source rate over the telemetry window and regulates
     // the decoder to the 44100 output clock (see the definition).
     void regulateSourceRate(uint64_t windowMs);
+    // Blocks (bounded) until the sender ring has played out, so the receiver
+    // finishes the track tail before we report the end of playback.
+    void waitForOutputDrain(std::stop_token st);
     void feedRing(RaopPlayer& raop, std::stop_token st, const std::vector<int16_t>& samples);
     // Shared-snapshot access to raop_: any thread may take a reference to the
     // current player; teardown may reset the member while the caller holds the
@@ -136,6 +139,9 @@ private:
     std::atomic<bool> flushed_{false};     // strm f: keep session for next track
     std::atomic<bool> deviceLost_{false};  // receiver ended the session
     std::atomic<bool> retryUsed_{false};   // one transparent retry per stream
+    // Interleaved samples still queued in the sender ring, sampled by the
+    // stream thread; currentStats() subtracts them to report played time.
+    std::atomic<size_t> queuedSamples_{0};
     // Last ICY title: dedupes the repeated meta blocks some stations send,
     // and is re-applied to a recreated receiver session after a retry.
     std::string lastTitle_;

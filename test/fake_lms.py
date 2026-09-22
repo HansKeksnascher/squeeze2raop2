@@ -51,12 +51,17 @@ def read_frame(sock):
 
 
 class FakeLms:
-    def __init__(self, tcp_port, http_port, stream_seconds, volume_pct, stop_after):
+    def __init__(self, tcp_port, http_port, stream_seconds, volume_pct, stop_after, queue_tracks=0):
         self.tcp_port = tcp_port
         self.http_port = http_port
         self.stream_seconds = stream_seconds
         self.volume_pct = volume_pct
         self.stop_after = stop_after
+        # queue_tracks > 0: serve N short tracks to EOF (closing each HTTP
+        # connection) and send the next strm-s when the player reports STMd
+        # ("decoder ready"), emulating an LMS playlist.
+        self.queue_tracks = queue_tracks
+        self.tracks_sent = 0
         self.mac = ""
 
     def handle_http(self):
@@ -74,7 +79,8 @@ class FakeLms:
                         break
                     request += part
                 report("http %s" % request.split(b"\r\n")[0].decode(errors="replace"))
-                audio = build_stream_bytes(self.stream_seconds + 60.0, 44100)
+                seconds = self.stream_seconds if self.queue_tracks else self.stream_seconds + 60.0
+                audio = build_stream_bytes(seconds, 44100)
                 conn.sendall(
                     b"HTTP/1.1 200 OK\r\n"
                     b"Content-Type: audio/wav\r\n"
@@ -91,6 +97,12 @@ class FakeLms:
                     elapsed = time.time() - t0
                     if target > elapsed:
                         time.sleep(min(target - elapsed, 0.5))
+                if self.queue_tracks:
+                    # Natural end of the track: EOF so the player completes
+                    # decoding and reports STMd.
+                    conn.shutdown(socket.SHUT_WR)
+                    conn.close()
+                    report("track streamed to EOF and closed")
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
 
@@ -153,6 +165,7 @@ class FakeLms:
                         "HELO device_id=%d revision=%d mac=%s caps=<%s>"
                         % (device_id, revision, self.mac, caps)
                     )
+                    self.tracks_sent = 1
                     self.send_strm_start(sock)
                 elif opcode == b"RESP":
                     report("RESP %s" % payload[:96].decode(errors="replace"))
@@ -170,6 +183,13 @@ class FakeLms:
                             % (event, jiffies, elapsed, received, stream_full, out_full)
                         )
                         last_report = now
+                    if self.queue_tracks and event == "STMd":
+                        # Decoder ready: LMS advances the playlist here.
+                        report("STMd received (track %d/%d)" % (self.tracks_sent, self.queue_tracks))
+                        if self.tracks_sent < self.queue_tracks:
+                            self.tracks_sent += 1
+                            report("advancing to track %d" % self.tracks_sent)
+                            self.send_strm_start(sock)
                     if self.volume_pct > 0 and not volume_done and event in ("STMs",) and elapsed >= 0:
                         volume_done = True
                         self.send_audg(sock, self.volume_pct)
@@ -202,8 +222,21 @@ def main():
     parser.add_argument("--volume-pct", type=int, default=68)
     parser.add_argument("--no-volume", dest="volume_pct", action="store_const", const=0)
     parser.add_argument("--stop-after-sec", type=float, default=0.0)
+    parser.add_argument(
+        "--queue-tracks",
+        type=int,
+        default=0,
+        help="serve N short tracks, advancing on the player's STMd (queue test)",
+    )
     args = parser.parse_args()
-    lms = FakeLms(args.tcp_port, args.http_port, args.stream_seconds, args.volume_pct, args.stop_after_sec)
+    lms = FakeLms(
+        args.tcp_port,
+        args.http_port,
+        args.stream_seconds,
+        args.volume_pct,
+        args.stop_after_sec,
+        args.queue_tracks,
+    )
     lms.run()
 
 
