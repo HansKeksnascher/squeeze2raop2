@@ -5,10 +5,50 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdint>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 namespace squeeze2raop2 {
+
+namespace {
+
+// AirPlay `features` TXT is a comma-separated pair of 32-bit hex words, low
+// word first: "0xAAAAAAAA,0xBBBBBBBB" -> low | (high << 32). std::from_chars
+// with base 16 does NOT accept the "0x" prefix and stops at the comma, so the
+// old code read the low word as 0 and every receiver looked feature-less
+// (bit 38/48 never set -> everything classified AP1). Accept the prefix, the
+// comma and any number of leading hex digits (strtoull semantics: trailing
+// garbage is ignored, a non-hex leading char yields 0).
+uint64_t parseAirplayFeatures(std::string_view raw) {
+    uint64_t features = 0;
+    size_t pos = 0;
+    for (int word = 0; word < 2 && pos <= raw.size(); ++word) {
+        const size_t comma = raw.find(',', pos);
+        std::string_view part = raw.substr(
+            pos, comma == std::string_view::npos ? std::string_view::npos : comma - pos);
+        while (!part.empty() && std::isspace(static_cast<unsigned char>(part.front())))
+            part.remove_prefix(1);
+        while (!part.empty() && std::isspace(static_cast<unsigned char>(part.back())))
+            part.remove_suffix(1);
+        if (part.size() > 2 && part[0] == '0' && (part[1] == 'x' || part[1] == 'X'))
+            part.remove_prefix(2);
+        uint32_t v = 0;
+        if (!part.empty()) {
+            uint64_t parsed = 0;
+            const auto res = std::from_chars(part.data(), part.data() + part.size(), parsed, 16);
+            if (res.ec == std::errc())
+                v = static_cast<uint32_t>(parsed & 0xFFFFFFFFu);
+        }
+        features |= static_cast<uint64_t>(v) << (32 * word);
+        if (comma == std::string_view::npos) break;
+        pos = comma + 1;
+    }
+    return features;
+}
+
+}  // namespace
 
 std::string DeviceRegistry::normalizeHexKey(const std::string& raw) {
     std::string hex;
@@ -119,12 +159,8 @@ void DeviceRegistry::onAirplayV4(const std::string& instance, const std::string&
         st.lastSeenAirplay = true;
 
         if (d.name.empty()) d.name = instance;
-        if (auto it = txt.find("features"); it != txt.end() && !it->second.empty()) {
-            // Preserve the legacy strtoull semantics: garbage input parses as 0.
-            uint64_t features = 0;
-            std::from_chars(it->second.data(), it->second.data() + it->second.size(), features, 16);
-            d.features = features;
-        }
+        if (auto it = txt.find("features"); it != txt.end() && !it->second.empty())
+            d.features = parseAirplayFeatures(it->second);
         if (auto it = txt.find("pk"); it != txt.end()) d.pk = it->second;
         if (auto it = txt.find("deviceid"); it != txt.end()) d.deviceIdHex = it->second;
         if (auto it = txt.find("model"); it != txt.end() && d.model.empty()) d.model = it->second;

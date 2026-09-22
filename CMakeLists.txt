@@ -125,6 +125,11 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   squeeze2raop2_target_settings(squeeze2raop2_volume_tests)
   add_test(NAME volume_map_test COMMAND squeeze2raop2_volume_tests)
 
+  add_executable(squeeze2raop2_registry_tests test/test_device_registry.cpp)
+  target_link_libraries(squeeze2raop2_registry_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_registry_tests)
+  add_test(NAME device_registry_test COMMAND squeeze2raop2_registry_tests)
+
   add_executable(mp3_smoke test/mp3_smoke.cpp)
   target_link_libraries(mp3_smoke PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(mp3_smoke)
