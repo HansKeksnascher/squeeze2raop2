@@ -1,5 +1,6 @@
 #include "slimproto.h"
 
+#include "byte_order.h"
 #include "log.h"
 #include "net_util.h"
 #include "util.h"
@@ -152,7 +153,7 @@ bool SlimProtoClient::sendPacket(const char (&opcode)[5], std::span<const std::b
     // [4b opcode][4b big-endian length = payload bytes][payload]
     std::array<std::byte, 8> header{};
     std::memcpy(header.data(), opcode, 4);
-    packN(std::span{header}.subspan(4, 4), payload.size(), 4);
+    writeInt<Endian::Big>(header.data() + 4, static_cast<uint32_t>(payload.size()));
     std::vector<std::byte> pkt;
     pkt.reserve(8 + payload.size());
     pkt.insert(pkt.end(), header.begin(), header.end());
@@ -238,9 +239,9 @@ void SlimProtoClient::run(std::stop_token st) {
                 continue;
             }
             if (expect == 0) {
-                uint8_t hdr[2];
+                std::byte hdr[2];
                 if (!recvFully(fd, hdr, sizeof(hdr))) break;
-                expect = static_cast<size_t>((hdr[0] << 8) | hdr[1]);
+                expect = static_cast<size_t>(readInt<Endian::Big, uint16_t>(hdr));
                 if (expect > kMaxPacket || expect < 4) {
                     log::error("bogus packet length {}", expect);
                     break;

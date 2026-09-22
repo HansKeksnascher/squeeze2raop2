@@ -1,12 +1,15 @@
 #include "slimproto.h"
 
+#include "byte_order.h"
 #include "log.h"
 #include "util.h"
 #include "volume_map.h"
 
 #include <algorithm>
 #include <array>
-#include <cstring>
+#include <concepts>
+#include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -15,22 +18,80 @@
 // RESP, SETD, DSCO, META) and decoding (the process() dispatch, including
 // the AUDG gain -> slider percent inversion), plus the PCM parameter code
 // tables. Connection lifecycle lives in slimproto.cpp.
+//
+// Every slimproto integer field is big-endian. PacketWriter/PacketReader
+// append/consume fields sequentially so the packet layout is expressed by
+// field order, not by hand-kept byte offsets; PacketReader also bounds-checks
+// every read (earlier offset arithmetic caused an out-of-bounds regression,
+// pinned by the short-packet unit test).
 
 namespace squeeze2raop2 {
 
 namespace {
 
-// Big-endian field access into assembled/received packets, replacing the
-// as_writable_bytes(std::span{pkt}).subspan() ceremony at every call site.
-std::span<std::byte> beField(std::vector<uint8_t>& pkt, size_t off, size_t len) {
-    return std::as_writable_bytes(std::span{pkt}).subspan(off, len);
-}
-std::span<const std::byte> beField(const std::string& pkt, size_t off, size_t len) {
-    return std::as_bytes(std::span{pkt}).subspan(off, len);
-}
-uint64_t beAt(const std::string& pkt, size_t off, size_t len) {
-    return unpackN(beField(pkt, off, len));
-}
+// Appends big-endian fields to a packet body in wire order.
+class PacketWriter {
+public:
+    // Reserve the exact body size so the writer never reallocates mid-packet
+    // (also keeps GCC's vector-growth analysis quiet).
+    explicit PacketWriter(size_t reserve) { out_.reserve(reserve); }
+
+    void u8(uint8_t value) { out_.push_back(static_cast<std::byte>(value)); }
+    void u16(uint16_t value) { put(value); }
+    void u32(uint32_t value) { put(value); }
+
+    // Reserved / padding field: emitted as zero bytes.
+    void skip(size_t n) { out_.insert(out_.end(), n, std::byte{0}); }
+
+    void bytes(std::span<const std::byte> data) {
+        out_.insert(out_.end(), data.begin(), data.end());
+    }
+
+    [[nodiscard]] std::span<const std::byte> data() const { return out_; }
+
+private:
+    template <std::unsigned_integral T>
+    void put(T value) {
+        std::array<std::byte, sizeof(T)> tmp{};
+        writeInt<Endian::Big>(tmp.data(), value);
+        out_.insert(out_.end(), tmp.begin(), tmp.end());
+    }
+
+    std::vector<std::byte> out_;
+};
+
+// Sequential big-endian cursor over a received packet. Reads past the end
+// return nullopt; skip() reports failure.
+class PacketReader {
+public:
+    explicit PacketReader(std::span<const std::byte> packet) : packet_(packet) {}
+
+    [[nodiscard]] size_t remaining() const { return packet_.size() - offset_; }
+
+    std::optional<uint8_t> u8() { return take<uint8_t>(); }
+    std::optional<uint16_t> u16() { return take<uint16_t>(); }
+    std::optional<uint32_t> u32() { return take<uint32_t>(); }
+
+    bool skip(size_t n) {
+        if (n > remaining()) return false;
+        offset_ += n;
+        return true;
+    }
+
+    [[nodiscard]] std::span<const std::byte> tail() const { return packet_.subspan(offset_); }
+
+private:
+    template <std::unsigned_integral T>
+    std::optional<T> take() {
+        if (sizeof(T) > remaining()) return std::nullopt;
+        const T value = readInt<Endian::Big, T>(packet_.data() + offset_);
+        offset_ += sizeof(T);
+        return value;
+    }
+
+    std::span<const std::byte> packet_;
+    size_t offset_ = 0;
+};
 
 // Opcodes LMS sends that this client intentionally ignores.
 constexpr std::array<std::string_view, 10> kIgnoredOps{"aude", "DBUG", "SYST", "visu", "IR  ",
@@ -85,20 +146,18 @@ PcmFormat pcmFormat(const PcmParams& params, uint32_t fallbackRate) {
 }
 
 void SlimProtoClient::sendHelo(bool reconnect) {
-    std::string caps = caps_;
-    uint32_t bodyLen = 36 + static_cast<uint32_t>(caps.size());
-    std::vector<uint8_t> pkt(8 + bodyLen);
-    std::memcpy(pkt.data(), "HELO", 4);
-    packN(beField(pkt, 4, 4), bodyLen, 4);
-    std::span<std::byte> p = beField(pkt, 8, pkt.size() - 8);
-    p[0] = std::byte{12};  // deviceid 12 = squeezeplay class (squeezelite parity)
-    p[1] = std::byte{1};   // revision: single byte, shown as player firmware rev
-    std::memcpy(p.data() + 2, mac_.data(), 6);
-    packN(p.subspan(24, 2), reconnect ? 0x4000 : 0x0000, 2);
-    std::memcpy(p.data() + 36, caps.data(), caps.size());
+    const std::string& caps = caps_;
+    PacketWriter body(36 + caps.size());
+    body.u8(12);  // deviceid 12 = squeezeplay class (squeezelite parity)
+    body.u8(1);   // revision: single byte, shown as player firmware rev
+    body.bytes(std::as_bytes(std::span{mac_}));
+    body.skip(16);  // reserved: packet bytes 8..23
+    body.u16(static_cast<uint16_t>(reconnect ? 0x4000 : 0x0000));
+    body.skip(10);  // reserved: packet bytes 26..35
+    body.bytes(std::as_bytes(std::span{caps}));
 
     log::info("HELO mac={} cap={}", macToString(mac_), caps);
-    if (!sendRaw(std::as_bytes(std::span{pkt}))) log::error("HELO send failed");
+    if (!sendPacket("HELO", body.data())) log::error("HELO send failed");
 }
 
 StreamStats SlimProtoClient::lastStats() {
@@ -114,26 +173,23 @@ void SlimProtoClient::sendStat(const char (&event)[5], StreamStats stats,
         std::lock_guard<std::mutex> lock(sendMutex_);
         stats_ = stats;
     }
-    std::vector<uint8_t> pkt(8 + 53);
-    std::memcpy(pkt.data(), "STAT", 4);
-    packN(beField(pkt, 4, 4), 53, 4);
-    std::span<std::byte> p = beField(pkt, 8, 53);
-    std::memcpy(p.data(), event, 4);
-    p[6] = std::byte{0};
-    packN(p.subspan(7, 4), stats.streamBufferSize, 4);
-    packN(p.subspan(11, 4), stats.streamBufferFullness, 4);
-    packN(p.subspan(15, 4), stats.bytesReceived >> 32, 4);
-    packN(p.subspan(19, 4), stats.bytesReceived & 0xFFFFFFFF, 4);
-    packN(p.subspan(23, 2), 0xFFFF, 2);
-    packN(p.subspan(25, 4), nowMs(), 4);
-    packN(p.subspan(29, 4), stats.outputBufferSize, 4);
-    packN(p.subspan(33, 4), stats.outputBufferFullness, 4);
-    packN(p.subspan(37, 4), stats.elapsedMs / 1000, 4);
-    packN(p.subspan(41, 2), 0, 2);
-    packN(p.subspan(43, 4), stats.elapsedMs, 4);
-    packN(p.subspan(47, 4), serverTimestamp, 4);
-    packN(p.subspan(51, 2), 0, 2);
-    if (!sendRaw(std::as_bytes(std::span{pkt}))) log::warn("STAT send failed");
+    PacketWriter body(53);
+    body.bytes(std::as_bytes(std::span{event}.first(4)));
+    body.skip(3);  // reserved: packet bytes 4..6 (the old code zeroed byte 6)
+    body.u32(stats.streamBufferSize);
+    body.u32(stats.streamBufferFullness);
+    body.u32(static_cast<uint32_t>(stats.bytesReceived >> 32));
+    body.u32(static_cast<uint32_t>(stats.bytesReceived & 0xFFFFFFFFULL));
+    body.u16(0xFFFF);
+    body.u32(static_cast<uint32_t>(nowMs()));
+    body.u32(stats.outputBufferSize);
+    body.u32(stats.outputBufferFullness);
+    body.u32(stats.elapsedMs / 1000);
+    body.u16(0);
+    body.u32(stats.elapsedMs);
+    body.u32(serverTimestamp);
+    body.u16(0);
+    if (!sendPacket("STAT", body.data())) log::warn("STAT send failed");
 }
 
 void SlimProtoClient::sendResp(const std::string& header) {
@@ -141,10 +197,11 @@ void SlimProtoClient::sendResp(const std::string& header) {
 }
 
 void SlimProtoClient::sendSetdName(const std::string& name) {
-    std::vector<uint8_t> payload(1 + name.size() + 1);
-    payload[0] = 0;
-    std::memcpy(payload.data() + 1, name.data(), name.size());
-    if (!sendPacket("SETD", std::as_bytes(std::span{payload}))) log::warn("SETD send failed");
+    PacketWriter body(2 + name.size());
+    body.u8(0);
+    body.bytes(std::as_bytes(std::span{name}));
+    body.u8(0);  // trailing NUL
+    if (!sendPacket("SETD", body.data())) log::warn("SETD send failed");
 }
 
 void SlimProtoClient::sendDisco(uint8_t reason) {
@@ -163,18 +220,21 @@ void SlimProtoClient::sendMeta(std::string_view data) {
 }
 
 void SlimProtoClient::process(const std::string& pkt) {
-    size_t len = pkt.size();
+    const size_t len = pkt.size();
     if (len < 4) return;
     const std::string_view op(pkt.data(), 4);
+    PacketReader r(std::as_bytes(std::span{pkt}));
+    if (!r.skip(4)) return;  // opcode (len >= 4 already guarantees this)
 
     if (op == "strm") {
         if (len < 5) return;
-        const char command = pkt[4];
+        const uint8_t command = *r.u8();
         switch (command) {
         case 't': {
             // heartbeat timestamp sits at packet bytes 18..21
             if (len < 22) return;
-            uint32_t ts = static_cast<uint32_t>(beAt(pkt, 18, 4));
+            if (!r.skip(13)) return;
+            const uint32_t ts = *r.u32();
             sendStat("STMt", {}, ts);
             lastHeartbeatMs_ = nowMs();
             break;
@@ -188,20 +248,23 @@ void SlimProtoClient::process(const std::string& pkt) {
             break;
         case 'p': {
             if (len < 22) return;
-            uint32_t ms = static_cast<uint32_t>(beAt(pkt, 18, 4));
+            if (!r.skip(13)) return;
+            const uint32_t ms = *r.u32();
             if (events_.onPause) events_.onPause(ms);
             if (!ms) sendStat("STMp", lastStats());
             break;
         }
         case 'a': {
             if (len < 22) return;
-            uint32_t ms = static_cast<uint32_t>(beAt(pkt, 18, 4));
+            if (!r.skip(13)) return;
+            const uint32_t ms = *r.u32();
             if (events_.onSkipAhead) events_.onSkipAhead(ms);
             break;
         }
         case 'u': {
             if (len < 22) return;
-            uint32_t jiffies = static_cast<uint32_t>(beAt(pkt, 18, 4));
+            if (!r.skip(13)) return;
+            const uint32_t jiffies = *r.u32();
             if (events_.onUnpause) events_.onUnpause(jiffies);
             sendStat("STMr", lastStats());
             break;
@@ -209,21 +272,24 @@ void SlimProtoClient::process(const std::string& pkt) {
         case 's': {
             if (len < 28) return;
             StrmStart st;
-            st.autostart = static_cast<uint8_t>(pkt[5] - '0');
-            st.format = static_cast<StreamFormat>(pkt[6]);
-            st.pcm.sampleSizeCode = static_cast<uint8_t>(pkt[7]);
-            st.pcm.sampleRateCode = static_cast<uint8_t>(pkt[8]);
-            st.pcm.channelsCode = static_cast<uint8_t>(pkt[9]);
-            st.pcm.endianCode = static_cast<uint8_t>(pkt[10]);
-            st.thresholdKb = static_cast<uint8_t>(pkt[11]);
-            st.transitionPeriodS = static_cast<uint8_t>(pkt[13]);
-            st.transitionType = static_cast<uint8_t>(pkt[14] - '0');
-            st.flags = static_cast<uint8_t>(pkt[15]);
-            st.outputThresholdTenths = static_cast<uint8_t>(pkt[16]);
-            st.replayGain = static_cast<uint32_t>(beAt(pkt, 18, 4));
-            st.serverPort = static_cast<uint16_t>(beAt(pkt, 22, 2));
-            st.serverIp = static_cast<uint32_t>(beAt(pkt, 24, 4));
-            st.request.assign(pkt.data() + 28, len - 28);
+            st.autostart = static_cast<uint8_t>(*r.u8() - '0');
+            st.format = static_cast<StreamFormat>(*r.u8());
+            st.pcm.sampleSizeCode = *r.u8();
+            st.pcm.sampleRateCode = *r.u8();
+            st.pcm.channelsCode = *r.u8();
+            st.pcm.endianCode = *r.u8();
+            st.thresholdKb = *r.u8();
+            if (!r.skip(1)) return;  // packet byte 12 (unused)
+            st.transitionPeriodS = *r.u8();
+            st.transitionType = static_cast<uint8_t>(*r.u8() - '0');
+            st.flags = *r.u8();
+            st.outputThresholdTenths = *r.u8();
+            if (!r.skip(1)) return;  // packet byte 17 (unused)
+            st.replayGain = *r.u32();
+            st.serverPort = *r.u16();
+            st.serverIp = *r.u32();
+            const auto rest = r.tail();
+            st.request.assign(reinterpret_cast<const char*>(rest.data()), rest.size());
             log::debug("strm s autostart={} format={} threshold={}", st.autostart,
                        static_cast<char>(st.format), st.thresholdKb);
             sendStat("STMf", lastStats());
@@ -234,19 +300,17 @@ void SlimProtoClient::process(const std::string& pkt) {
         }
     } else if (op == "cont") {
         if (len < 8) return;
-        uint32_t metaint = static_cast<uint32_t>(beAt(pkt, 4, 4));
+        const uint32_t metaint = *r.u32();
         if (events_.onCont) events_.onCont(metaint);
     } else if (op == "codc") {
         if (len < 10) return;
-        StreamFormat f = static_cast<StreamFormat>(pkt[4]);
-        PcmParams pcm{static_cast<uint8_t>(pkt[5]), static_cast<uint8_t>(pkt[6]),
-                      static_cast<uint8_t>(pkt[7]), static_cast<uint8_t>(pkt[8])};
+        const StreamFormat f = static_cast<StreamFormat>(*r.u8());
+        const PcmParams pcm{*r.u8(), *r.u8(), *r.u8(), *r.u8()};
         if (events_.onCodc) events_.onCodc(f, pcm);
     } else if (op == "audg") {
         if (len < 22) return;
-        uint32_t gainL = static_cast<uint32_t>(beAt(pkt, 14, 4));
-        uint32_t gainR = static_cast<uint32_t>(beAt(pkt, 18, 4));
-        uint8_t adjust = static_cast<uint8_t>(pkt[12]);
+        if (!r.skip(8)) return;  // packet bytes 4..11
+        const uint8_t adjust = *r.u8();
         // dvc=0 is LMS's fixed-output mode: the gains are the no-op 1.0 and
         // applying them would push 0 dB = full blast. Leave the receiver at
         // its current level.
@@ -254,6 +318,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             log::debug("audg dvc=0 ignored (fixed-output mode)");
             return;
         }
+        if (!r.skip(1)) return;  // packet byte 13
         // new_left/new_right are 16.16 fixed-point linear amplitude
         // multipliers (1.0 = full volume). Recover the LMS slider percent
         // with the curve for OUR player class (deviceid 12 = SqueezePlay,
@@ -261,24 +326,25 @@ void SlimProtoClient::process(const std::string& pkt) {
         // The bridge passes the percent straight to the AirPlay sender's
         // 0..100 % domain, whose 0 % is the -144 mute sentinel and 100 % is
         // 0 dB.
+        const uint32_t gainL = *r.u32();
+        const uint32_t gainR = *r.u32();
         if (events_.onVolume)
             events_.onVolume(lmsSliderPctFromGain(gainL), lmsSliderPctFromGain(gainR));
     } else if (op == "setd") {
-        if (len >= 5 && pkt[4] == '\0') {
-            if (len == 5) {
-                sendSetdName(playerName_.empty() ? "squeeze2raop2" : playerName_);
-            } else if (len > 5) {
-                std::string name(pkt.data() + 5, len - 5);
-                while (!name.empty() && name.back() == '\0') name.pop_back();
-                if (events_.onSetName) events_.onSetName(name);
-                sendSetdName(name);
-            }
+        if (len < 5) return;
+        if (*r.u8() != 0) return;
+        if (len == 5) {
+            sendSetdName(playerName_.empty() ? "squeeze2raop2" : playerName_);
+        } else {
+            std::string name(reinterpret_cast<const char*>(r.tail().data()), r.remaining());
+            while (!name.empty() && name.back() == '\0') name.pop_back();
+            if (events_.onSetName) events_.onSetName(name);
+            sendSetdName(name);
         }
     } else if (op == "serv") {
-        if (len >= 8) {
-            uint32_t ip = static_cast<uint32_t>(beAt(pkt, 4, 4));
-            if (events_.onServerSwitch) events_.onServerSwitch(ip);
-        }
+        if (len < 8) return;
+        const uint32_t ip = *r.u32();
+        if (events_.onServerSwitch) events_.onServerSwitch(ip);
     } else if (std::ranges::find(kIgnoredOps, op) != kIgnoredOps.end()) {
         log::debug("ignored {}", op);
     } else {

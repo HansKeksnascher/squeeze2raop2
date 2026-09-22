@@ -3,26 +3,9 @@
 
 #include <cstdio>
 #include <cstring>
-#include <span>
 #include <string>
 
 using namespace squeeze2raop2;
-
-static void testPackN() {
-    uint8_t buf[8] = {};
-    packN(std::as_writable_bytes(std::span{buf}), 0x0102030405060708ULL, 8);
-    if (buf[0] != 0x01 || buf[1] != 0x02 || buf[6] != 0x07 || buf[7] != 0x08) {
-        fprintf(stderr, "packN byte order wrong\n");
-        exit(1);
-    }
-    packN(std::as_writable_bytes(std::span{buf}).subspan(0, 2), 0x1234, 2);
-    if (buf[0] != 0x12 || buf[1] != 0x34) exit(1);
-    if (unpackN(std::as_bytes(std::span{buf}).subspan(0, 2)) != 0x1234) exit(1);
-    // span clamping: oversized count must not write past the span
-    uint8_t small[2] = {};
-    packN(std::as_writable_bytes(std::span{small}), 0xFFFFFFFFu, 8);
-    if (small[0] != 0xFF || small[1] != 0xFF) exit(1);
-}
 
 static void testPcmCodes() {
     if (sampleRateFromCode('3') != 44100) exit(1);
@@ -146,7 +129,6 @@ static void testClampAirVolumePct() {
 }
 
 int main() {
-    testPackN();
     testPcmCodes();
     testMac();
     testShortPackets();

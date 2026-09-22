@@ -10,7 +10,7 @@ namespace squeeze2raop2 {
 // IPv4 -> dotted-quad text; empty string when inet_ntop fails.
 std::string ipv4ToString(const in_addr& addr);
 
-// Same for an address carried as a host-order uint32 (the value unpackN()
+// Same for an address carried as a host-order uint32 (the value readInt()
 // produces from a wire field): the integer's most significant octet is the
 // first dotted-quad component.
 std::string ipv4ToString(uint32_t hostOrder);

@@ -1,5 +1,6 @@
 #include "decoder/pcm_decoder.h"
 
+#include "byte_order.h"
 #include "log.h"
 
 #include <algorithm>
@@ -20,16 +21,6 @@ constexpr size_t kChunkFrames = 1152;
 // mirroring the sender resampler's inBuf_ sizing.
 constexpr size_t kStageMaxFrames = 8192;
 
-uint16_t rd16le(const std::byte* p) {
-    return uint16_t(std::to_integer<uint8_t>(p[0]) | (std::to_integer<uint8_t>(p[1]) << 8));
-}
-uint32_t rd32le(const std::byte* p) {
-    return uint32_t(rd16le(p)) | (uint32_t(rd16le(p + 2)) << 16);
-}
-uint16_t rd16be(const std::byte* p) {
-    return uint16_t((std::to_integer<uint8_t>(p[0]) << 8) | std::to_integer<uint8_t>(p[1]));
-}
-uint32_t rd32be(const std::byte* p) { return (uint32_t(rd16be(p)) << 16) | rd16be(p + 2); }
 bool tagIs(const std::byte* p, const char (&tag)[5]) { return std::memcmp(p, tag, 4) == 0; }
 
 }  // namespace
@@ -64,10 +55,10 @@ std::optional<size_t> PcmDecoder::checkHeader() {
     // RIFF/WAVE: fmt chunk carries the real format; skip RIFF hdr + fmt
     // chunk + the 'data' chunk header (pcm.c's skip arithmetic).
     if (have >= 44 && tagIs(p, "RIFF") && tagIs(p + 8, "WAVE") && tagIs(p + 12, "fmt ")) {
-        const uint32_t fmtSize = rd32le(p + 16);
-        srcChannels_ = static_cast<uint8_t>(rd16le(p + 22));
-        srcRate_ = rd32le(p + 24);
-        srcBits_ = static_cast<uint8_t>(rd16le(p + 34));
+        const uint32_t fmtSize = readInt<Endian::Little, uint32_t>(p + 16);
+        srcChannels_ = static_cast<uint8_t>(readInt<Endian::Little, uint16_t>(p + 22));
+        srcRate_ = readInt<Endian::Little, uint32_t>(p + 24);
+        srcBits_ = static_cast<uint8_t>(readInt<Endian::Little, uint16_t>(p + 34));
         srcBigEndian_ = false;
         log::info("pcm codec: WAV header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
                   srcChannels_);
@@ -91,14 +82,14 @@ std::optional<size_t> PcmDecoder::checkHeader() {
         srcBigEndian_ = true;
         while (off + 8 <= have) {
             if (tagIs(p + off, "COMM") && off + 18 <= have) {
-                srcChannels_ = static_cast<uint8_t>(rd16be(p + off + 8));
-                srcBits_ = static_cast<uint8_t>(rd16be(p + off + 14));
+                srcChannels_ = static_cast<uint8_t>(readInt<Endian::Big, uint16_t>(p + off + 8));
+                srcBits_ = static_cast<uint8_t>(readInt<Endian::Big, uint16_t>(p + off + 14));
                 // IEEE 80-bit extended rate, same simplification as pcm.c:
                 // high 32 bits of the mantissa with the exponent shift.
                 int exponent = ((std::to_integer<uint8_t>(p[off + 16]) & 0x7F) << 8 |
                                 std::to_integer<uint8_t>(p[off + 17])) -
                                16383 - 31;
-                uint32_t rate = rd32be(p + off + 18);
+                uint32_t rate = readInt<Endian::Big, uint32_t>(p + off + 18);
                 while (exponent < 0) {
                     rate >>= 1;
                     ++exponent;
@@ -120,7 +111,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                     failed_ = true;
                     return size_t{0};
                 }
-                const uint32_t sndOffset = rd32be(p + off + 8);
+                const uint32_t sndOffset = readInt<Endian::Big, uint32_t>(p + off + 8);
                 const size_t skip = off + 8 + sndOffset;
                 if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
                     (srcChannels_ != 1 && srcChannels_ != 2)) {
@@ -133,7 +124,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                 fmt_.sampleRate = outRate_ ? outRate_ : srcRate_;
                 return skip;
             }
-            const uint32_t len = rd32be(p + off + 4);
+            const uint32_t len = readInt<Endian::Big, uint32_t>(p + off + 4);
             off += size_t(len) + 8;
         }
         log::error("pcm codec: AIFF header without SSND chunk");
