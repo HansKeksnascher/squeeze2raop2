@@ -51,8 +51,6 @@ private:
     void streamLoop(std::stop_token st);
     void onRaopDeviceClosed();
     void onIcyMeta(std::string_view block);
-    void pushToRaop(RaopPlayer& raop, std::stop_token st, std::span<const std::byte> data,
-                    const PcmFormat& fmt);
     // One pipeline for every stream format: bytes go through the stream's
     // Decoder (mp3 decode / pcm normalization), drained in 1152-frame
     // chunks. Returns false when the decoder failed and the stream must
@@ -67,7 +65,7 @@ private:
     // Blocks (bounded) until the sender ring has played out, so the receiver
     // finishes the track tail before we report the end of playback.
     void waitForOutputDrain(std::stop_token st);
-    void feedRing(RaopPlayer& raop, std::stop_token st, const std::vector<int16_t>& samples);
+    void feedRing(RaopPlayer& raop, std::stop_token st, std::span<const int16_t> samples);
     // Shared-snapshot access to raop_: any thread may take a reference to the
     // current player; teardown may reset the member while the caller holds the
     // snapshot, and the object stays alive until the caller drops it. This is

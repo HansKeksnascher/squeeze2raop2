@@ -6,12 +6,9 @@
 #include "util.h"
 #include "wav_sink.h"
 
-#include <arpa/inet.h>
-
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cstring>
 #include <limits>
 
 namespace squeeze2raop2 {
@@ -623,32 +620,6 @@ void PlayerSession::onIcyMeta(std::string_view block) {
     if (auto raop = raopSnapshot()) raop->setNowPlaying(title, "", "");
 }
 
-void PlayerSession::pushToRaop(RaopPlayer& raop, std::stop_token st,
-                               std::span<const std::byte> data, const PcmFormat& fmt) {
-    const size_t count = data.size() / 2;
-    pushScratch_.resize(count);
-    for (size_t i = 0; i < count; ++i) {
-        // memcpy extraction instead of reinterpret_cast: no int16_t
-        // object ever lives in the receive buffer, so pointer-casting
-        // the raw bytes is strict-aliasing UB.
-        uint16_t raw = 0;
-        std::memcpy(&raw, data.data() + 2 * i, 2);
-        pushScratch_[i] =
-            fmt.bigEndian ? static_cast<int16_t>(ntohs(raw)) : static_cast<int16_t>(raw);
-    }
-    if (fmt.channels == 1 && count) {
-        // Duplicate each sample in place, walking backwards so the unread
-        // lower-index samples are never overwritten by the expansion.
-        pushScratch_.resize(count * 2);
-        for (size_t i = count; i-- > 0;) {
-            const int16_t s = pushScratch_[i];
-            pushScratch_[2 * i] = s;
-            pushScratch_[2 * i + 1] = s;
-        }
-    }
-    feedRing(raop, st, pushScratch_);
-}
-
 // One pipeline for every stream format: bytes go through the stream's
 // Decoder (mp3 decode / pcm header-skip + s16 stereo normalization) and are
 // drained in the same 1152-frame chunks. Returns false when the decoder
@@ -680,7 +651,22 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
         }
         if (!toOutput) continue;  // paused drain: decode, discard
         if (sink) sink->feed(std::as_bytes(chunk), fmt);
-        if (raop) pushToRaop(*raop, st, std::as_bytes(chunk), fmt);
+        if (raop) {
+            if (fmt.channels == 1) {
+                // Duplicate each sample in place, walking backwards so the
+                // unread lower-index samples are never overwritten.
+                const size_t frames = chunk.size();
+                pushScratch_.resize(frames * 2);
+                for (size_t i = frames; i-- > 0;) {
+                    const int16_t s = chunk[i];
+                    pushScratch_[2 * i] = s;
+                    pushScratch_[2 * i + 1] = s;
+                }
+                feedRing(*raop, st, pushScratch_);
+            } else {
+                feedRing(*raop, st, chunk);
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(mutex_);
             fedSamples_ += chunk.size() / (fmt.channels ? fmt.channels : 2);
@@ -710,7 +696,7 @@ void PlayerSession::sampleRingTelemetry() {
 }
 
 void PlayerSession::feedRing(RaopPlayer& raop, std::stop_token st,
-                             const std::vector<int16_t>& samples) {
+                             std::span<const int16_t> samples) {
     size_t offset = 0;
     while (offset < samples.size() && !st.stop_requested() && g_run.load() && !deviceLost_.load()) {
         size_t freeSpace = raop.availableWrite();
