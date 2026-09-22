@@ -26,12 +26,18 @@ PlayerSession::PlayerSession(std::string deviceId, std::string name, std::array<
       lmsPort_(lmsPort),
       paceRealtime_(paceRealtime),
       sinkPath_(std::move(sinkPath)),
-      raopTarget_(std::move(raopTarget)),
-      credSink_(std::move(credSink)),
       anchors_(std::move(anchors)),
       volumeMode_(volumeMode),
-      fixedVolumePct_(volPct),
-      latencyMs_(latencyMs) {}
+      fixedVolumePct_(volPct) {
+    // Compute the receiver identity before any thread exists (the sender reads
+    // it): uppercase hex MAC with the separators removed.
+    std::string identity = macToString(mac_);
+    std::ranges::transform(identity, identity.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    std::erase(identity, ':');
+    output_ = std::make_unique<AirplayOutput>(name_, std::move(identity), std::move(raopTarget),
+                                              std::move(credSink), latencyMs);
+}
 
 PlayerSession::~PlayerSession() { stop(); }
 
@@ -51,10 +57,7 @@ void PlayerSession::start() {
     };
     events.onStop = [this]() {
         stopPlayback();
-        {
-            std::lock_guard<std::mutex> lock(targetMutex_);
-            teardownReceiverAudio(true);
-        }
+        output_->stop(true);
         client_->sendStat("STMf", currentStats());
     };
     events.onFlush = [this](bool) {
@@ -64,10 +67,7 @@ void PlayerSession::start() {
         // path honors flushed_ by skipping the session teardown.
         flushed_.store(true);
         stopPlayback();
-        {
-            std::lock_guard<std::mutex> lock(targetMutex_);
-            teardownReceiverAudio(false);
-        }
+        output_->silence();
         client_->sendStat("STMf", currentStats());
     };
     events.onPause = [this](uint32_t ms) {
@@ -78,10 +78,7 @@ void PlayerSession::start() {
             // stream is a fade-down followed by 'p 0'.
             pauseUntilMs_ = ms ? nowMs() + ms : std::numeric_limits<uint64_t>::max();
         }
-        {
-            std::lock_guard<std::mutex> lock(targetMutex_);
-            teardownReceiverAudio(false);
-        }
+        output_->silence();
         log::debug("pause {}", ms);
         // STMp is sent by the slimproto 'p' handler (squeezelite parity);
         // sending it here too duplicates the event.
@@ -101,16 +98,14 @@ void PlayerSession::start() {
             return;
         }
         pct = anchors_.airplayPctFromLms(pct);
-        // NB: targetMutex_ also guards raop_ mutation in prepareAirplaySession() and
-        // the streamLoop teardown paths; no mutex_ nesting here (see the
-        // onCont comment).
-        std::lock_guard<std::mutex> lock(targetMutex_);
         // Remember the slider, not mute pushes: LMS's stop-fade ends at
         // gain 0 and fresh players get a 0-gain push on registration, so
         // a stored 0 would mute the next session until the first AUDG.
-        if (pct > 0.0) lastLmsPct_ = pct;
-        if (raop_ && raop_->active()) {
-            raop_->setVolume(pct);
+        if (pct > 0.0) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            lastLmsPct_ = pct;
+        }
+        if (output_->setVolume(pct)) {
             log::info("[ap] volume {:.1f} pct applied (lms)", pct);
         } else {
             log::info("volume -> {:.1f} pct ({})", pct,
@@ -118,24 +113,14 @@ void PlayerSession::start() {
         }
     };
 
-    // Compute every immutable value a callback or thread reads BEFORE any
-    // thread is created: thread creation provides the happens-before edge, so
-    // setting raopIdentity_ after client_->start() would race the reader/stream
-    // thread that reads it in prepareAirplaySession().
-    std::string identity = macToString(mac_);
-    std::ranges::transform(identity, identity.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    std::erase(identity, ':');
-    raopIdentity_ = identity;
-
     // squeezelite-style caps: Model/ModelName drive the LMS web UI (player
     // lists, settings); the player's display name is sent separately via
     // SETD name. Firmware= is the free-text version LMS shows in player
     // settings. ModelName carries the AirPlay transport in use so the LMS UI
     // distinguishes the classic RAOP/AP1 path from the native AirPlay 2 path.
     const std::string modelName =
-        raopTarget_ ? (raopTarget_->airplay2 ? "squeeze2raop2@ap2" : "squeeze2raop2@raop")
-                    : "squeeze2raop2";
+        output_->hasTarget() ? (output_->airplay2() ? "squeeze2raop2@ap2" : "squeeze2raop2@raop")
+                             : "squeeze2raop2";
     client_ = std::make_unique<SlimProtoClient>(
         mac_,
         "Model=squeezelite,ModelName=" + modelName +
@@ -151,40 +136,9 @@ void PlayerSession::start() {
     client_->setPlayerName(name_);
     client_->setStatsProvider([this] { return currentStats(); });
     client_->start(lmsHost_.value_or(""), lmsPort_);
-    // the AirPlay session is prepared lazily in prepareAirplaySession()
-    // when the first audio arrives; connecting eagerly hits receivers that
-    // immediately drop idle sessions (HomePod/Sonos)
-}
-
-std::shared_ptr<RaopPlayer> PlayerSession::raopSnapshot() const {
-    std::lock_guard<std::mutex> lock(targetMutex_);
-    return raop_;
-}
-
-// Creates or reuses the AirPlay player WITHOUT starting it: the streamLoop
-// prebuffers 50% of the ring capacity first and only calls
-// launchAirplaySession() once the reserve is in hand (a sender that starts
-// on an empty ring silence-pads its way into the session).
-bool PlayerSession::prepareAirplaySession(uint32_t sampleRate) {
-    // raop_/raopTarget_ are also read (locked) from SessionManager's
-    // thread via updateTarget(); everything here runs on the stream
-    // thread and must therefore hold targetMutex_ while mutating them.
-    std::lock_guard<std::mutex> lock(targetMutex_);
-    if (raop_ && (raop_->active() || !raop_->launched())) return true;
-    if (raop_) {  // dead session (e.g. receiver teardown): recreate
-        raop_->stop();
-        raop_.reset();
-    }
-    if (!raopTarget_) return false;
-    RaopPlayer::CredentialSink sink = credSink_;
-    raop_ = std::make_shared<RaopPlayer>(name_, raopIdentity_, *raopTarget_);
-    raop_->setCredentialSink(sink);
-    raop_->setClosedCallback([this] { onRaopDeviceClosed(); });
-    raop_->setInputRate(sampleRate);
-    // Scheduled stream latency: must be set BEFORE start() (it is part
-    // of the RTP timeline the receiver schedules against).
-    raop_->setLatencyMs(latencyMs_);
-    return true;
+    // the AirPlay session is prepared lazily when the first audio arrives;
+    // connecting eagerly hits receivers that immediately drop idle sessions
+    // (HomePod/Sonos)
 }
 
 // Start the AirPlay sender (fresh session) or leave a live one running.
@@ -196,39 +150,22 @@ bool PlayerSession::prepareAirplaySession(uint32_t sampleRate) {
 // last AUDG slider value wins; without one yet the fixed --vol-pct level
 // covers the first seconds until LMS pushes the slider.
 void PlayerSession::launchAirplaySession() {
-    std::lock_guard<std::mutex> lock(targetMutex_);
-    if (!raop_) return;
-    if (!raop_->active()) {
-        log::info("[ap] session launching for {} ({})", name_,
-                  raopTarget_ && raopTarget_->airplay2 ? "ap2" : "ap1");
-        raop_->start();
+    double pct = fixedVolumePct_;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (volumeMode_ == VolumeMode::Lms && lastLmsPct_ > 0.0) pct = lastLmsPct_;
     }
-    if (volumeMode_ == VolumeMode::Lms && lastLmsPct_ > 0.0) {
-        raop_->setVolume(lastLmsPct_);
-        log::info("[ap] volume {:.1f} pct applied (remembered lms slider)", lastLmsPct_);
-    } else {
-        raop_->setVolume(static_cast<double>(fixedVolumePct_));
-        log::info("[ap] fixed volume {} pct applied (post-start)", fixedVolumePct_);
-    }
+    log::info("[ap] volume {:.1f} pct applied (post-start)", pct);
+    output_->launch(pct);
 }
 
-void PlayerSession::updateTarget(RaopTarget t) {
-    std::lock_guard<std::mutex> lock(targetMutex_);
-    if (raop_ && raop_->active()) return;  // in-flight audio keeps its setup
-    raopTarget_ = std::move(t);
-}
+void PlayerSession::updateTarget(RaopTarget t) { output_->updateTarget(std::move(t)); }
 
 void PlayerSession::stop() {
-    // Join the stream thread first: it reads raop_ throughout streamLoop,
-    // so the session must outlive it (teardown used to happen first).
+    // Join the stream thread first: it reads output_ throughout streamLoop, so
+    // the session must outlive it.
     stopPlayback();
-    {
-        std::lock_guard<std::mutex> lock(targetMutex_);
-        if (raop_) {
-            raop_->stop();
-            raop_.reset();
-        }
-    }
+    output_->stop(false);
     if (client_) client_->stop();
 }
 
@@ -258,7 +195,6 @@ StreamStats PlayerSession::currentStats() {
 void PlayerSession::startStream(const StrmStart& st) {
     stopPlayback();
     flushed_.store(false);
-    deviceLost_.store(false);
     retryUsed_.store(false);
     lastTitle_.clear();
 
@@ -346,21 +282,16 @@ void PlayerSession::streamLoop(std::stop_token st) {
             return;
         }
     }
-    std::optional<RaopTarget> target;
-    {
-        std::lock_guard<std::mutex> lock(targetMutex_);
-        target = raopTarget_;
-    }
-    const bool haveTarget = target && target->port;
+    const bool haveTarget = output_->hasTarget();
     if (haveTarget) {
-        if (!prepareAirplaySession(fmt.sampleRate)) {
+        if (!output_->prepare(fmt.sampleRate)) {
             log::error("[ap] cannot start airplay session for {}", name_);
             client_->sendStat("STMn", currentStats());
             if (sink) sink->close();
             return;
         }
-        // (input rate is applied inside prepareAirplaySession; the only later
-        // setInputRate is feedStream's mid-stream format-adoption update)
+        // (input rate is applied inside prepare(); the only later setInputRate
+        // is feedStream's mid-stream format-adoption update)
         if (fmt.channels != 2)
             log::warn("input is {}-channel; bridges Apple receivers expect stereo", fmt.channels);
     }
@@ -376,11 +307,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
         // (~1.5 s of audio at 44.1 kHz stereo) before the first RTP packet
         // leaves, so playback launches from a deep reserve instead of a sender
         // silence-padding its way into the session.
-        size_t prebufferSamples = 0;
-        if (haveTarget) {
-            std::lock_guard<std::mutex> lock(targetMutex_);
-            prebufferSamples = raop_ ? raop_->bufferCapacity() / 2 : 0;
-        }
+        const size_t prebufferSamples = haveTarget ? output_->capacity() / 2 : 0;
         bool prebuffering = haveTarget && prebufferSamples != 0;
         const uint64_t prebufferStartMs = nowMs();
         if (prebuffering) log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
@@ -389,10 +316,9 @@ void PlayerSession::streamLoop(std::stop_token st) {
         // opposed to a stop request (new track / pause) or a socket error.
         bool reachedEof = false;
 
-        // deviceLost_ doubles as the "receiver died" exit signal set from the
-        // sender's io thread (streamActive_ was removed with the stop_token
-        // conversion; stop requests arrive via st).
-        while (!st.stop_requested() && g_run.load() && !deviceLost_.load()) {
+        // output_->lost() doubles as the "receiver died" exit signal set from
+        // the sender's io thread (stop requests arrive via st).
+        while (!st.stop_requested() && g_run.load() && !output_->lost()) {
             bool paused = false;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -439,11 +365,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
                 }
                 if (!feedStream(st, audio, fmt, sink.get())) break;
                 if (prebuffering) {
-                    size_t avail = 0;
-                    {
-                        std::lock_guard<std::mutex> lock(targetMutex_);
-                        avail = raop_ ? raop_->availableRead() : 0;
-                    }
+                    const size_t avail = output_->queued();
                     if (avail >= prebufferSamples) {
                         log::info("[ap] prebuffered {} samples in {} ms; launching", avail,
                                   nowMs() - prebufferStartMs);
@@ -452,7 +374,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
                     }
                 }
                 // The pacing clock must include the feed cost, not just the
-                // read: pushToRaop/feedRing can block on ring backpressure and
+                // read: the ring push can block on backpressure and
                 // an under-counted clock makes the pacer over-sleep relative
                 // to real elapsed time (ring dips -> receiver silence pads).
                 activeMs += nowMs() - iterStart;
@@ -510,7 +432,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
         // with the decoder drained) reports STMd — LMS advances the queue on
         // "decoder ready" — then STMu once the sender ring has played out.
         const bool keepSession = flushed_.exchange(false);
-        const bool lost = deviceLost_.exchange(false);
+        const bool lost = output_->consumeLost();
         const bool stopping = st.stop_requested() || !g_run.load();
         const ExitAction action = decideExit({stopping, lost, retryUsed_.load(), reachedEof});
         log::debug("stream exit: action={} stopping={} lost={} eof={} flushed={}",
@@ -523,9 +445,8 @@ void PlayerSession::streamLoop(std::stop_token st) {
             retryUsed_.store(true);
             log::info("[ap] receiver session lost; retrying in 2s");
             std::this_thread::sleep_for(std::chrono::seconds(2));
-            if (prepareAirplaySession(fmt.sampleRate)) {
-                if (auto raop = raopSnapshot(); raop && !lastTitle_.empty())
-                    raop->setNowPlaying(lastTitle_, "", "");
+            if (output_->prepare(fmt.sampleRate)) {
+                if (!lastTitle_.empty()) output_->setNowPlaying(lastTitle_, "", "");
                 // The HTTP source stays open across a receiver restart, so loop
                 // back into the read phase (with a fresh prebuffer).
                 log::info("[ap] receiver session re-established; resuming stream");
@@ -544,7 +465,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // Then let the receiver play out the buffered tail before the
             // output underrun (normal end of playback).
             waitForOutputDrain(st);
-            if (!st.stop_requested() && g_run.load() && !deviceLost_.load())
+            if (!st.stop_requested() && g_run.load() && !output_->lost())
                 client_->sendStat("STMu", currentStats());
             break;
         case ExitAction::EndedError:
@@ -555,14 +476,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
 
         // Tear down and leave. A flush transition (keepSession) leaves the
         // AirPlay session running for the next track.
-        {
-            std::lock_guard<std::mutex> lock(targetMutex_);
-            if (!keepSession && raop_) {
-                raop_->discardAudio();
-                raop_->stop();
-                raop_.reset();
-            }
-        }
+        if (!keepSession) output_->stop(false);
         break;
     }
 
@@ -580,28 +494,13 @@ void PlayerSession::streamLoop(std::stop_token st) {
 // final STMu reports the played position.
 void PlayerSession::waitForOutputDrain(std::stop_token st) {
     const uint64_t deadline = nowMs() + 5000;
-    while (!st.stop_requested() && g_run.load() && !deviceLost_.load()) {
-        size_t avail = 0;
-        {
-            std::lock_guard<std::mutex> lock(targetMutex_);
-            if (!raop_) return;
-            avail = raop_->availableRead();
-            queuedSamples_.store(avail, std::memory_order_relaxed);
-        }
+    while (!st.stop_requested() && g_run.load() && !output_->lost()) {
+        const size_t avail = output_->queued();
+        queuedSamples_.store(avail, std::memory_order_relaxed);
         if (avail == 0) return;
         if (nowMs() >= deadline) return;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-}
-
-// The receiver ended the session on its own (e.g. the phone took over the
-// HomePod). Flag it and let the streamLoop's exit path tell LMS (STMd, then
-// STMu) instead of streaming into a dead session. Runs on the sender's
-// io thread: only flag here — the streamLoop does the discard/stop/reset.
-void PlayerSession::onRaopDeviceClosed() {
-    // Runs on the sender's io thread: flag only. The streamLoop decides
-    // between a transparent session retry and reporting to LMS.
-    deviceLost_.store(true);
 }
 
 // ICY in-band metadata block (squeezelite parity): forward the raw
@@ -620,7 +519,7 @@ void PlayerSession::onIcyMeta(std::string_view block) {
     if (title == lastTitle_) return;
     log::info("icy title: {}", title);
     lastTitle_ = title;
-    if (auto raop = raopSnapshot()) raop->setNowPlaying(title, "", "");
+    output_->setNowPlaying(title, "", "");
 }
 
 // One pipeline for every stream format: bytes go through the stream's
@@ -630,10 +529,9 @@ void PlayerSession::onIcyMeta(std::string_view block) {
 bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
                                PcmFileSink* sink, bool toOutput) {
     if (!stage_) return true;
-    // Hold one reference for the whole call: teardown may reset raop_ on
-    // another thread, but the snapshot keeps this player alive and any audio
-    // pushed to a torn-down player is harmless (its ring is discarded).
-    const std::shared_ptr<RaopPlayer> raop = raopSnapshot();
+    const AirplayOutput::Abort abort = [&] {
+        return st.stop_requested() || !g_run.load() || output_->lost();
+    };
     stage_->feed(data);
     for (;;) {
         const std::span<const int16_t> chunk = stage_->nextChunk();
@@ -649,26 +547,24 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
         if (norm.sampleRate != 0 && fmt != norm) {
             fmt = norm;
             elapsedRate_.store(fmt.sampleRate, std::memory_order_relaxed);
-            if (raop) raop->setInputRate(fmt.sampleRate);
+            output_->setInputRate(fmt.sampleRate);
             log::info("[ap] {} audio: {} Hz, {} ch", stage_->name(), fmt.sampleRate, fmt.channels);
         }
         if (!toOutput) continue;  // paused drain: decode, discard
         if (sink) sink->feed(std::as_bytes(chunk), fmt);
-        if (raop) {
-            if (fmt.channels == 1) {
-                // Duplicate each sample in place, walking backwards so the
-                // unread lower-index samples are never overwritten.
-                const size_t frames = chunk.size();
-                pushScratch_.resize(frames * 2);
-                for (size_t i = frames; i-- > 0;) {
-                    const int16_t s = chunk[i];
-                    pushScratch_[2 * i] = s;
-                    pushScratch_[2 * i + 1] = s;
-                }
-                feedRing(*raop, st, pushScratch_);
-            } else {
-                feedRing(*raop, st, chunk);
+        if (fmt.channels == 1) {
+            // Duplicate each sample in place, walking backwards so the unread
+            // lower-index samples are never overwritten.
+            const size_t frames = chunk.size();
+            pushScratch_.resize(frames * 2);
+            for (size_t i = frames; i-- > 0;) {
+                const int16_t s = chunk[i];
+                pushScratch_[2 * i] = s;
+                pushScratch_[2 * i + 1] = s;
             }
+            output_->push(pushScratch_, abort);
+        } else {
+            output_->push(chunk, abort);
         }
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -687,33 +583,10 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
 // so sub-iteration zero-crossings can be missed — the min/max summary still
 // shows the trend and the warn/recover pair catches real starvation.
 void PlayerSession::sampleRingTelemetry() {
-    size_t avail = 0;
-    {
-        std::lock_guard<std::mutex> lock(targetMutex_);
-        if (!raop_) return;
-        avail = raop_->availableRead();
-        queuedSamples_.store(avail, std::memory_order_relaxed);
-    }
-
+    if (!output_->hasPlayer()) return;
+    const size_t avail = output_->queued();
+    queuedSamples_.store(avail, std::memory_order_relaxed);
     if (stage_) stage_->observeOutput(avail, receivedBytes_, nowMs());
-}
-
-void PlayerSession::feedRing(RaopPlayer& raop, std::stop_token st,
-                             std::span<const int16_t> samples) {
-    size_t offset = 0;
-    while (offset < samples.size() && !st.stop_requested() && g_run.load() && !deviceLost_.load()) {
-        size_t freeSpace = raop.availableWrite();
-        if (freeSpace == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
-            continue;
-        }
-        size_t take = std::min(freeSpace, samples.size() - offset);
-        if (!raop.push(std::span<const int16_t>(samples.data() + offset, take))) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
-            continue;
-        }
-        offset += take;
-    }
 }
 
 void PlayerSession::stopPlayback() {
@@ -731,16 +604,6 @@ void PlayerSession::stopPlayback() {
         streamThread_.join();
     }
     reader_.close();
-}
-
-void PlayerSession::teardownReceiverAudio(bool fullStop) {
-    if (!raop_) return;
-    raop_->flush();
-    raop_->discardAudio();
-    if (fullStop) {
-        raop_->stop();
-        raop_.reset();
-    }
 }
 
 }  // namespace squeeze2raop2
