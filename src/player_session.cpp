@@ -507,20 +507,7 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
         }
         if (!toOutput) continue;  // paused drain: decode, discard
         if (sink) sink->feed(std::as_bytes(chunk), fmt);
-        if (fmt.channels == 1) {
-            // Duplicate each sample in place, walking backwards so the unread
-            // lower-index samples are never overwritten.
-            const size_t frames = chunk.size();
-            pushScratch_.resize(frames * 2);
-            for (size_t i = frames; i-- > 0;) {
-                const int16_t s = chunk[i];
-                pushScratch_[2 * i] = s;
-                pushScratch_[2 * i + 1] = s;
-            }
-            output_->push(pushScratch_, abort);
-        } else {
-            output_->push(chunk, abort);
-        }
+        output_->push(chunk, fmt.channels, abort);
         counters_.onFed(chunk.size(), fmt.channels, decoder_->pendingBytes());
     }
     return true;

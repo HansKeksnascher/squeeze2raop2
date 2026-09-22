@@ -103,24 +103,39 @@ void AirplayOutput::setNowPlaying(const std::string& title, const std::string& a
     if (player) player->setNowPlaying(title, artist, album);
 }
 
-bool AirplayOutput::push(std::span<const int16_t> stereo, const Abort& abort) {
+bool AirplayOutput::push(std::span<const int16_t> samples, size_t channels, const Abort& abort) {
     const std::shared_ptr<RaopPlayer> player = snapshot();
     if (!player) return true;
+
+    // The ring is always interleaved stereo: duplicate each mono sample in
+    // place, walking backwards so unread lower-index samples are never
+    // overwritten.
+    if (channels == 1) {
+        const size_t frames = samples.size();
+        monoScratch_.resize(frames * 2);
+        for (size_t i = frames; i-- > 0;) {
+            const int16_t s = samples[i];
+            monoScratch_[2 * i] = s;
+            monoScratch_[2 * i + 1] = s;
+        }
+        samples = std::span<const int16_t>(monoScratch_);
+    }
+
     size_t offset = 0;
-    while (offset < stereo.size() && !abort()) {
+    while (offset < samples.size() && !abort()) {
         const size_t freeSpace = player->availableWrite();
         if (freeSpace == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
             continue;
         }
-        const size_t take = std::min(freeSpace, stereo.size() - offset);
-        if (!player->push(stereo.subspan(offset, take))) {
+        const size_t take = std::min(freeSpace, samples.size() - offset);
+        if (!player->push(samples.subspan(offset, take))) {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
             continue;
         }
         offset += take;
     }
-    return offset == stereo.size();
+    return offset == samples.size();
 }
 
 size_t AirplayOutput::queued() const {

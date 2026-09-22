@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace squeeze2raop2 {
 
@@ -59,7 +60,10 @@ public:
                        const std::string& album);
 
     // Blocking ring push with backpressure; returns false if aborted early.
-    bool push(std::span<const int16_t> stereo, const Abort& abort);
+    // `samples` is native s16 in `channels` channels; the ring is always
+    // interleaved stereo, so mono is duplicated internally. Stream-thread
+    // only (it may reuse an internal scratch buffer).
+    bool push(std::span<const int16_t> samples, size_t channels, const Abort& abort);
     size_t queued() const;    // ring occupancy in samples
     size_t capacity() const;  // ring capacity in samples
 
@@ -85,6 +89,8 @@ private:
     mutable std::mutex mutex_;  // guards player_/target_/credSink_
     std::shared_ptr<RaopPlayer> player_;
     std::atomic<bool> lost_{false};
+    // Mono->stereo expansion scratch (push() only; stream-thread owned).
+    std::vector<int16_t> monoScratch_;
 };
 
 }  // namespace squeeze2raop2
