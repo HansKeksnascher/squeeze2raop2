@@ -2,8 +2,9 @@
 
 #include "airplay_output.h"
 #include "config.h"
-#include "decode_stage.h"
+#include "decoder/decoder.h"
 #include "lms_stream.h"
+#include "ring_telemetry.h"
 #include "slimproto.h"
 #include "volume_map.h"
 
@@ -48,9 +49,9 @@ struct ExitInputs {
 }
 
 // One LMS player <-> AirPlay receiver pairing: a SlimProtoClient (control
-// connection to LMS) plus, per stream, an HTTP reader, a DecodeStage and an
+// connection to LMS) plus, per stream, an HTTP reader, a Decoder and an
 // AirplayOutput (sender + ring). This class is the policy/coordinator; the
-// mechanisms live in the two modules. Event callbacks run on the
+// mechanisms live in the modules. Event callbacks run on the
 // SlimProtoClient's reader thread; audio pumping runs on streamThread_.
 class PlayerSession {
 public:
@@ -103,9 +104,9 @@ private:
     std::jthread streamThread_;
     bool autostartPending_ = false;
 
-    // The stream's decode stage (mp3/pcm); null while no stream runs. Owns
-    // the decoder plus the stream-thread-only telemetry/rate-regulator state.
-    std::unique_ptr<DecodeStage> stage_;
+    // The stream's decoder (mp3/pcm); null while no stream runs. Owns the
+    // chunk buffer plus the stream-thread-only rate-regulator state.
+    std::unique_ptr<Decoder> decoder_;
     // Scratch for the mono->stereo expansion (stream thread only); reused so
     // the audio path stops allocating per chunk.
     std::vector<int16_t> pushScratch_;
@@ -118,6 +119,8 @@ private:
     uint64_t receivedBytes_ = 0;
     uint64_t fedBytes_ = 0;
     uint64_t fedSamples_ = 0;
+    // Ring-health telemetry (stream-thread only); reset per stream.
+    RingTelemetry ringTelemetry_;
 
     // The live AirPlay connection: sender, ring, target/credentials and the
     // volume/metadata application (owns its own cross-thread synchronization).

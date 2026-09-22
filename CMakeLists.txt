@@ -84,7 +84,7 @@ add_library(squeeze2raop2_core STATIC
   src/decoder/decoder.cpp
   src/decoder/mp3_decoder.cpp
   src/decoder/pcm_decoder.cpp
-  src/decode_stage.cpp
+  src/ring_telemetry.cpp
   src/player_session.cpp
   src/session_manager.cpp
 )
@@ -147,10 +147,15 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   squeeze2raop2_target_settings(squeeze2raop2_pcm_tests)
   add_test(NAME pcm_decoder_test COMMAND squeeze2raop2_pcm_tests)
 
-  add_executable(squeeze2raop2_decode_tests test/test_decode_stage.cpp)
-  target_link_libraries(squeeze2raop2_decode_tests PRIVATE squeeze2raop2_core)
-  squeeze2raop2_target_settings(squeeze2raop2_decode_tests)
-  add_test(NAME decode_stage_test COMMAND squeeze2raop2_decode_tests)
+  add_executable(squeeze2raop2_decoder_tests test/test_decoder.cpp)
+  target_link_libraries(squeeze2raop2_decoder_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_decoder_tests)
+  add_test(NAME decoder_test COMMAND squeeze2raop2_decoder_tests)
+
+  add_executable(squeeze2raop2_ring_telemetry_tests test/test_ring_telemetry.cpp)
+  target_link_libraries(squeeze2raop2_ring_telemetry_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_ring_telemetry_tests)
+  add_test(NAME ring_telemetry_test COMMAND squeeze2raop2_ring_telemetry_tests)
 
   add_executable(squeeze2raop2_exit_tests test/test_session_exit.cpp)
   target_link_libraries(squeeze2raop2_exit_tests PRIVATE squeeze2raop2_core)

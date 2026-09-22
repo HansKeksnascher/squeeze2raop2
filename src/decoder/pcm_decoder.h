@@ -45,12 +45,15 @@ public:
     }
     bool valid() const override { return !failed_; }
     bool hasError() const override { return failed_; }
-    // The effective format (container header may override the strm params;
-    // with rate regulation the output clock is the target rate).
-    PcmFormat format() const override { return fmt_; }
     std::string_view name() const override { return "pcm"; }
 
     void setSourceRate(double framesPerSecond) override;
+
+protected:
+    // The effective output format (container header may override the strm
+    // params; with rate regulation the output clock is the target rate).
+    PcmFormat decodedFormat() const override { return fmt_; }
+    bool regulatesRate() const override { return outRate_ != 0; }
 
 private:
     // Returns bytes to skip at the stream head, adopting the container's

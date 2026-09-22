@@ -249,13 +249,14 @@ void PlayerSession::startStream(const StrmStart& st) {
         fedSamples_ = 0;
         pauseUntilMs_ = 0;
         queuedSamples_.store(0, std::memory_order_relaxed);
+        ringTelemetry_ = RingTelemetry{};
         const PcmFormat input = pcmFormat(st.pcm, 44100);
         elapsedRate_.store(input.sampleRate ? input.sampleRate : 44100, std::memory_order_relaxed);
-        // One decode stage per stream format, one feed pipeline for both. PCM
+        // One decoder per stream format, one feed pipeline for both. PCM
         // regulates to the AirPlay output clock (44100) so a source that
         // under-delivers cannot drain the pipeline.
-        stage_ = std::make_unique<DecodeStage>(st.format, input, 44100);
-        log::info("strm s: {} stream via decoder pipeline", stage_->name());
+        decoder_ = Decoder::create(st.format, input, 44100);
+        log::info("strm s: {} stream via decoder pipeline", decoder_->name());
     }
 
     if (st.autostart >= 2) {
@@ -270,7 +271,7 @@ void PlayerSession::startStream(const StrmStart& st) {
 
 void PlayerSession::streamLoop(std::stop_token st) {
     PcmFormat fmt;
-    if (stage_) fmt = stage_->format();
+    if (decoder_) fmt = decoder_->format();
 
     std::unique_ptr<PcmFileSink> sink;
     if (sinkPath_) {
@@ -388,10 +389,10 @@ void PlayerSession::streamLoop(std::stop_token st) {
             }
 
             if (rr.result == HttpStreamReader::ReadResult::AtEof) {
-                if (stage_) {
+                if (decoder_) {
                     // Decode + emit the remaining tail frames of the stream
                     // (MP3); PCM's finish() is the base no-op.
-                    stage_->finish();
+                    decoder_->finish();
                     feedStream(st, {}, fmt, sink.get());
                 }
                 reachedEof = true;
@@ -404,7 +405,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // measurement, and spiral the step down. LMS paces the source
             // anyway; without regulation (step 1.0) the pacing keeps the
             // baseline read cadence.
-            if (paceRealtime_ && !prebuffering && !(stage_ && stage_->regulating())) {
+            if (paceRealtime_ && !prebuffering && !(decoder_ && decoder_->regulating())) {
                 uint64_t timeline;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
@@ -528,27 +529,28 @@ void PlayerSession::onIcyMeta(std::string_view block) {
 // failed and the stream must abort.
 bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
                                PcmFileSink* sink, bool toOutput) {
-    if (!stage_) return true;
+    if (!decoder_) return true;
     const AirplayOutput::Abort abort = [&] {
         return st.stop_requested() || !g_run.load() || output_->lost();
     };
-    stage_->feed(data);
+    decoder_->feed(data);
     for (;;) {
-        const std::span<const int16_t> chunk = stage_->nextChunk();
+        const std::span<const int16_t> chunk = decoder_->nextChunk();
         if (chunk.empty()) {
-            if (stage_->hasError()) {
-                log::error("{} decode failed; dropping stream", stage_->name());
+            if (decoder_->hasError()) {
+                log::error("{} decode failed; dropping stream", decoder_->name());
                 client_->sendStat("STMn", currentStats());
                 return false;
             }
             break;
         }
-        const PcmFormat norm = stage_->format();
+        const PcmFormat norm = decoder_->format();
         if (norm.sampleRate != 0 && fmt != norm) {
             fmt = norm;
             elapsedRate_.store(fmt.sampleRate, std::memory_order_relaxed);
             output_->setInputRate(fmt.sampleRate);
-            log::info("[ap] {} audio: {} Hz, {} ch", stage_->name(), fmt.sampleRate, fmt.channels);
+            log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
+                      fmt.channels);
         }
         if (!toOutput) continue;  // paused drain: decode, discard
         if (sink) sink->feed(std::as_bytes(chunk), fmt);
@@ -571,7 +573,7 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
             fedSamples_ += chunk.size() / (fmt.channels ? fmt.channels : 2);
             // fedBytes is the consumed prefix; clamp so a decoder backlog
             // larger than what was received cannot underflow the counter.
-            const uint64_t pending = stage_->pendingBytes();
+            const uint64_t pending = decoder_->pendingBytes();
             fedBytes_ = receivedBytes_ > pending ? receivedBytes_ - pending : 0;
         }
     }
@@ -586,7 +588,11 @@ void PlayerSession::sampleRingTelemetry() {
     if (!output_->hasPlayer()) return;
     const size_t avail = output_->queued();
     queuedSamples_.store(avail, std::memory_order_relaxed);
-    if (stage_) stage_->observeOutput(avail, receivedBytes_, nowMs());
+    if (!decoder_) return;
+    // Ring-health summary every 10 s; on the boundary, let the decoder
+    // regulate its source rate to the output clock.
+    if (const auto window = ringTelemetry_.observe(avail, nowMs()))
+        decoder_->regulateRate(receivedBytes_, avail, *window);
 }
 
 void PlayerSession::stopPlayback() {

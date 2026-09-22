@@ -25,7 +25,8 @@ bool tagIs(const std::byte* p, const char (&tag)[5]) { return std::memcmp(p, tag
 
 }  // namespace
 
-PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate) : outRate_(outputRate) {
+PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
+    : Decoder(in), outRate_(outputRate) {
     // Source layouts the reference converts: 16-bit mono/stereo and 24-bit
     // stereo (pcm.c's conversion set). The container header may override
     // rate/channels/size; endian is decided per conversion. Output is

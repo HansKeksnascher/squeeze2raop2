@@ -43,7 +43,7 @@ constexpr size_t kMaxWindow = std::numeric_limits<int>::max();
 static_assert(std::is_trivially_copyable_v<mp3dec_t>);
 }  // namespace
 
-Mp3Decoder::Mp3Decoder() { mp3dec_init(&dec_); }
+Mp3Decoder::Mp3Decoder(const PcmFormat& in) : Decoder(in) { mp3dec_init(&dec_); }
 
 void Mp3Decoder::feed(std::span<const std::byte> data) {
     if (data.empty()) return;

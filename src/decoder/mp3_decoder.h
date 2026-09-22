@@ -31,7 +31,7 @@ namespace squeeze2raop2 {
 // keeps minimp3's frame-chain validation stable while streaming in chunks.
 class Mp3Decoder final : public Decoder {
 public:
-    Mp3Decoder();
+    explicit Mp3Decoder(const PcmFormat& in);
     Mp3Decoder(const Mp3Decoder&) = delete;
     Mp3Decoder& operator=(const Mp3Decoder&) = delete;
 
@@ -45,13 +45,15 @@ public:
     size_t pendingBytes() const override { return buffer_.size() - consumed_; }
     bool valid() const override { return sampleRate_ != 0; }
     bool hasError() const override { return failed_; }
-    PcmFormat format() const override {
+    std::string_view name() const override { return "mp3"; }
+
+protected:
+    PcmFormat decodedFormat() const override {
         return PcmFormat{.sampleRate = sampleRate_,
                          .bitsPerSample = 16,
                          .channels = static_cast<uint8_t>(channels_),
                          .bigEndian = false};
     }
-    std::string_view name() const override { return "mp3"; }
 
 private:
     void decodeMore();

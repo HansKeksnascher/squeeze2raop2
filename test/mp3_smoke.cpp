@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    Mp3Decoder dec;
+    Mp3Decoder dec(squeeze2raop2::PcmFormat{});
     std::vector<int16_t> pcmAll;
     std::vector<uint8_t> buf(4096);
     bool rateWarned = false;
