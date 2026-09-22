@@ -11,6 +11,10 @@ namespace {
 
 fxchain::RaopDeviceInfo::Auth authFor(const RaopTarget& target) {
     if (!target.password.empty()) return fxchain::RaopDeviceInfo::Auth::Password;
+    // Classic RAOP (AP1) receivers (Sonos, legacy AirPlay speakers) do not
+    // speak HAP pair-setup; attempting it gets a 470 and the receiver drops
+    // the connection. Go straight to the RTSP handshake.
+    if (!target.airplay2) return fxchain::RaopDeviceInfo::Auth::None;
     if (!target.storedCreds.empty()) return fxchain::RaopDeviceInfo::Auth::HapPin;
     return fxchain::RaopDeviceInfo::Auth::HapTransient;
 }
