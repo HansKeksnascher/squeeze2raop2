@@ -10,9 +10,18 @@ python3 test/fake_lms.py --tcp-port 3483 --http-port 9000 \
 LMS_PID=$!
 sleep 0.7
 
+cat > "$LOGDIR/dbg.conf" <<EOF
+[global]
+lms = 127.0.0.1
+log = debug
+
+[player "Kitchen"]
+sink = $LOGDIR/dbg.wav
+pace = fast
+EOF
+
 strace -f -e trace=connect,accept4,accept,bind,read,write,poll -o "$LOGDIR/dbg_syscall" \
-    ./build/squeeze2raop2 --lms 127.0.0.1 --name Kitchen --sink "$LOGDIR/dbg.wav" \
-    --pace fast --log debug > "$LOGDIR/dbg_brd.log" 2>&1 &
+    ./build/squeeze2raop2 --config "$LOGDIR/dbg.conf" > "$LOGDIR/dbg_brd.log" 2>&1 &
 BRIDGE_PID=$!
 
 sleep 5

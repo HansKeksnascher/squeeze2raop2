@@ -1,20 +1,31 @@
 #include "app/config.h"
+#include "app/persistence.h"
 #include "common/log.h"
 
 #include <signal.h>
 
+#include <cstdio>
+
 namespace squeeze2raop2 {
-void runBridge(const Settings& settings);
+void runBridge(const Settings& settings, Persistence& persistence);
 }  // namespace squeeze2raop2
 
 int main(int argc, char** argv) {
     using namespace squeeze2raop2;
     int exitCode = 0;
-    auto settings = parseCommandLine(argc, argv, exitCode);
-    if (!settings) return exitCode;
+    auto args = parseArgs(argc, argv, exitCode);
+    if (!args) return exitCode;
 
-    log::setLevel(settings->logLevel);
-    log::info("squeeze2raop2 starting v0.1.0-m1");
+    Persistence persistence;
+    Settings settings;
+    std::string error;
+    if (!persistence.open(args->configPath, settings, error)) {
+        std::fprintf(stderr, "squeeze2raop2: %s\n", error.c_str());
+        return 1;
+    }
+
+    log::setLevel(settings.global.logLevel);
+    log::info("squeeze2raop2 starting v0.1.0-m1 (config {})", persistence.path());
 
     // SA_RESTART matches glibc's signal() default; poll/select still return
     // EINTR (they are never restarted), which the read loops handle.
@@ -24,7 +35,7 @@ int main(int argc, char** argv) {
     sa.sa_flags = SA_RESTART;
     ::sigaction(SIGPIPE, &sa, nullptr);
 
-    runBridge(*settings);
+    runBridge(settings, persistence);
     log::info("bye");
     return 0;
 }

@@ -1,246 +1,111 @@
 #include "app/config.h"
 
 #include "common/log.h"
-#include "common/util.h"
 
-#include <charconv>
-#include <optional>
-#include <system_error>
+#include <cstdio>
 
 namespace squeeze2raop2 {
 
 namespace {
 
-bool requireValue(const std::string& flag, const char* value, std::string& out) {
-    if (!value) {
-        log::error("flag {} requires a value", flag);
-        return false;
-    }
-    out = value;
-    return true;
-}
-
-std::optional<uint16_t> parsePort(const std::string& text) {
-    unsigned port = 0;
-    auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), port);
-    if (ec != std::errc{} || ptr != text.data() + text.size() || port < 1 || port > 65535)
-        return std::nullopt;
-    return static_cast<uint16_t>(port);
+void printHelp() {
+    std::printf(
+        "squeeze2raop2 - Squeezebox to AirPlay 2 bridge\n"
+        "usage: squeeze2raop2 [--config <file>]\n\n"
+        "All settings live in an INI-style config/state file (default\n"
+        "squeeze2raop2.conf in the current directory):\n\n"
+        "  [global]\n"
+        "    lms = <host[:port]>   connect to this LMS (omit for UDP discovery)\n"
+        "    discovery = on|off    spawn sessions for discovered devices\n"
+        "    iface = <name>        mdns network interface (default: all)\n"
+        "    mdns-debug = on|off   browse-only mDNS debug mode\n"
+        "    log = off|error|warn|info|debug\n"
+        "    auto-register = on|off  create sections for discovered devices\n\n"
+        "  [default]               defaults inherited by every [player]\n"
+        "    protocol = ap2|ap1    target platform (default ap2)\n"
+        "    password = <pw>       RTSP digest password for pw=true receivers\n"
+        "    enabled = on|off\n"
+        "    volume = lms|fixed    follow the LMS slider or play at volume-pct\n"
+        "    volume-map = \"<db:pct, ...>\"  LMS slider percent -> AirPlay dBFS\n"
+        "    volume-pct = <N>      AirPlay volume percent 0.5-100\n"
+        "    latency-ms = <N>      scheduled AirPlay latency 250-2000 ms\n"
+        "    sink = <file>         dump stream PCM to file\n"
+        "    pace = realtime|fast  pace sink consumption to play time\n\n"
+        "  [player \"Name\"]         one player; identity/target:\n"
+        "    id = <12-hex>         match key (mDNS device id)\n"
+        "    mac = xx:..:xx        virtual MAC override\n"
+        "    target = <host[:port]>  fixed AirPlay receiver (static player)\n"
+        "    plus any [default] key to override it\n\n"
+        "  -h --help               this text\n");
 }
 
 }  // namespace
 
-std::optional<Settings> parseCommandLine(int argc, char** argv, int& exitCode) {
-    Settings s;
-    PlayerSettings player;
-    player.name = "AirPlay";
+ResolvedPlayerConfig resolvePlayer(const PlayerConfig& defaults, const PlayerConfig& player) {
+    ResolvedPlayerConfig r;
 
+    // Identity/target: player only.
+    r.id = player.id.value_or(std::string());
+    r.name = player.name.value_or(std::string());
+    r.key = !r.id.empty() ? r.id : r.name;
+    if (player.mac) {
+        r.mac = *player.mac;
+        r.explicitMac = true;
+    }
+    if (player.targetHost && !player.targetHost->empty()) {
+        uint16_t port = player.targetPort.value_or(7000);
+        r.target = std::make_pair(*player.targetHost, port);
+    }
+    r.autoRegistered = player.autoSection.value_or(false);
+
+    auto pick = [&](const auto& opt, const auto& fallback, auto dflt) {
+        if (opt) return *opt;
+        if (fallback) return *fallback;
+        return dflt;
+    };
+
+    r.enabled = pick(player.enabled, defaults.enabled, true);
+    r.airplay2 = pick(player.airplay2, defaults.airplay2, true);
+    r.password = pick(player.password, defaults.password, std::string());
+    r.volumeMode = pick(player.volumeMode, defaults.volumeMode, VolumeMode::Lms);
+    r.volumeMap = pick(player.volumeMap, defaults.volumeMap, std::string(kDefaultVolumeMap));
+    r.volPct = pick(player.volPct, defaults.volPct, 0.7f);
+    r.latencyMs = pick(player.latencyMs, defaults.latencyMs, 500);
+    r.paceRealtime = pick(player.paceRealtime, defaults.paceRealtime, true);
+    if (player.sinkPath)
+        r.sinkPath = player.sinkPath;
+    else if (defaults.sinkPath)
+        r.sinkPath = defaults.sinkPath;
+
+    return r;
+}
+
+std::optional<Args> parseArgs(int argc, char** argv, int& exitCode) {
+    Args args;
     exitCode = 0;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        auto value = [&]() -> const char* { return (i + 1 < argc) ? argv[++i] : nullptr; };
-
         if (arg == "-h" || arg == "--help") {
-            std::printf(
-                "squeeze2raop2 - Squeezebox to AirPlay 2 bridge\n"
-                "usage: squeeze2raop2 [options]\n\n"
-                "  --lms <host[:port]>   connect to this LMS (default: UDP discovery on 3483)\n"
-                "  --name <name>         player name (default: AirPlay)\n"
-                "  --mac <xx:..>         player MAC override\n"
-                "  --sink <file>         dump stream PCM to file (M1 test sink)\n"
-                "  --pace realtime|fast  pace sink consumption to play time (default realtime)\n"
-                "  --ap <host[:port]>    AirPlay receiver target (default port 7000)\n"
-                "  --ap-protocol ap2|ap1  AirPlay2 native or classic RAOP\n"
-                "  --ap-password <pw>    RTSP digest password for pw=true receivers\n"
-                "  --device <NAME>       also register this name as static player\n"
-                "                        (used when discovery is unavailable)\n"
-                "  --state <file>        persistent MAC/credential store (default "
-                "squeeze2raop2.state)\n"
-                "  --iface <name>        mdns network interface (default: all)\n"
-                "  --mdns-debug          browse-only mDNS debug mode (no LMS/AirPlay sessions)\n"
-                "  --discovery on|off    spawn sessions for discovered devices (default on)\n"
-                "  --vol-mode lms|fixed  follow the LMS slider through the --vol-map dB\n"
-                "                        anchors (default) or ignore LMS volume and\n"
-                "                        play at --vol-pct\n"
-                "  --vol-map \"<db:pct, ...>\"  LMS slider percent -> AirPlay dBFS\n"
-                "                        anchors, ascending pct 1-100, db <= 0\n"
-                "                        (default \"-30:1, -23:16, -15:50, 0:100\":\n"
-                "                        slider 16 = -23 dB, 50 = -15, 100 = full)\n"
-                "  --vol-pct <N>         AirPlay volume percent 0.5-100 (default 0.7,\n"
-                "                        about -29.8 dB; fixed-mode level and the\n"
-                "                        fallback until LMS pushes the slider)\n"
-                "  --ap-latency-ms <N>   scheduled AirPlay latency 250-2000 ms (default 500;\n"
-                "                        lower = snappier but more dropout-prone)\n"
-                "  --log <level>         off|error|warn|info|debug\n"
-                "  -h --help             this text\n");
+            printHelp();
             return std::nullopt;
         }
-
-        std::string v;
-        if (arg == "--lms") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            auto colon = v.find(':');
-            if (colon != std::string::npos) {
-                auto port = parsePort(v.substr(colon + 1));
-                if (!port) {
-                    log::error("--lms requires a numeric port 1-65535, got '{}'",
-                               v.substr(colon + 1));
-                    return std::nullopt;
-                }
-                s.lmsHost = v.substr(0, colon);
-                s.lmsPort = *port;
-            } else {
-                s.lmsHost = v;
-            }
-        } else if (arg == "--name") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            player.name = v;
-            player.explicitName = true;
-        } else if (arg == "--mac") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (!macFromString(v, player.mac)) {
-                log::error("invalid MAC '{}'", v);
+        if (arg == "--config") {
+            if (i + 1 >= argc) {
+                log::error("--config requires a file path");
+                exitCode = 1;
                 return std::nullopt;
             }
-            player.explicitMac = true;
-        } else if (arg == "--sink") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            s.sinkPath = v;
-        } else if (arg == "--pace") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "fast")
-                s.paceRealtime = false;
-            else if (v == "realtime")
-                s.paceRealtime = true;
-            else {
-                log::error("--pace must be realtime|fast");
-                return std::nullopt;
-            }
-        } else if (arg == "--ap") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            s.ap.enabled = true;
-            auto colon = v.find(':');
-            if (colon != std::string::npos) {
-                auto port = parsePort(v.substr(colon + 1));
-                if (!port) {
-                    log::error("--ap requires a numeric port 1-65535, got '{}'",
-                               v.substr(colon + 1));
-                    return std::nullopt;
-                }
-                s.ap.host = v.substr(0, colon);
-                s.ap.port = *port;
-            } else {
-                s.ap.host = v;
-            }
-        } else if (arg == "--ap-protocol") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "ap1")
-                s.ap.airplay2 = false;
-            else if (v == "ap2")
-                s.ap.airplay2 = true;
-            else {
-                log::error("--ap-protocol must be ap1|ap2");
-                return std::nullopt;
-            }
-        } else if (arg == "--ap-password") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            s.ap.password = v;
-        } else if (arg == "--device") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            s.staticDevices.emplace_back(v, v);
-        } else if (arg == "--state") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            s.statePath = v;
-        } else if (arg == "--iface") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            s.mdnsIface = v;
-        } else if (arg == "--mdns-debug") {
-            s.mdnsDebug = true;
-        } else if (arg == "--discovery") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "on")
-                s.discovery = true;
-            else if (v == "off")
-                s.discovery = false;
-            else {
-                log::error("--discovery must be on|off");
-                return std::nullopt;
-            }
-        } else if (arg == "--vol-mode") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "lms")
-                s.volumeMode = VolumeMode::Lms;
-            else if (v == "fixed")
-                s.volumeMode = VolumeMode::Fixed;
-            else {
-                log::error("--vol-mode must be lms|fixed");
-                return std::nullopt;
-            }
-        } else if (arg == "--vol-map") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (!VolumeAnchors::parse(v)) {
-                log::error(
-                    "--vol-map needs \"db:pct, ...\" pairs, ascending "
-                    "pct 1-100, db <= 0");
-                return std::nullopt;
-            }
-            s.volumeMap = v;
-        } else if (arg == "--vol-pct") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            // from_chars (not stof) so the parse is locale-independent and
-            // cannot throw.
-            float parsed = 0.0f;
-            const auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), parsed);
-            if (ec != std::errc{} || ptr != v.data() + v.size()) {
-                log::error("--vol-pct must be a number, got '{}'", v);
-                return std::nullopt;
-            }
-            s.volPct = parsed;
-            if (s.volPct < 0.5f || s.volPct > 100.f) {
-                log::error("--vol-pct must be 0.5-100 (0 would be mute)");
-                return std::nullopt;
-            }
-        } else if (arg == "--ap-latency-ms") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            int parsed = 0;
-            const auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), parsed);
-            if (ec != std::errc{} || ptr != v.data() + v.size()) {
-                log::error("--ap-latency-ms must be a number, got '{}'", v);
-                return std::nullopt;
-            }
-            s.apLatencyMs = parsed;
-            if (s.apLatencyMs < 250 || s.apLatencyMs > 2000) {
-                log::error(
-                    "--ap-latency-ms must be 250-2000 "
-                    "(receiver latencyMin..Max)");
-                return std::nullopt;
-            }
-        } else if (arg == "--log") {
-            if (!requireValue(arg, value(), v)) return std::nullopt;
-            if (v == "off")
-                s.logLevel = log::Level::Off;
-            else if (v == "error")
-                s.logLevel = log::Level::Error;
-            else if (v == "warn")
-                s.logLevel = log::Level::Warn;
-            else if (v == "info")
-                s.logLevel = log::Level::Info;
-            else if (v == "debug")
-                s.logLevel = log::Level::Debug;
-            else {
-                log::error("--log must be off|error|warn|info|debug");
-                return std::nullopt;
-            }
-        } else {
-            log::error("unknown option {}", arg);
-            return std::nullopt;
+            args.configPath = argv[++i];
+            continue;
         }
+        log::error(
+            "unknown option {} (behavior is configured in the config file; "
+            "use --config <file>)",
+            arg);
+        exitCode = 1;
+        return std::nullopt;
     }
-
-    player.deviceId = player.name;
-    if (!player.explicitMac) player.mac = fakeMacFor(player.deviceId);
-    s.players.push_back(player);
-    return s;
+    return args;
 }
 
 }  // namespace squeeze2raop2

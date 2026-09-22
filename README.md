@@ -19,18 +19,18 @@ pair-verify, encrypted RTSP/RTP) from scratch — and it was written using
 - Registers with LMS as a squeezelite-class player (slimproto: HELO caps,
   STAT semantics, pause/stop/unpause, autostart)
 - Discovers AirPlay receivers via mDNS; prefers AirPlay 2, falls back to
-  classic RAOP (`--ap-protocol ap1`), or targets a fixed receiver (`--ap`)
+  classic RAOP (`protocol = ap1`), or targets a fixed receiver (`target`)
 - Streams LMS audio through the vendored AirPlay 2 sender (pair-verify,
   encrypted control + timing channels, retransmit)
 - Volume: LMS `audg` → slider percent → configurable dB anchors
-  (`--vol-map`) → receiver `SET_PARAMETER volume`, including mute; volume is
+  (`volume-map`) → receiver `SET_PARAMETER volume`, including mute; volume is
   applied mid-stream, remembered across session restarts, and can be pinned
-  (`--vol-mode fixed`, `--vol-pct`)
+  (`volume = fixed`, `volume-pct`)
 - ICY in-band metadata from streams → DMAP now-playing on the receiver,
   pass-through `META` to LMS
 - Clean stop/pause: FLUSH + ring drain so the receiver doesn't keep playing
   its jitter-buffer tail
-- Scheduled latency tuning (`--ap-latency-ms`, default 500 ms)
+- Scheduled latency tuning (`latency-ms`, default 500 ms)
 - Honest codec caps (`pcm,mp3`) so LMS transcodes everything else (FLAC etc.)
   losslessly on the LAN
 
@@ -46,22 +46,42 @@ ctest --test-dir build
 cmake --build build --target raop_core_tests raop_loop_tests
 ```
 
-Example: bridge a HomePod as an LMS player named `Kueche15`:
+Example: bridge a HomePod as an LMS player named `Kueche15`. All behavior lives
+in one INI-style config/state file (default `./squeeze2raop2.conf`); the only
+CLI flag is `--config <file>`.
 
-```sh
-./build/squeeze2raop2 --discovery off --name Kueche15 \
-    --ap 192.168.1.157:7000 --log debug
+```ini
+[global]
+lms       = 192.168.1.10:3483   # omit for UDP discovery on 3483
+discovery = on
+log       = debug
+
+[default]                       # inherited by every player, then overridden
+volume-map = -30:1, -23:16, -15:50, 0:100
+latency-ms = 500
+
+[player "Kueche15"]
+id     = 542a1b5cc9e2            # optional 12-hex mDNS device id
+mac    = aa:22:53:7d:3c:01       # virtual MAC (assigned if omitted)
+target = 192.168.1.157:7000      # fixed receiver => static player
 ```
 
-Key options: `--ap <host[:port]>` (receiver target), `--name`, `--mac`,
-`--state`, `--iface`, `--vol-map "<db:pct, ...>"`, `--vol-mode lms|fixed`,
-`--vol-pct`, `--ap-latency-ms 250-2000`, `--log`. Run `-h` for the full list.
+```sh
+./build/squeeze2raop2 --config squeeze2raop2.conf
+```
+
+A section spawns at startup when it is user-authored; discovered devices are
+matched by `id`, then virtual `mac`, then name, and (with
+`auto-register = on`) get an `auto = true` section so their MAC and pairing
+credentials persist. The program rewrites only the machine-managed `mac` and
+`creds` keys, preserving your comments and layout. A legacy
+`squeeze2raop2.state` is imported automatically on first run.
 
 ## The volume chain
 
 LMS encodes the slider as a 16.16 linear gain in `audg`; the bridge inverts
 LMS's dB curve to recover the slider percent, maps it through the
-`--vol-map` piecewise-linear dB anchors (default `-30:1, -23:16, -15:50,
+`volume-map` piecewise-linear dB anchors (default `-30:1, -23:16, -15:50,
 0:100`, i.e. slider 16 = −23 dB, 50 = −15 dB, 100 = full scale, 0 = mute),
 and pushes the result as `SET_PARAMETER volume`. The AirPlay protocol floor
 is −30 dBFS with −144 as the mute sentinel; the anchors keep the quiet end

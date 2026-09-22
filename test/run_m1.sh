@@ -10,8 +10,19 @@ python3 test/fake_lms.py --tcp-port 3483 --http-port 9000 \
     --stop-after-sec "${STOP_AFTER:-0}" > "$LOGDIR/m1_lms.log" 2>&1 &
 LMS_PID=$!
 sleep 0.7
-./build/squeeze2raop2 --lms 127.0.0.1 --discovery off --name Kitchen --sink "$LOGDIR/kitchen_test.wav" \
-    --pace "${PACE:-fast}" --log ${BRIDGE_LOG:-info} > "$LOGDIR/m1_bridge.log" 2>&1 &
+
+cat > "$LOGDIR/m1.conf" <<EOF
+[global]
+lms = 127.0.0.1
+discovery = off
+log = ${BRIDGE_LOG:-info}
+
+[player "Kitchen"]
+sink = $LOGDIR/kitchen_test.wav
+pace = ${PACE:-fast}
+EOF
+
+./build/squeeze2raop2 --config "$LOGDIR/m1.conf" > "$LOGDIR/m1_bridge.log" 2>&1 &
 BRIDGE_PID=$!
 
 read -t "${RUN_SECONDS:-6}" -n 1 key || true

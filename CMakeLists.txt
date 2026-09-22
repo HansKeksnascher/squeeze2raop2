@@ -73,7 +73,7 @@ add_library(squeeze2raop2_core STATIC
   src/common/net_util.cpp
   # app
   src/app/config.cpp
-  src/app/state_store.cpp
+  src/app/persistence.cpp
   # discovery
   src/discovery/device_registry.cpp
   src/discovery/mdns_embedded.cpp
@@ -117,10 +117,15 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   squeeze2raop2_target_settings(squeeze2raop2_tests)
   add_test(NAME util_test COMMAND squeeze2raop2_tests)
 
-  add_executable(squeeze2raop2_state_tests test/test_state_store.cpp)
-  target_link_libraries(squeeze2raop2_state_tests PRIVATE squeeze2raop2_core)
-  squeeze2raop2_target_settings(squeeze2raop2_state_tests)
-  add_test(NAME state_store_test COMMAND squeeze2raop2_state_tests)
+  add_executable(squeeze2raop2_config_tests test/test_config.cpp)
+  target_link_libraries(squeeze2raop2_config_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_config_tests)
+  add_test(NAME config_test COMMAND squeeze2raop2_config_tests)
+
+  add_executable(squeeze2raop2_persistence_tests test/test_persistence.cpp)
+  target_link_libraries(squeeze2raop2_persistence_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_persistence_tests)
+  add_test(NAME persistence_test COMMAND squeeze2raop2_persistence_tests)
 
   add_executable(squeeze2raop2_wav_tests test/test_wav_sink.cpp)
   target_link_libraries(squeeze2raop2_wav_tests PRIVATE squeeze2raop2_core)

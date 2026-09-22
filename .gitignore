@@ -3,6 +3,8 @@ out/
 install/
 sqraop2.state
 squeeze2raop2.state
+squeeze2raop2.conf
+*.conf.tmp
 *.wav
 *.raw
 *.log

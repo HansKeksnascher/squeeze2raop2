@@ -6,7 +6,6 @@ set -u
 LOGDIR=${LOGDIR:-/tmp/opencode}
 TRACKS=${TRACKS:-3}
 TRACK_SECONDS=${TRACK_SECONDS:-1}
-BRIDGE_BIN=${BRIDGE_BIN:-./build/squeeze2raop2}
 rm -f "$LOGDIR"/queue_*.log "$LOGDIR"/queue_*.wav
 mkdir -p "$LOGDIR"
 
@@ -15,8 +14,18 @@ python3 test/fake_lms.py --stream-seconds "$TRACK_SECONDS" --queue-tracks "$TRAC
 LMS_PID=$!
 sleep 0.7
 
-"$BRIDGE_BIN" --lms 127.0.0.1 --discovery off --name QueueTest \
-    --sink "$LOGDIR/queue_audio.wav" --pace fast --log info \
+cat > "$LOGDIR/queue.conf" <<EOF
+[global]
+lms = 127.0.0.1
+discovery = off
+log = info
+
+[player "QueueTest"]
+sink = $LOGDIR/queue_audio.wav
+pace = fast
+EOF
+
+./build/squeeze2raop2 --config "$LOGDIR/queue.conf" \
     > "$LOGDIR/queue_bridge.log" 2>&1 &
 BRIDGE_PID=$!
 

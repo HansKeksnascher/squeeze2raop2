@@ -1,7 +1,7 @@
 #include "playback/session_manager.h"
 
-#include "common/log.h"
 #include "airplay/raop_types.h"
+#include "common/log.h"
 #include "common/util.h"
 
 #include <optional>
@@ -9,91 +9,104 @@
 
 namespace squeeze2raop2 {
 
-namespace {
+SessionManager::SessionManager(const Settings& settings, Persistence& persistence)
+    : settings_(settings), persistence_(persistence) {}
 
-// parseCommandLine already validated the spec; the fallback keeps programmatic
-// Settings safe. Done explicitly rather than with value_or(), which would
-// evaluate (and dereference) the default even when the parsed value exists.
-VolumeAnchors anchorsFrom(const std::string& spec) {
-    if (auto parsed = VolumeAnchors::parse(spec)) return *parsed;
-    log::warn("volume map '{}' invalid; using default", spec);
+VolumeAnchors SessionManager::anchorsFor(const ResolvedPlayerConfig& cfg) const {
+    // The loader already validated the spec; the fallback keeps programmatic
+    // configs safe.
+    if (auto parsed = VolumeAnchors::parse(cfg.volumeMap)) return *parsed;
+    log::warn("volume map '{}' invalid; using default", cfg.volumeMap);
     if (auto fallback = VolumeAnchors::parse(kDefaultVolumeMap)) return *fallback;
     return VolumeAnchors{};
 }
 
-}  // namespace
-
-SessionManager::SessionManager(const Settings& settings, StateStore& store)
-    : settings_(settings), store_(store), anchors_(anchorsFrom(settings.volumeMap)) {}
-
 void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevice& dev) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto makeTarget = [&](const std::string& host, uint16_t port, bool airplay2) {
+
+    auto makeTarget = [&](const std::string& host, uint16_t port, bool airplay2,
+                          const ResolvedPlayerConfig& cfg) {
         RaopTarget t;
         t.host = host;
         t.port = port;
         t.airplay2 = airplay2;
-        t.password = settings_.ap.password;
-        t.storedCreds = store_.credsFor(dev.id).value_or(std::string());
+        t.password = cfg.password;
+        t.storedCreds = persistence_.credsFor(cfg.key).value_or(std::string());
         return t;
     };
+
     if (ev == DeviceRegistry::Event::Removed) {
-        auto it = sessions_.find(dev.id);
+        auto resolved = persistence_.resolve(dev.id, dev.name, /*autoRegister=*/false);
+        if (!resolved) return;
+        auto it = sessions_.find(resolved->key);
         if (it == sessions_.end()) return;
         log::info("session closed: {} ({})", dev.name, dev.id);
         it->second.reset();  // ~PlayerSession stops client + stream
         sessions_.erase(it);
         return;
     }
+
     if (ev == DeviceRegistry::Event::Updated) {
-        auto it = sessions_.find(dev.id);
+        auto resolved = persistence_.resolve(dev.id, dev.name, /*autoRegister=*/false);
+        if (!resolved) return;
+        auto it = sessions_.find(resolved->key);
         if (it == sessions_.end()) return;
+        // A user-pinned target wins over the dynamically discovered one.
+        if (resolved->target) return;
         if (!dev.host.empty() && (dev.hasRaop() || dev.hasAirplay())) {
             RaopTarget t =
                 makeTarget(dev.host,
                            dev.airplay2() ? (dev.airplayPort ? dev.airplayPort : dev.raopPort)
                                           : (dev.raopPort ? dev.raopPort : dev.airplayPort),
-                           dev.airplay2());
+                           dev.airplay2(), *resolved);
             it->second->updateTarget(t);
             if (t.port) log::debug("session target refreshed: {} {}:{}", dev.name, t.host, t.port);
         }
         return;
     }
-    if (ev != DeviceRegistry::Event::Added) return;
-    if (sessions_.count(dev.id)) return;
 
-    bool assigned = false;
-    std::array<uint8_t, 6> mac = store_.macFor(dev.id, assigned);
-    std::optional<std::string> sinkPath;
-    if (settings_.sinkPath) {
-        std::string base = *settings_.sinkPath;
-        size_t dot = base.find_last_of('.');
-        std::string stem = (dot != std::string::npos) ? base.substr(0, dot) : base;
-        std::string ext = (dot != std::string::npos) ? base.substr(dot) : "";
-        sinkPath = stem + "-" + dev.id + ext;
+    if (ev != DeviceRegistry::Event::Added) return;
+
+    auto resolved = persistence_.resolve(dev.id, dev.name, settings_.global.autoRegister);
+    if (!resolved) return;
+    if (!resolved->enabled) {
+        log::info("session skipped: {} (disabled)", dev.name);
+        return;
     }
-    log::info("session created: {} mac={} ({} {}:{}{}{})", dev.name, macToString(mac),
-              dev.airplay2() ? "ap2" : "ap1", dev.host,
-              dev.airplay2() ? dev.airplayPort : dev.raopPort, dev.pw ? " password" : "",
-              assigned ? " new-mac" : "");
+    if (sessions_.count(resolved->key)) return;
+
+    std::optional<std::string> sinkPath;
+    if (resolved->sinkPath) {
+        std::string base = *resolved->sinkPath;
+        const size_t dot = base.find_last_of('.');
+        const std::string stem = (dot != std::string::npos) ? base.substr(0, dot) : base;
+        const std::string ext = (dot != std::string::npos) ? base.substr(dot) : "";
+        sinkPath = stem + "-" + resolved->key + ext;
+    }
 
     std::optional<RaopTarget> raopTarget;
-    if (settings_.ap.enabled)
-        raopTarget = makeTarget(settings_.ap.host, settings_.ap.port, settings_.ap.airplay2);
+    if (resolved->target)
+        raopTarget = makeTarget(resolved->target->first, resolved->target->second,
+                                resolved->airplay2, *resolved);
     else if (!dev.host.empty())
-        raopTarget =
-            makeTarget(dev.host, dev.airplay2() ? dev.airplayPort : dev.raopPort, dev.airplay2());
+        raopTarget = makeTarget(dev.host, dev.airplay2() ? dev.airplayPort : dev.raopPort,
+                                dev.airplay2(), *resolved);
 
+    log::info("session created: {} mac={} ({} {}:{}{})", resolved->name, macToString(resolved->mac),
+              resolved->airplay2 ? "ap2" : "ap1", raopTarget ? raopTarget->host : dev.host,
+              raopTarget ? raopTarget->port : 0, resolved->password.empty() ? "" : " password");
+
+    const std::string key = resolved->key;
     auto session = std::make_unique<PlayerSession>(
-        dev.id, dev.name, mac, settings_.lmsHost, settings_.lmsPort, settings_.paceRealtime,
-        sinkPath, raopTarget,
-        [this, devId = dev.id](const std::string& deviceId, const std::string& creds) {
+        key, resolved->name, resolved->mac, settings_.global.lmsHost, settings_.global.lmsPort,
+        resolved->paceRealtime, sinkPath, raopTarget,
+        [this, key](const std::string& deviceId, const std::string& creds) {
             (void)deviceId;
-            store_.saveCreds(devId, creds);
+            persistence_.saveCreds(key, creds);
         },
-        settings_.volumeMode, anchors_, settings_.volPct, settings_.apLatencyMs);
+        resolved->volumeMode, anchorsFor(*resolved), resolved->volPct, resolved->latencyMs);
     session->start();
-    sessions_[dev.id] = std::move(session);
+    sessions_[key] = std::move(session);
 }
 
 }  // namespace squeeze2raop2
