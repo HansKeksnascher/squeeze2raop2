@@ -2,7 +2,7 @@
 // check the exact emitted bytes (not just round-trips), so the swap logic is
 // validated independently of the host's native byte order.
 
-#include "byte_order.h"
+#include "common/byte_order.h"
 
 #include "check.h"
 

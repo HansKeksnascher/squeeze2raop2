@@ -4,7 +4,7 @@
 // comma, so every receiver parsed as features=0 and was classified AP1.
 
 #include "check.h"
-#include "device_registry.h"
+#include "discovery/device_registry.h"
 
 #include <map>
 #include <string>

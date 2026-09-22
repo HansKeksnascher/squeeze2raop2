@@ -1,7 +1,7 @@
 // Pins the ICY request rewriting (header insertion positions) and the
 // StreamTitle extraction.
 
-#include "icy_meta.h"
+#include "lms/icy_meta.h"
 
 #include "check.h"
 

@@ -3,10 +3,10 @@
 // hand here (not via any production helper) so this stays an independent
 // oracle over the endian reads that moved into byte_order.h.
 
-#include "decoder/pcm_decoder.h"
+#include "playback/decoder/pcm_decoder.h"
 
 #include "check.h"
-#include "slimproto.h"
+#include "lms/slimproto.h"
 
 #include <array>
 #include <cstddef>

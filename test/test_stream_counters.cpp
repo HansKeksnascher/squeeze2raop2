@@ -1,7 +1,7 @@
 // Pins the stream accounting: the fullness clamp, the played-time estimate
 // (fed minus ring-queued) and the adopted output rate.
 
-#include "stream_counters.h"
+#include "playback/stream_counters.h"
 
 #include "check.h"
 

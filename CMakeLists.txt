@@ -67,29 +67,36 @@ target_include_directories(squeeze2raop2_apple_mdns PUBLIC
 target_link_libraries(squeeze2raop2_apple_mdns PRIVATE Threads::Threads)
 
 add_library(squeeze2raop2_core STATIC
-  src/util.cpp
-  src/log.cpp
-  src/net_util.cpp
-  src/config.cpp
-  src/state_store.cpp
-  src/device_registry.cpp
-  src/mdns_embedded.cpp
-  src/raop_player.cpp
-  src/airplay_output.cpp
-  src/volume_map.cpp
-  src/wav_sink.cpp
-  src/lms_stream.cpp
-  src/slimproto.cpp
-  src/slimproto_packets.cpp
-  src/decoder/decoder.cpp
-  src/decoder/mp3_decoder.cpp
-  src/decoder/pcm_decoder.cpp
-  src/ring_telemetry.cpp
-  src/icy_meta.cpp
-  src/stream_counters.cpp
-  src/playback_stream.cpp
-  src/player_session.cpp
-  src/session_manager.cpp
+  # common
+  src/common/util.cpp
+  src/common/log.cpp
+  src/common/net_util.cpp
+  # app
+  src/app/config.cpp
+  src/app/state_store.cpp
+  # discovery
+  src/discovery/device_registry.cpp
+  src/discovery/mdns_embedded.cpp
+  # lms
+  src/lms/lms_stream.cpp
+  src/lms/slimproto.cpp
+  src/lms/slimproto_packets.cpp
+  src/lms/icy_meta.cpp
+  # airplay
+  src/airplay/raop_player.cpp
+  src/airplay/airplay_output.cpp
+  # playback
+  src/playback/volume_map.cpp
+  src/playback/wav_sink.cpp
+  src/playback/ring_telemetry.cpp
+  src/playback/stream_counters.cpp
+  src/playback/playback_stream.cpp
+  src/playback/player_session.cpp
+  src/playback/session_manager.cpp
+  # decoder
+  src/playback/decoder/decoder.cpp
+  src/playback/decoder/mp3_decoder.cpp
+  src/playback/decoder/pcm_decoder.cpp
 )
 target_include_directories(squeeze2raop2_core PUBLIC src third_party/minimp3)
 target_link_libraries(squeeze2raop2_core PUBLIC Threads::Threads squeeze2raop2_apple_mdns)
@@ -99,7 +106,7 @@ if(SQUEEZE2RAOP2_WITH_SENDER)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_SENDER=1)
 endif()
 
-add_executable(squeeze2raop2 src/main.cpp src/bridge.cpp)
+add_executable(squeeze2raop2 src/app/main.cpp src/app/bridge.cpp)
 target_link_libraries(squeeze2raop2 PRIVATE squeeze2raop2_core)
 squeeze2raop2_target_settings(squeeze2raop2)
 

@@ -1,7 +1,7 @@
-#include "slimproto.h"
+#include "lms/slimproto.h"
 
 #include "check.h"
-#include "util.h"
+#include "common/util.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>

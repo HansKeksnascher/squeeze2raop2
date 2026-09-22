@@ -3,10 +3,10 @@
 // regulator. Container-header adoption and normalization are pinned
 // separately in test_pcm_decoder.cpp.
 
-#include "decoder/decoder.h"
+#include "playback/decoder/decoder.h"
 
 #include "check.h"
-#include "slimproto.h"
+#include "lms/slimproto.h"
 
 #include <cstddef>
 #include <cstdint>

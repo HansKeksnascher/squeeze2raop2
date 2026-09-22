@@ -1,7 +1,7 @@
 // Pins the stream loop's ring-health sampler: the 10 s summary boundary and
 // the one warn/recover latch per starvation episode.
 
-#include "ring_telemetry.h"
+#include "playback/ring_telemetry.h"
 
 #include "check.h"
 

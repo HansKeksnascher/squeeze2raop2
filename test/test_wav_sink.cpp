@@ -1,4 +1,4 @@
-#include "wav_sink.h"
+#include "playback/wav_sink.h"
 
 #include "check.h"
 

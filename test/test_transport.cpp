@@ -7,8 +7,8 @@
 //
 // These use loopback sockets only; no external services.
 
-#include "lms_stream.h"
-#include "slimproto.h"
+#include "lms/lms_stream.h"
+#include "lms/slimproto.h"
 
 #include "check.h"
 

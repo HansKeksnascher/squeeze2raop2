@@ -1,7 +1,7 @@
 // Pins the pure stream-exit policy: which STAT/retry the stream loop emits
 // for each combination of stop request, receiver loss and natural end.
 
-#include "player_session.h"
+#include "playback/player_session.h"
 
 #include "check.h"
 

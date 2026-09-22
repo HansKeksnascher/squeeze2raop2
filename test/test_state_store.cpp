@@ -1,7 +1,7 @@
-#include "state_store.h"
+#include "app/state_store.h"
 
 #include "check.h"
-#include "util.h"
+#include "common/util.h"
 
 #include <unistd.h>
 #include <array>

@@ -1,5 +1,5 @@
-#include "slimproto.h"
-#include "util.h"
+#include "lms/slimproto.h"
+#include "common/util.h"
 
 #include <cstdio>
 #include <cstring>
