@@ -87,6 +87,7 @@ add_library(squeeze2raop2_core STATIC
   src/ring_telemetry.cpp
   src/icy_meta.cpp
   src/stream_counters.cpp
+  src/playback_stream.cpp
   src/player_session.cpp
   src/session_manager.cpp
 )

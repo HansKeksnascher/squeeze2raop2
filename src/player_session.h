@@ -2,9 +2,7 @@
 
 #include "airplay_output.h"
 #include "config.h"
-#include "decoder/decoder.h"
-#include "lms_stream.h"
-#include "ring_telemetry.h"
+#include "playback_stream.h"
 #include "slimproto.h"
 #include "stream_counters.h"
 #include "volume_map.h"
@@ -13,18 +11,13 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
 #include <thread>
-#include <vector>
 
 namespace squeeze2raop2 {
-
-class PcmFileSink;
 
 // Why the stream loop ended, and what the exit path should do about it.
 enum class ExitAction : std::uint8_t {
@@ -50,10 +43,11 @@ struct ExitInputs {
 }
 
 // One LMS player <-> AirPlay receiver pairing: a SlimProtoClient (control
-// connection to LMS) plus, per stream, an HTTP reader, a Decoder and an
-// AirplayOutput (sender + ring). This class is the policy/coordinator; the
-// mechanisms live in the modules. Event callbacks run on the
-// SlimProtoClient's reader thread; audio pumping runs on streamThread_.
+// connection to LMS) plus a lazily-created PlaybackStream per track and an
+// AirplayOutput (sender + ring). This class is the player-level policy: the
+// LMS protocol, the volume mapping and the retry/flush exit handling. Event
+// callbacks run on the SlimProtoClient's reader thread; the track pump runs on
+// streamThread_.
 class PlayerSession {
 public:
     PlayerSession(std::string deviceId, std::string name, std::array<uint8_t, 6> mac,
@@ -74,18 +68,6 @@ private:
     void startStream(const StrmStart& st);
     void streamLoop(std::stop_token st);
     void launchAirplaySession();
-    void onIcyMeta(std::string_view block);
-    // One pipeline for every stream format: bytes go through the stream's
-    // Decoder (mp3 decode / pcm normalization), drained in 1152-frame
-    // chunks. Returns false when the decoder failed and the stream must
-    // abort.
-    bool feedStream(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
-                    PcmFileSink* sink, bool toOutput = true);
-    // Ring-occupancy telemetry while streaming: 10 s min/max/cur summary
-    // plus one warn/recover pair per starvation episode (ring sampled on
-    // the stream thread; user pauses are excluded — the ring draining
-    // there is the expected baseline behavior).
-    void sampleRingTelemetry();
     // Blocks (bounded) until the sender ring has played out, so the receiver
     // finishes the track tail before we report the end of playback.
     void waitForOutputDrain(std::stop_token st);
@@ -101,30 +83,22 @@ private:
 
     std::unique_ptr<SlimProtoClient> client_;
 
-    HttpStreamReader reader_;
-    std::jthread streamThread_;
-    bool autostartPending_ = false;
-
-    // The stream's decoder (mp3/pcm); null while no stream runs. Owns the
-    // chunk buffer plus the stream-thread-only rate-regulator state.
-    std::unique_ptr<Decoder> decoder_;
-
-    std::mutex mutex_;
-    uint64_t pauseUntilMs_ = 0;
-    // Ring-health telemetry (stream-thread only); reset per stream.
-    RingTelemetry ringTelemetry_;
-    // Byte/frame accounting + the STAT snapshot (own synchronization).
-    StreamCounters counters_;
-
     // The live AirPlay connection: sender, ring, target/credentials and the
     // volume/metadata application (owns its own cross-thread synchronization).
     std::unique_ptr<AirplayOutput> output_;
+    // Byte/frame accounting + the STAT snapshot (own synchronization); owned
+    // here so the last track's figures survive until the next stream.
+    StreamCounters counters_;
+
+    // The current track's pipeline; replaced per stream, closed by stopPlayback.
+    std::unique_ptr<PlaybackStream> track_;
+    std::jthread streamThread_;
+    std::atomic<bool> autostartPending_{false};
+
     // Session resilience flags (see streamLoop exit handling + callbacks).
     std::atomic<bool> flushed_{false};    // strm f: keep session for next track
     std::atomic<bool> retryUsed_{false};  // one transparent retry per stream
-    // Last ICY title: dedupes the repeated meta blocks some stations send,
-    // and is re-applied to a recreated receiver session after a retry.
-    std::string lastTitle_;
+
     // --vol-pct: fixed-mode level, and in lms mode the pre-AUDG fallback
     // applied to every new session before RECORD (so audio never starts at
     // the receiver's hardware default).
@@ -134,7 +108,7 @@ private:
     // Last LMS slider percent seen via AUDG (lms mode); 0 = none. Re-applied
     // by launchAirplaySession() on session recreation. Mute pushes (0) are not
     // stored, so LMS's end-of-fade zero gain can't mute the next session.
-    double lastLmsPct_ = 0.0;
+    std::atomic<double> lastLmsPct_{0.0};
 };
 
 }  // namespace squeeze2raop2
