@@ -1,5 +1,6 @@
 #include "player_session.h"
 
+#include "icy_meta.h"
 #include "log.h"
 #include "net_util.h"
 #include "shutdown_flag.h"
@@ -220,19 +221,8 @@ void PlayerSession::startStream(const StrmStart& st) {
     std::string error;
     // Ask for in-band ICY metadata on LMS-proxied streams (the embedded
     // request is bare): LMS's /stream.mp3 only interleaves StreamTitle
-    // blocks when the client sends Icy-MetaData: 1 — the same request
-    // LMS itself makes to remote servers (Protocols/HTTP.pm requestString).
-    std::string request = st.request;
-    if (request.find("Icy-MetaData") == std::string::npos) {
-        const std::string hdr = "Icy-MetaData: 1\r\n";
-        const auto end = request.find("\r\n\r\n");
-        if (end != std::string::npos)
-            request.insert(end + 2, hdr);
-        else
-            request += (request.size() >= 2 && request.compare(request.size() - 2, 2, "\r\n") == 0)
-                           ? hdr
-                           : "\r\n" + hdr;
-    }
+    // blocks when the client sends Icy-MetaData: 1.
+    std::string request = withIcyRequestHeader(st.request);
     if (!reader_.openBlocking(host, port, request, error)) {
         log::error("stream connect {}:{} failed: {}", host, port, error);
         client_->sendStat("STMn", currentStats());
@@ -508,19 +498,14 @@ void PlayerSession::waitForOutputDrain(std::stop_token st) {
 // chunk to LMS and push the StreamTitle to the AirPlay receiver.
 void PlayerSession::onIcyMeta(std::string_view block) {
     client_->sendMeta(block);
-    constexpr std::string_view key = "StreamTitle='";
-    const auto p = block.find(key);
-    if (p == std::string_view::npos) return;
-    const auto e = block.find('\'', p + key.size());
-    if (e == std::string_view::npos) return;
-    const std::string title(block.substr(p + key.size(), e - p - key.size()));
-    if (title.empty()) return;
+    const std::optional<std::string> title = parseStreamTitle(block);
+    if (!title) return;
     // Some stations repeat the identical block every meta interval (~5/s);
     // only log and push on an actual change.
-    if (title == lastTitle_) return;
-    log::info("icy title: {}", title);
-    lastTitle_ = title;
-    output_->setNowPlaying(title, "", "");
+    if (*title == lastTitle_) return;
+    log::info("icy title: {}", *title);
+    lastTitle_ = *title;
+    output_->setNowPlaying(*title, "", "");
 }
 
 // One pipeline for every stream format: bytes go through the stream's
