@@ -235,14 +235,19 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (len < 22) return;
             if (!r.skip(13)) return;
             const uint32_t ts = *r.u32();
-            sendStat("STMt", {}, ts);
+            // Reply with the real stats (squeezelite parity): a zeroed reply
+            // makes LMS's progress display drop to 0 until the next heartbeat
+            // and clobbers the cached lastStats() used by later replies.
+            sendStat("STMt", statsProvider_ ? statsProvider_() : StreamStats{}, ts);
             lastHeartbeatMs_ = nowMs();
             break;
         }
         case 'q':
+            log::debug("strm q (stop)");
             if (events_.onStop) events_.onStop();
             break;
         case 'f':
+            log::debug("strm f (flush)");
             if (events_.onFlush) events_.onFlush(true);
             sendStat("STMf", lastStats());
             break;
@@ -250,6 +255,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (len < 22) return;
             if (!r.skip(13)) return;
             const uint32_t ms = *r.u32();
+            log::debug("strm p (pause, interval={})", ms);
             if (events_.onPause) events_.onPause(ms);
             if (!ms) sendStat("STMp", lastStats());
             break;
@@ -258,6 +264,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (len < 22) return;
             if (!r.skip(13)) return;
             const uint32_t ms = *r.u32();
+            log::debug("strm a (skip ahead, interval={})", ms);
             if (events_.onSkipAhead) events_.onSkipAhead(ms);
             break;
         }
@@ -265,6 +272,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (len < 22) return;
             if (!r.skip(13)) return;
             const uint32_t jiffies = *r.u32();
+            log::debug("strm u (unpause, jiffies={})", jiffies);
             if (events_.onUnpause) events_.onUnpause(jiffies);
             sendStat("STMr", lastStats());
             break;

@@ -86,7 +86,8 @@ void PlayerSession::start() {
             teardownReceiverAudio(false);
         }
         log::debug("pause {}", ms);
-        client_->sendStat("STMp", currentStats());
+        // STMp is sent by the slimproto 'p' handler (squeezelite parity);
+        // sending it here too duplicates the event.
     };
     events.onUnpause = [this](uint32_t) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -422,8 +423,13 @@ void PlayerSession::streamLoop(std::stop_token st) {
                 // backpressures the LMS proxy, and LMS un-pauses the stream
                 // itself within seconds (observed ~5 s, with a volume fade
                 // up) when its writer stalls. Keep reading + decoding and
-                // discard the PCM; the sender's timeline runs on silence,
-                // so an unpause resumes with fresh live audio.
+                // discard the PCM (toOutput=false also skips the elapsed
+                // accounting, so progress stays frozen). Discarding is what
+                // keeps a resumed *live* stream live: a retained backlog
+                // would replay stale audio after a long pause. The sender's
+                // timeline runs on silence, so unpause resumes seamlessly.
+                // (This relies on the STAT heartbeat carrying the real byte
+                // count; a zeroed reply makes LMS close the stream.)
                 auto rr = reader_.read(std::span{buf}, 20);
                 if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
                     if (!feedStream(st, std::as_bytes(std::span{buf}).first(rr.bytes), fmt, nullptr,
