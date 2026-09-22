@@ -151,6 +151,11 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   squeeze2raop2_target_settings(squeeze2raop2_decode_tests)
   add_test(NAME decode_stage_test COMMAND squeeze2raop2_decode_tests)
 
+  add_executable(squeeze2raop2_exit_tests test/test_session_exit.cpp)
+  target_link_libraries(squeeze2raop2_exit_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_exit_tests)
+  add_test(NAME session_exit_test COMMAND squeeze2raop2_exit_tests)
+
   add_executable(mp3_smoke test/mp3_smoke.cpp)
   target_link_libraries(mp3_smoke PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(mp3_smoke)
