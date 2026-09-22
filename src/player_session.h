@@ -6,6 +6,7 @@
 #include "lms_stream.h"
 #include "ring_telemetry.h"
 #include "slimproto.h"
+#include "stream_counters.h"
 #include "volume_map.h"
 
 #include <array>
@@ -110,17 +111,13 @@ private:
     // Scratch for the mono->stereo expansion (stream thread only); reused so
     // the audio path stops allocating per chunk.
     std::vector<int16_t> pushScratch_;
-    // Adopted output rate for the elapsed-time STAT field, updated by the
-    // stream thread when the decoder adopts a format (read by currentStats).
-    std::atomic<uint32_t> elapsedRate_{44100};
 
     std::mutex mutex_;
     uint64_t pauseUntilMs_ = 0;
-    uint64_t receivedBytes_ = 0;
-    uint64_t fedBytes_ = 0;
-    uint64_t fedSamples_ = 0;
     // Ring-health telemetry (stream-thread only); reset per stream.
     RingTelemetry ringTelemetry_;
+    // Byte/frame accounting + the STAT snapshot (own synchronization).
+    StreamCounters counters_;
 
     // The live AirPlay connection: sender, ring, target/credentials and the
     // volume/metadata application (owns its own cross-thread synchronization).
@@ -128,9 +125,6 @@ private:
     // Session resilience flags (see streamLoop exit handling + callbacks).
     std::atomic<bool> flushed_{false};    // strm f: keep session for next track
     std::atomic<bool> retryUsed_{false};  // one transparent retry per stream
-    // Interleaved samples still queued in the sender ring, sampled by the
-    // stream thread; currentStats() subtracts them to report played time.
-    std::atomic<size_t> queuedSamples_{0};
     // Last ICY title: dedupes the repeated meta blocks some stations send,
     // and is re-applied to a recreated receiver session after a retry.
     std::string lastTitle_;

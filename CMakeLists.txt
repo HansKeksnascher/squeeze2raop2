@@ -86,6 +86,7 @@ add_library(squeeze2raop2_core STATIC
   src/decoder/pcm_decoder.cpp
   src/ring_telemetry.cpp
   src/icy_meta.cpp
+  src/stream_counters.cpp
   src/player_session.cpp
   src/session_manager.cpp
 )
@@ -162,6 +163,11 @@ if(SQUEEZE2RAOP2_BUILD_TESTS)
   target_link_libraries(squeeze2raop2_icy_tests PRIVATE squeeze2raop2_core)
   squeeze2raop2_target_settings(squeeze2raop2_icy_tests)
   add_test(NAME icy_meta_test COMMAND squeeze2raop2_icy_tests)
+
+  add_executable(squeeze2raop2_counters_tests test/test_stream_counters.cpp)
+  target_link_libraries(squeeze2raop2_counters_tests PRIVATE squeeze2raop2_core)
+  squeeze2raop2_target_settings(squeeze2raop2_counters_tests)
+  add_test(NAME stream_counters_test COMMAND squeeze2raop2_counters_tests)
 
   add_executable(squeeze2raop2_exit_tests test/test_session_exit.cpp)
   target_link_libraries(squeeze2raop2_exit_tests PRIVATE squeeze2raop2_core)

@@ -170,28 +170,7 @@ void PlayerSession::stop() {
     if (client_) client_->stop();
 }
 
-StreamStats PlayerSession::currentStats() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    StreamStats st;
-    st.streamBufferSize = 1 << 20;
-    st.streamBufferFullness = static_cast<uint32_t>(
-        std::max<int64_t>(0, static_cast<int64_t>(receivedBytes_ - fedBytes_)));
-    st.bytesReceived = receivedBytes_;
-    st.outputBufferSize = 0;
-    st.outputBufferFullness = 0;
-    const uint32_t rate = elapsedRate_.load(std::memory_order_relaxed);
-    // Report played time, not decoded time: the pipeline decodes ahead into
-    // the sender ring, so fedSamples_ leads the receiver by up to the ring
-    // occupancy (~1.5 s). LMS derives the progress display from this value,
-    // and a decoded-ahead figure makes it run ahead and jump at track end
-    // (squeezelite reports frames_played the same way). queuedSamples_ is
-    // refreshed by the stream thread's telemetry; subtract the frames still
-    // queued to approximate the played position.
-    const uint64_t queuedFrames = queuedSamples_.load(std::memory_order_relaxed) / 2;
-    const uint64_t playedFrames = fedSamples_ > queuedFrames ? fedSamples_ - queuedFrames : 0;
-    st.elapsedMs = static_cast<uint32_t>(playedFrames * 1000ULL / rate);
-    return st;
-}
+StreamStats PlayerSession::currentStats() { return counters_.stats(); }
 
 void PlayerSession::startStream(const StrmStart& st) {
     stopPlayback();
@@ -234,20 +213,16 @@ void PlayerSession::startStream(const StrmStart& st) {
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        receivedBytes_ = 0;
-        fedBytes_ = 0;
-        fedSamples_ = 0;
         pauseUntilMs_ = 0;
-        queuedSamples_.store(0, std::memory_order_relaxed);
-        ringTelemetry_ = RingTelemetry{};
-        const PcmFormat input = pcmFormat(st.pcm, 44100);
-        elapsedRate_.store(input.sampleRate ? input.sampleRate : 44100, std::memory_order_relaxed);
-        // One decoder per stream format, one feed pipeline for both. PCM
-        // regulates to the AirPlay output clock (44100) so a source that
-        // under-delivers cannot drain the pipeline.
-        decoder_ = Decoder::create(st.format, input, 44100);
-        log::info("strm s: {} stream via decoder pipeline", decoder_->name());
     }
+    ringTelemetry_ = RingTelemetry{};
+    const PcmFormat input = pcmFormat(st.pcm, 44100);
+    counters_.reset(input.sampleRate);
+    // One decoder per stream format, one feed pipeline for both. PCM
+    // regulates to the AirPlay output clock (44100) so a source that
+    // under-delivers cannot drain the pipeline.
+    decoder_ = Decoder::create(st.format, input, 44100);
+    log::info("strm s: {} stream via decoder pipeline", decoder_->name());
 
     if (st.autostart >= 2) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -350,10 +325,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
 
             if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
                 const auto audio = std::as_bytes(std::span{buf}).first(rr.bytes);
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    receivedBytes_ += rr.bytes;
-                }
+                counters_.onReceived(rr.bytes);
                 if (!feedStream(st, audio, fmt, sink.get())) break;
                 if (prebuffering) {
                     const size_t avail = output_->queued();
@@ -396,11 +368,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
             // anyway; without regulation (step 1.0) the pacing keeps the
             // baseline read cadence.
             if (paceRealtime_ && !prebuffering && !(decoder_ && decoder_->regulating())) {
-                uint64_t timeline;
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    timeline = fedSamples_ * 1000ULL / fmt.sampleRate;
-                }
+                const uint64_t timeline = counters_.fedSamples() * 1000ULL / fmt.sampleRate;
                 // Pace reads to playback time with a lead: keeps the sender's
                 // ring fed without running far ahead of the wire. The lead is
                 // the pass-through path's only jitter headroom (44.1 kHz PCM
@@ -474,20 +442,20 @@ void PlayerSession::streamLoop(std::stop_token st) {
     if (sink) sink->close();
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        log::info("stream ended, received={} bytes", receivedBytes_);
+        log::info("stream ended, received={} bytes", counters_.bytesReceived());
     }
 }
 
 // Play out the sender ring before reporting the end of playback: the decoder
 // can complete well before the receiver has consumed the buffered tail, so
 // STMu must wait for the ring to empty (bounded, and abortable by a stop
-// request from a new track or shutdown). Keeps queuedSamples_ current so the
+// request from a new track or shutdown). Keeps the ring occupancy current so
 // final STMu reports the played position.
 void PlayerSession::waitForOutputDrain(std::stop_token st) {
     const uint64_t deadline = nowMs() + 5000;
     while (!st.stop_requested() && g_run.load() && !output_->lost()) {
         const size_t avail = output_->queued();
-        queuedSamples_.store(avail, std::memory_order_relaxed);
+        counters_.setQueued(avail);
         if (avail == 0) return;
         if (nowMs() >= deadline) return;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -532,7 +500,7 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
         const PcmFormat norm = decoder_->format();
         if (norm.sampleRate != 0 && fmt != norm) {
             fmt = norm;
-            elapsedRate_.store(fmt.sampleRate, std::memory_order_relaxed);
+            counters_.setOutputRate(fmt.sampleRate);
             output_->setInputRate(fmt.sampleRate);
             log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
                       fmt.channels);
@@ -553,14 +521,7 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
         } else {
             output_->push(chunk, abort);
         }
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            fedSamples_ += chunk.size() / (fmt.channels ? fmt.channels : 2);
-            // fedBytes is the consumed prefix; clamp so a decoder backlog
-            // larger than what was received cannot underflow the counter.
-            const uint64_t pending = decoder_->pendingBytes();
-            fedBytes_ = receivedBytes_ > pending ? receivedBytes_ - pending : 0;
-        }
+        counters_.onFed(chunk.size(), fmt.channels, decoder_->pendingBytes());
     }
     return true;
 }
@@ -572,12 +533,12 @@ bool PlayerSession::feedStream(std::stop_token st, std::span<const std::byte> da
 void PlayerSession::sampleRingTelemetry() {
     if (!output_->hasPlayer()) return;
     const size_t avail = output_->queued();
-    queuedSamples_.store(avail, std::memory_order_relaxed);
+    counters_.setQueued(avail);
     if (!decoder_) return;
     // Ring-health summary every 10 s; on the boundary, let the decoder
     // regulate its source rate to the output clock.
     if (const auto window = ringTelemetry_.observe(avail, nowMs()))
-        decoder_->regulateRate(receivedBytes_, avail, *window);
+        decoder_->regulateRate(counters_.bytesReceived(), avail, *window);
 }
 
 void PlayerSession::stopPlayback() {
