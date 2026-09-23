@@ -182,8 +182,7 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer, uint
             ssize_t n = pullRaw(std::span{tmp}.first(want), timeout);
             if (n < 0) {
                 outcome = (n == -2) ? ReadResult::AtEof : ReadResult::Closed;
-                if (produced) break;
-                return {outcome};
+                break;
             }
             if (n == 0) break;
             metaBuf_.append(tmp, static_cast<size_t>(n));
@@ -200,8 +199,7 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer, uint
             const ssize_t n = pullRaw(std::span{&lenByte, 1}, timeout);
             if (n < 0) {
                 outcome = (n == -2) ? ReadResult::AtEof : ReadResult::Closed;
-                if (produced) break;
-                return {outcome};
+                break;
             }
             if (n == 0) break;
             metaBytesLeft_ = static_cast<uint32_t>(static_cast<unsigned char>(lenByte)) * 16;
@@ -214,8 +212,7 @@ HttpStreamReader::StreamRead HttpStreamReader::read(std::span<char> buffer, uint
         const ssize_t n = pullRaw(std::span{buffer}.subspan(produced, want), timeout);
         if (n < 0) {
             outcome = (n == -2) ? ReadResult::AtEof : ReadResult::Closed;
-            if (produced) break;
-            return {outcome};
+            break;
         }
         if (n == 0) break;
         if (metaCountdown_) metaCountdown_ -= static_cast<uint32_t>(n);

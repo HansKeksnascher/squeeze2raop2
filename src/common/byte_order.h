@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <concepts>
@@ -26,11 +27,7 @@ template <std::unsigned_integral T>
                                                     : (std::endian::native == std::endian::little);
     if (wireIsNative) return value;
     std::array<std::byte, sizeof(T)> bytes = std::bit_cast<std::array<std::byte, sizeof(T)>>(value);
-    for (size_t i = 0; i < sizeof(T) / 2; ++i) {
-        const std::byte tmp = bytes[i];
-        bytes[i] = bytes[sizeof(T) - 1 - i];
-        bytes[sizeof(T) - 1 - i] = tmp;
-    }
+    std::reverse(bytes.begin(), bytes.end());
     return std::bit_cast<T>(bytes);
 }
 

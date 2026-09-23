@@ -66,6 +66,7 @@ private:
     bool importLegacy(const std::string& path, std::string& error);
     void writeTemplate();
     bool saveLocked();
+    void flushIfDirtyLocked();
 
     Section* findSection(const std::string& key);
     const Section* findSection(const std::string& key) const;

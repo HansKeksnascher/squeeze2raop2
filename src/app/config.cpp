@@ -73,10 +73,7 @@ ResolvedPlayerConfig resolvePlayer(const PlayerConfig& defaults, const PlayerCon
     r.volPct = pick(player.volPct, defaults.volPct, 0.7f);
     r.latencyMs = pick(player.latencyMs, defaults.latencyMs, 500);
     r.paceRealtime = pick(player.paceRealtime, defaults.paceRealtime, true);
-    if (player.sinkPath)
-        r.sinkPath = player.sinkPath;
-    else if (defaults.sinkPath)
-        r.sinkPath = defaults.sinkPath;
+    r.sinkPath = player.sinkPath ? player.sinkPath : defaults.sinkPath;
 
     return r;
 }

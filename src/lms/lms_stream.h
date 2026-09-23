@@ -51,7 +51,6 @@ public:
     // icy-metaint, read() strips the interleaved metadata blocks from the
     // audio and delivers each complete block here.
     void setMetaCallback(std::function<void(std::string_view)> cb) { metaCb_ = std::move(cb); }
-    uint32_t metaInterval() const { return metaInterval_; }
 
 private:
     // >0 = bytes, 0 = no data yet (timeout), -1 = socket error, -2 = orderly EOF

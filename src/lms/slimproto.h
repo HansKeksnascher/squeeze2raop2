@@ -57,10 +57,8 @@ struct StrmStart {
     StreamFormat format = StreamFormat::Unknown;
     PcmParams pcm;
     uint8_t thresholdKb = 0;
-    uint8_t outputThresholdTenths = 0;
     uint8_t transitionType = 0;
     uint8_t transitionPeriodS = 0;
-    uint8_t flags = 0;
     uint32_t replayGain = 0;
     uint32_t serverIp = 0;
     uint16_t serverPort = 0;

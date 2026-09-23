@@ -162,7 +162,6 @@ void DeviceRegistry::onAirplayV4(const std::string& instance, const std::string&
         if (auto it = txt.find("features"); it != txt.end() && !it->second.empty())
             d.features = parseAirplayFeatures(it->second);
         if (auto it = txt.find("pk"); it != txt.end()) d.pk = it->second;
-        if (auto it = txt.find("deviceid"); it != txt.end()) d.deviceIdHex = it->second;
         if (auto it = txt.find("model"); it != txt.end() && d.model.empty()) d.model = it->second;
         if (auto it = txt.find("pw"); it != txt.end() && !d.pw)
             d.pw = (it->second == "true" || it->second == "1");

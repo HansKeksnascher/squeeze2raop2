@@ -20,11 +20,9 @@ struct AirplayDevice {
     uint16_t airplayPort = 0;
     uint64_t features = 0;
     std::string pk;
-    std::string deviceIdHex;
     std::string model;
     bool pw = false;
     bool encrypted = false;
-    bool af_float = false;
 
     bool hasRaop() const { return raopPort != 0; }
     bool hasAirplay() const { return airplayPort != 0; }

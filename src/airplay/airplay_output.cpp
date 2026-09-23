@@ -110,16 +110,14 @@ bool AirplayOutput::push(std::span<const int16_t> samples, size_t channels, cons
     const std::shared_ptr<RaopPlayer> player = snapshot();
     if (!player) return true;
 
-    // The ring is always interleaved stereo: duplicate each mono sample in
-    // place, walking backwards so unread lower-index samples are never
-    // overwritten.
+    // The ring is always interleaved stereo: duplicate each mono sample into
+    // monoScratch_, a buffer distinct from `samples`, so no in-place aliasing.
     if (channels == 1) {
         const size_t frames = samples.size();
         monoScratch_.resize(frames * 2);
-        for (size_t i = frames; i-- > 0;) {
-            const int16_t s = samples[i];
-            monoScratch_[2 * i] = s;
-            monoScratch_[2 * i + 1] = s;
+        for (size_t i = 0; i < frames; ++i) {
+            monoScratch_[2 * i] = samples[i];
+            monoScratch_[2 * i + 1] = samples[i];
         }
         samples = std::span<const int16_t>(monoScratch_);
     }

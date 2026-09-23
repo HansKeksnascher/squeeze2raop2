@@ -44,11 +44,17 @@ bool parseBool(std::string_view v, bool& out) {
     return false;
 }
 
+// Strict decimal integer parse; false on malformed input or trailing junk.
+template <typename T>
+bool parseNumber(std::string_view s, T& out) {
+    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
+    return ec == std::errc{} && ptr == s.data() + s.size();
+}
+
 std::optional<uint16_t> parsePort(std::string_view s) {
-    unsigned p = 0;
-    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), p);
-    if (ec != std::errc{} || ptr != s.data() + s.size() || p < 1 || p > 65535) return std::nullopt;
-    return static_cast<uint16_t>(p);
+    uint16_t p = 0;
+    if (!parseNumber(s, p) || p == 0) return std::nullopt;  // from_chars rejects > 65535
+    return p;
 }
 
 std::string unquote(std::string_view s) {
@@ -178,10 +184,7 @@ std::vector<ResolvedPlayerConfig> Persistence::staticPlayers() {
         assignMacLocked(s);
         out.push_back(finalizeSection(s));
     }
-    if (dirty_) {
-        saveLocked();
-        dirty_ = false;
-    }
+    flushIfDirtyLocked();
     return out;
 }
 
@@ -250,8 +253,7 @@ std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& devi
         if (isHex12(key)) created.config.id = id;
         created.config.name = created.name;
         assignMacLocked(created);
-        saveLocked();
-        dirty_ = false;
+        flushIfDirtyLocked();
         return finalizeSection(created);
     }
 
@@ -260,10 +262,7 @@ std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& devi
     // device id). A 'setd' rename persisted as the machine-managed 'name' key
     // is an explicit override and wins.
     if (!match->hasNameOverride && !deviceName.empty()) match->config.name = deviceName;
-    if (dirty_) {
-        saveLocked();
-        dirty_ = false;
-    }
+    flushIfDirtyLocked();
     return finalizeSection(*match);
 }
 
@@ -382,10 +381,7 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
                 global_.autoRegister = b;
             } else if (keyRaw == "server-timeout-ms") {
                 unsigned v = 0;
-                const auto [ptr, ec] =
-                    std::from_chars(valueText.data(), valueText.data() + valueText.size(), v);
-                if (ec != std::errc{} || ptr != valueText.data() + valueText.size())
-                    return fail("server-timeout-ms must be a number");
+                if (!parseNumber(valueText, v)) return fail("server-timeout-ms must be a number");
                 if (v < 1000 || v > 600000) return fail("server-timeout-ms must be 1000-600000");
                 global_.serverTimeoutMs = v;
             } else if (keyRaw == "log") {
@@ -474,19 +470,13 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
             pc.volumeMap = valueText;
         } else if (keyRaw == "volume-pct") {
             float parsed = 0.0f;
-            const auto [ptr, ec] =
-                std::from_chars(valueText.data(), valueText.data() + valueText.size(), parsed);
-            if (ec != std::errc{} || ptr != valueText.data() + valueText.size())
-                return fail("volume-pct must be a number");
+            if (!parseNumber(valueText, parsed)) return fail("volume-pct must be a number");
             if (parsed < 0.5f || parsed > 100.f)
                 return fail("volume-pct must be 0.5-100 (0 would be mute)");
             pc.volPct = parsed;
         } else if (keyRaw == "latency-ms") {
             int parsed = 0;
-            const auto [ptr, ec] =
-                std::from_chars(valueText.data(), valueText.data() + valueText.size(), parsed);
-            if (ec != std::errc{} || ptr != valueText.data() + valueText.size())
-                return fail("latency-ms must be a number");
+            if (!parseNumber(valueText, parsed)) return fail("latency-ms must be a number");
             if (parsed < 250 || parsed > 2000)
                 return fail("latency-ms must be 250-2000 (receiver latencyMin..Max)");
             pc.latencyMs = parsed;
@@ -635,11 +625,14 @@ bool Persistence::open(const std::string& path, Settings& out, std::string& erro
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     std::lock_guard<std::mutex> lock(mutex_);
     const bool ok = parse(text, out, error);
-    if (ok && dirty_) {
-        saveLocked();
-        dirty_ = false;
-    }
+    if (ok) flushIfDirtyLocked();
     return ok;
+}
+
+void Persistence::flushIfDirtyLocked() {
+    if (!dirty_) return;
+    saveLocked();
+    dirty_ = false;
 }
 
 bool Persistence::saveLocked() {
@@ -658,6 +651,12 @@ bool Persistence::saveLocked() {
         }
     }
 
+    auto sectionByName = [this](const std::string& name) -> const Section* {
+        for (const auto& sec : sections_)
+            if (sec.name == name) return &sec;
+        return nullptr;
+    };
+
     const std::string tmp = path_ + ".tmp";
     {
         std::ofstream out(tmp, std::ios::trunc);
@@ -668,12 +667,7 @@ bool Persistence::saveLocked() {
         for (const auto& l : lines_) {
             if (l.kind == Line::Kind::Key &&
                 (l.key == "mac" || l.key == "creds" || l.key == "name")) {
-                const Section* s = nullptr;
-                for (const auto& sec : sections_)
-                    if (sec.name == l.section) {
-                        s = &sec;
-                        break;
-                    }
+                const Section* s = sectionByName(l.section);
                 if (!s) {
                     out << l.raw << "\n";
                     continue;
@@ -689,12 +683,7 @@ bool Persistence::saveLocked() {
             }
             out << l.raw << "\n";
             if (l.kind == Line::Kind::Section) {
-                const Section* s = nullptr;
-                for (const auto& sec : sections_)
-                    if (sec.name == l.section) {
-                        s = &sec;
-                        break;
-                    }
+                const Section* s = sectionByName(l.section);
                 if (!s) continue;
                 if (s->hasMac && !hasMacLine.count(l.section))
                     out << "mac = " << macToString(s->mac) << "\n";

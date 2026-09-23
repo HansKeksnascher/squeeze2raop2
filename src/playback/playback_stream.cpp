@@ -343,7 +343,8 @@ std::span<const int16_t> PlaybackStream::applyGainFade(std::span<const int16_t> 
         static_cast<int32_t>((static_cast<int64_t>(fadeInGain) * fadeOutGain) >> 16);
     const int32_t base = haveReplay ? replayGain_ : kFixedOne;
     const int32_t gain = static_cast<int32_t>((static_cast<int64_t>(base) * fade) >> 16);
-    for (size_t i = 0; i < chunk.size(); ++i) gainScratch_[i] = applyGain16(chunk[i], gain);
+    std::transform(chunk.begin(), chunk.end(), gainScratch_.begin(),
+                   [gain](int16_t s) { return applyGain16(s, gain); });
     return std::span<const int16_t>(gainScratch_);
 }
 

@@ -290,8 +290,7 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (!r.skip(1)) return;  // packet byte 12 (unused)
             st.transitionPeriodS = *r.u8();
             st.transitionType = static_cast<uint8_t>(*r.u8() - '0');
-            st.flags = *r.u8();
-            st.outputThresholdTenths = *r.u8();
+            if (!r.skip(2)) return;  // packet bytes 15..16 (unused)
             if (!r.skip(1)) return;  // packet byte 17 (unused)
             st.replayGain = *r.u32();
             st.serverPort = *r.u16();
