@@ -268,6 +268,151 @@ std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& devi
 
 // --- parsing ----------------------------------------------------------------
 
+bool Persistence::fail(std::string& error, int lineNo, std::string_view msg) const {
+    error = "config " + path_ + ":" + std::to_string(lineNo) + ": " + std::string(msg);
+    return false;
+}
+
+bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, int lineNo,
+                                 std::string& error) {
+    bool b = false;
+    if (key == "lms") {
+        const auto colon = value.find(':');
+        if (colon != std::string_view::npos) {
+            const auto port = parsePort(value.substr(colon + 1));
+            if (!port) return fail(error, lineNo, "lms port must be 1-65535");
+            global_.lmsHost = std::string(value.substr(0, colon));
+            global_.lmsPort = *port;
+        } else {
+            global_.lmsHost = std::string(value);
+        }
+    } else if (key == "discovery") {
+        if (!parseBool(value, b)) return fail(error, lineNo, "discovery must be on|off");
+        global_.discovery = b;
+    } else if (key == "iface") {
+        global_.mdnsIface = std::string(value);
+    } else if (key == "mdns-debug") {
+        if (!parseBool(value, b)) return fail(error, lineNo, "mdns-debug must be on|off");
+        global_.mdnsDebug = b;
+    } else if (key == "auto-register") {
+        if (!parseBool(value, b)) return fail(error, lineNo, "auto-register must be on|off");
+        global_.autoRegister = b;
+    } else if (key == "server-timeout-ms") {
+        unsigned v = 0;
+        if (!parseNumber(value, v)) return fail(error, lineNo, "server-timeout-ms must be a number");
+        if (v < 1000 || v > 600000)
+            return fail(error, lineNo, "server-timeout-ms must be 1000-600000");
+        global_.serverTimeoutMs = v;
+    } else if (key == "log") {
+        if (value == "off")
+            global_.logLevel = log::Level::Off;
+        else if (value == "error")
+            global_.logLevel = log::Level::Error;
+        else if (value == "warn")
+            global_.logLevel = log::Level::Warn;
+        else if (value == "info")
+            global_.logLevel = log::Level::Info;
+        else if (value == "debug")
+            global_.logLevel = log::Level::Debug;
+        else
+            return fail(error, lineNo, "log must be off|error|warn|info|debug");
+    } else {
+        log::warn("config {}:{}: unknown [global] key '{}'", path_, lineNo, key);
+    }
+    return true;
+}
+
+bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, int lineNo,
+                                 PlayerConfig& pc, Section* section, bool isDefault,
+                                 std::string& error) {
+    // Identity/machine keys are meaningless in [default]; reject them up front.
+    if (isDefault && (key == "id" || key == "mac" || key == "name" || key == "target" ||
+                      key == "creds")) {
+        log::warn("config {}:{}: '{}' is not valid in [default], ignoring", path_, lineNo, key);
+        return true;
+    }
+
+    if (key == "id") {
+        pc.id = std::string(value);
+    } else if (key == "mac") {
+        std::array<uint8_t, 6> mac{};
+        if (!macFromString(value, mac))
+            return fail(error, lineNo, "invalid mac '" + std::string(value) + "'");
+        pc.mac = mac;
+        section->mac = mac;
+        section->hasMac = true;
+    } else if (key == "name") {
+        pc.name = std::string(value);
+        section->hasNameOverride = true;
+    } else if (key == "target") {
+        const auto colon = value.find(':');
+        if (colon != std::string_view::npos) {
+            const auto port = parsePort(value.substr(colon + 1));
+            if (!port) return fail(error, lineNo, "target port must be 1-65535");
+            pc.targetHost = std::string(value.substr(0, colon));
+            pc.targetPort = *port;
+        } else {
+            pc.targetHost = std::string(value);
+        }
+    } else if (key == "protocol") {
+        if (value == "ap1")
+            pc.airplay2 = false;
+        else if (value == "ap2")
+            pc.airplay2 = true;
+        else
+            return fail(error, lineNo, "protocol must be ap1|ap2");
+    } else if (key == "password") {
+        pc.password = std::string(value);
+    } else if (key == "enabled") {
+        bool b = false;
+        if (!parseBool(value, b)) return fail(error, lineNo, "enabled must be on|off");
+        pc.enabled = b;
+    } else if (key == "volume") {
+        if (value == "lms")
+            pc.volumeMode = VolumeMode::Lms;
+        else if (value == "fixed")
+            pc.volumeMode = VolumeMode::Fixed;
+        else
+            return fail(error, lineNo, "volume must be lms|fixed");
+    } else if (key == "volume-map") {
+        if (!VolumeAnchors::parse(value))
+            return fail(error, lineNo,
+                        "volume-map needs \"db:pct, ...\" pairs, ascending pct 1-100, db <= 0");
+        pc.volumeMap = std::string(value);
+    } else if (key == "volume-pct") {
+        float parsed = 0.0f;
+        if (!parseNumber(value, parsed)) return fail(error, lineNo, "volume-pct must be a number");
+        if (parsed < 0.5f || parsed > 100.f)
+            return fail(error, lineNo, "volume-pct must be 0.5-100 (0 would be mute)");
+        pc.volPct = parsed;
+    } else if (key == "latency-ms") {
+        int parsed = 0;
+        if (!parseNumber(value, parsed)) return fail(error, lineNo, "latency-ms must be a number");
+        if (parsed < 250 || parsed > 2000)
+            return fail(error, lineNo, "latency-ms must be 250-2000 (receiver latencyMin..Max)");
+        pc.latencyMs = parsed;
+    } else if (key == "sink") {
+        pc.sinkPath = std::string(value);
+    } else if (key == "pace") {
+        if (value == "fast")
+            pc.paceRealtime = false;
+        else if (value == "realtime")
+            pc.paceRealtime = true;
+        else
+            return fail(error, lineNo, "pace must be realtime|fast");
+    } else if (key == "creds") {
+        section->creds = std::string(value);
+    } else if (key == "auto") {
+        bool b = false;
+        if (!parseBool(value, b)) return fail(error, lineNo, "auto must be on|off");
+        pc.autoSection = b;
+        if (!isDefault && b) section->autoRegistered = true;
+    } else {
+        log::warn("config {}:{}: unknown key '{}'", path_, lineNo, key);
+    }
+    return true;
+}
+
 bool Persistence::parse(const std::string& text, Settings& out, std::string& error) {
     lines_.clear();
     sections_.clear();
@@ -351,55 +496,8 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
             continue;
         }
 
-        auto fail = [&](const std::string& msg) {
-            error = "config " + path_ + ":" + std::to_string(lineNo) + ": " + msg;
-            return false;
-        };
-
         if (current == Kind::Global) {
-            bool b = false;
-            if (keyRaw == "lms") {
-                const auto colon = valueText.find(':');
-                if (colon != std::string::npos) {
-                    const auto port = parsePort(valueText.substr(colon + 1));
-                    if (!port) return fail("lms port must be 1-65535");
-                    global_.lmsHost = valueText.substr(0, colon);
-                    global_.lmsPort = *port;
-                } else {
-                    global_.lmsHost = valueText;
-                }
-            } else if (keyRaw == "discovery") {
-                if (!parseBool(valueText, b)) return fail("discovery must be on|off");
-                global_.discovery = b;
-            } else if (keyRaw == "iface") {
-                global_.mdnsIface = valueText;
-            } else if (keyRaw == "mdns-debug") {
-                if (!parseBool(valueText, b)) return fail("mdns-debug must be on|off");
-                global_.mdnsDebug = b;
-            } else if (keyRaw == "auto-register") {
-                if (!parseBool(valueText, b)) return fail("auto-register must be on|off");
-                global_.autoRegister = b;
-            } else if (keyRaw == "server-timeout-ms") {
-                unsigned v = 0;
-                if (!parseNumber(valueText, v)) return fail("server-timeout-ms must be a number");
-                if (v < 1000 || v > 600000) return fail("server-timeout-ms must be 1000-600000");
-                global_.serverTimeoutMs = v;
-            } else if (keyRaw == "log") {
-                if (valueText == "off")
-                    global_.logLevel = log::Level::Off;
-                else if (valueText == "error")
-                    global_.logLevel = log::Level::Error;
-                else if (valueText == "warn")
-                    global_.logLevel = log::Level::Warn;
-                else if (valueText == "info")
-                    global_.logLevel = log::Level::Info;
-                else if (valueText == "debug")
-                    global_.logLevel = log::Level::Debug;
-                else
-                    return fail("log must be off|error|warn|info|debug");
-            } else {
-                log::warn("config {}:{}: unknown [global] key '{}'", path_, lineNo, keyRaw);
-            }
+            if (!parseGlobalKey(keyRaw, valueText, lineNo, error)) return false;
             lines_.push_back(std::move(line));
             continue;
         }
@@ -407,101 +505,8 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
         // [default] / [player]
         const bool isDefault = current == Kind::Default;
         PlayerConfig& pc = isDefault ? defaults_ : currentSection->config;
-        auto rejectDefault = [&](const char* what) {
-            log::warn("config {}:{}: '{}' is not valid in [default], ignoring", path_, lineNo,
-                      what);
-        };
-        if (keyRaw == "id" || keyRaw == "mac") {
-            if (isDefault) {
-                rejectDefault(keyRaw.c_str());
-            } else if (keyRaw == "id") {
-                pc.id = valueText;
-            } else {
-                std::array<uint8_t, 6> mac{};
-                if (!macFromString(valueText, mac)) return fail("invalid mac '" + valueText + "'");
-                pc.mac = mac;
-                currentSection->mac = mac;
-                currentSection->hasMac = true;
-            }
-        } else if (keyRaw == "name") {
-            if (isDefault) {
-                rejectDefault("name");
-            } else {
-                pc.name = valueText;
-                currentSection->hasNameOverride = true;
-            }
-        } else if (keyRaw == "target") {
-            if (isDefault) {
-                rejectDefault("target");
-            } else {
-                const auto colon = valueText.find(':');
-                if (colon != std::string::npos) {
-                    const auto port = parsePort(valueText.substr(colon + 1));
-                    if (!port) return fail("target port must be 1-65535");
-                    pc.targetHost = valueText.substr(0, colon);
-                    pc.targetPort = *port;
-                } else {
-                    pc.targetHost = valueText;
-                }
-            }
-        } else if (keyRaw == "protocol") {
-            if (valueText == "ap1")
-                pc.airplay2 = false;
-            else if (valueText == "ap2")
-                pc.airplay2 = true;
-            else
-                return fail("protocol must be ap1|ap2");
-        } else if (keyRaw == "password") {
-            pc.password = valueText;
-        } else if (keyRaw == "enabled") {
-            bool b = false;
-            if (!parseBool(valueText, b)) return fail("enabled must be on|off");
-            pc.enabled = b;
-        } else if (keyRaw == "volume") {
-            if (valueText == "lms")
-                pc.volumeMode = VolumeMode::Lms;
-            else if (valueText == "fixed")
-                pc.volumeMode = VolumeMode::Fixed;
-            else
-                return fail("volume must be lms|fixed");
-        } else if (keyRaw == "volume-map") {
-            if (!VolumeAnchors::parse(valueText))
-                return fail("volume-map needs \"db:pct, ...\" pairs, ascending pct 1-100, db <= 0");
-            pc.volumeMap = valueText;
-        } else if (keyRaw == "volume-pct") {
-            float parsed = 0.0f;
-            if (!parseNumber(valueText, parsed)) return fail("volume-pct must be a number");
-            if (parsed < 0.5f || parsed > 100.f)
-                return fail("volume-pct must be 0.5-100 (0 would be mute)");
-            pc.volPct = parsed;
-        } else if (keyRaw == "latency-ms") {
-            int parsed = 0;
-            if (!parseNumber(valueText, parsed)) return fail("latency-ms must be a number");
-            if (parsed < 250 || parsed > 2000)
-                return fail("latency-ms must be 250-2000 (receiver latencyMin..Max)");
-            pc.latencyMs = parsed;
-        } else if (keyRaw == "sink") {
-            pc.sinkPath = valueText;
-        } else if (keyRaw == "pace") {
-            if (valueText == "fast")
-                pc.paceRealtime = false;
-            else if (valueText == "realtime")
-                pc.paceRealtime = true;
-            else
-                return fail("pace must be realtime|fast");
-        } else if (keyRaw == "creds") {
-            if (isDefault)
-                rejectDefault("creds");
-            else
-                currentSection->creds = valueText;
-        } else if (keyRaw == "auto") {
-            bool b = false;
-            if (!parseBool(valueText, b)) return fail("auto must be on|off");
-            pc.autoSection = b;
-            if (!isDefault && b) currentSection->autoRegistered = true;
-        } else {
-            log::warn("config {}:{}: unknown key '{}'", path_, lineNo, keyRaw);
-        }
+        if (!parsePlayerKey(keyRaw, valueText, lineNo, pc, currentSection, isDefault, error))
+            return false;
         lines_.push_back(std::move(line));
     }
 

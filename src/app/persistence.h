@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace squeeze2raop2 {
@@ -63,6 +64,15 @@ private:
     };
 
     bool parse(const std::string& text, Settings& out, std::string& error);
+    // Apply one key=value from a section. Return false (and set `error` with a
+    // path:line prefix) on an invalid value; an unknown key is logged and
+    // ignored. `section` is null in [default].
+    bool parseGlobalKey(std::string_view key, std::string_view value, int lineNo,
+                        std::string& error);
+    bool parsePlayerKey(std::string_view key, std::string_view value, int lineNo, PlayerConfig& pc,
+                        Section* section, bool isDefault, std::string& error);
+    bool fail(std::string& error, int lineNo, std::string_view msg) const;
+
     bool importLegacy(const std::string& path, std::string& error);
     void writeTemplate();
     bool saveLocked();
