@@ -18,7 +18,8 @@ add_executable(squeeze2raop2_tests
   unit/test_ring_telemetry.cpp
   unit/test_icy_meta.cpp
   unit/test_stream_counters.cpp
-  unit/test_session_exit.cpp)
+  unit/test_session_exit.cpp
+  unit/test_mdns_names.cpp)
 target_link_libraries(squeeze2raop2_tests PRIVATE squeeze2raop2_core)
 target_include_directories(squeeze2raop2_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/framework)
 squeeze2raop2_target_settings(squeeze2raop2_tests)
@@ -28,7 +29,7 @@ set_tests_properties(unit PROPERTIES LABELS unit)
 
 # Per-suite cases for `ctest -j` / `-R`, all sharing the one binary.
 foreach(s util config persistence wav wire transport volume registry
-          byte_order pcm decoder ring_telemetry icy counters session_exit)
+          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names)
   add_test(NAME unit_${s} COMMAND squeeze2raop2_tests --filter ${s})
   set_tests_properties(unit_${s} PROPERTIES LABELS unit)
 endforeach()
