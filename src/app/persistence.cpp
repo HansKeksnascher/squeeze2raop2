@@ -200,6 +200,15 @@ void Persistence::saveCreds(const std::string& key, const std::string& credsJson
     saveLocked();
 }
 
+void Persistence::savePlayerName(const std::string& key, const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Section* s = findSection(key);
+    if (!s || name.empty() || s->config.name == name) return;
+    s->config.name = name;
+    s->hasNameOverride = true;
+    saveLocked();
+}
+
 std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& deviceId,
                                                          const std::string& deviceName,
                                                          bool autoRegister) {
@@ -367,6 +376,14 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
             } else if (keyRaw == "auto-register") {
                 if (!parseBool(valueText, b)) return fail("auto-register must be on|off");
                 global_.autoRegister = b;
+            } else if (keyRaw == "server-timeout-ms") {
+                unsigned v = 0;
+                const auto [ptr, ec] =
+                    std::from_chars(valueText.data(), valueText.data() + valueText.size(), v);
+                if (ec != std::errc{} || ptr != valueText.data() + valueText.size())
+                    return fail("server-timeout-ms must be a number");
+                if (v < 1000 || v > 600000) return fail("server-timeout-ms must be 1000-600000");
+                global_.serverTimeoutMs = v;
             } else if (keyRaw == "log") {
                 if (valueText == "off")
                     global_.logLevel = log::Level::Off;
@@ -405,6 +422,13 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
                 pc.mac = mac;
                 currentSection->mac = mac;
                 currentSection->hasMac = true;
+            }
+        } else if (keyRaw == "name") {
+            if (isDefault) {
+                rejectDefault("name");
+            } else {
+                pc.name = valueText;
+                currentSection->hasNameOverride = true;
             }
         } else if (keyRaw == "target") {
             if (isDefault) {
@@ -552,13 +576,15 @@ void Persistence::writeTemplate() {
     std::ofstream out(path_, std::ios::trunc);
     if (!out) return;
     out << "# squeeze2raop2 config + state. Edit [global]/[default]/[player]; the\n"
-           "# program only rewrites the machine-managed 'mac' and 'creds' keys.\n"
+           "# program only rewrites the machine-managed 'mac', 'creds' and 'name'\n"
+           "# keys.\n"
            "\n"
            "[global]\n"
            "# lms = 192.168.1.10:3483   (omit for UDP discovery on 3483)\n"
            "discovery = on\n"
            "# iface = eth0\n"
            "# mdns-debug = off\n"
+           "# server-timeout-ms = 35000\n"
            "log = info\n"
            "auto-register = on\n"
            "\n"
@@ -617,13 +643,14 @@ bool Persistence::saveLocked() {
     for (const auto& s : sections_) sectionNames.insert(s.name);
 
     std::set<std::string> headerSeen;
-    std::set<std::string> hasMacLine, hasCredsLine, hasAutoLine;
+    std::set<std::string> hasMacLine, hasCredsLine, hasAutoLine, hasNameLine;
     for (const auto& l : lines_) {
         if (l.kind == Line::Kind::Section) headerSeen.insert(l.section);
         if (l.kind == Line::Kind::Key) {
             if (l.key == "mac") hasMacLine.insert(l.section);
             if (l.key == "creds") hasCredsLine.insert(l.section);
             if (l.key == "auto") hasAutoLine.insert(l.section);
+            if (l.key == "name") hasNameLine.insert(l.section);
         }
     }
 
@@ -635,7 +662,8 @@ bool Persistence::saveLocked() {
             return false;
         }
         for (const auto& l : lines_) {
-            if (l.kind == Line::Kind::Key && (l.key == "mac" || l.key == "creds")) {
+            if (l.kind == Line::Kind::Key &&
+                (l.key == "mac" || l.key == "creds" || l.key == "name")) {
                 const Section* s = nullptr;
                 for (const auto& sec : sections_)
                     if (sec.name == l.section) {
@@ -648,8 +676,10 @@ bool Persistence::saveLocked() {
                 }
                 if (l.key == "mac") {
                     if (s->hasMac) out << l.valuePrefix << macToString(s->mac) << "\n";
-                } else if (!s->creds.empty()) {
-                    out << l.valuePrefix << oneLine(s->creds) << "\n";
+                } else if (l.key == "creds") {
+                    if (!s->creds.empty()) out << l.valuePrefix << oneLine(s->creds) << "\n";
+                } else if (s->hasNameOverride) {
+                    out << l.valuePrefix << s->config.name.value_or(s->name) << "\n";
                 }
                 continue;
             }
@@ -666,6 +696,8 @@ bool Persistence::saveLocked() {
                     out << "mac = " << macToString(s->mac) << "\n";
                 if (!s->creds.empty() && !hasCredsLine.count(l.section))
                     out << "creds = " << oneLine(s->creds) << "\n";
+                if (s->hasNameOverride && !hasNameLine.count(l.section))
+                    out << "name = " << s->config.name.value_or(s->name) << "\n";
                 if (s->autoRegistered && !hasAutoLine.count(l.section)) out << "auto = true\n";
             }
         }
@@ -676,6 +708,7 @@ bool Persistence::saveLocked() {
             if (s.config.id && !s.config.id->empty()) out << "id = " << *s.config.id << "\n";
             if (s.hasMac) out << "mac = " << macToString(s.mac) << "\n";
             if (!s.creds.empty()) out << "creds = " << oneLine(s.creds) << "\n";
+            if (s.hasNameOverride) out << "name = " << s.config.name.value_or(s.name) << "\n";
             if (s.autoRegistered) out << "auto = true\n";
         }
         out.flush();

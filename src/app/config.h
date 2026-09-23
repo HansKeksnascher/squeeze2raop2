@@ -28,6 +28,8 @@ struct GlobalConfig {
     std::string mdnsIface;
     bool mdnsDebug = false;
     log::Level logLevel = log::Level::Info;
+    // reconnect when the LMS control connection is silent for this long.
+    uint32_t serverTimeoutMs = 35000;
     // create a section (auto = true) for every discovered device that has none.
     bool autoRegister = true;
 

@@ -46,12 +46,13 @@ class Case:
     """One integration scenario: fake LMS + bridge + behavioural waits."""
 
     def __init__(self, name, lms_args=None, players=None, default_sink=None,
-                 log_level="info"):
+                 log_level="info", server_timeout_ms=None):
         self.name = name
         self.lms_args = list(lms_args or [])
         self.players = list(players or [])
         self.default_sink = default_sink
         self.log_level = log_level
+        self.server_timeout_ms = server_timeout_ms
 
         self.workdir = Path(tempfile.mkdtemp(prefix="sq2_" + name + "_"))
         self.lms_log = self.workdir / (name + "_lms.log")
@@ -80,9 +81,10 @@ class Case:
             "[global]",
             "lms = 127.0.0.1:%d" % self.tcp_port,
             "discovery = off",
-            "log = %s" % self.log_level,
-            "",
         ]
+        if self.server_timeout_ms is not None:
+            lines.append("server-timeout-ms = %d" % self.server_timeout_ms)
+        lines += ["log = %s" % self.log_level, ""]
         if self.default_sink is not None:
             lines += ["[default]", "sink = %s" % self.default_sink, "pace = fast", ""]
         for player in self.players:
@@ -160,3 +162,24 @@ def run(case, body):
         return 1
     print("PASS")
     return 0
+
+
+def wav_peak(path, skip_s=0.0, take_s=None, rate=44100, channels=2):
+    """Peak absolute sample over a slice of a canonical 16-bit PCM WAV."""
+    import array
+
+    data = Path(path).read_bytes()
+    idx = data.find(b"data")
+    if idx < 0:
+        return 0
+    body = data[idx + 8:]
+    frame = channels * 2
+    start = int(skip_s * rate) * frame
+    end = len(body) if take_s is None else start + int(take_s * rate) * frame
+    body = body[start:end]
+    body = body[: len(body) - (len(body) % 2)]
+    if not body:
+        return 0
+    a = array.array("h")
+    a.frombytes(body)
+    return max(abs(x) for x in a)

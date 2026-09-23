@@ -89,6 +89,9 @@ public:
         std::function<void(StreamFormat format, const PcmParams& pcm)> onCodc;
         std::function<void(double leftPct, double rightPct)>
             onVolume;  // 0..100; LMS slider percent
+        // 'aude': output enable/disable (keyed on enable_spdif, squeezelite
+        // parity). false = power the player down.
+        std::function<void(bool enable)> onAude;
         std::function<void(const std::string& name)> onSetName;
         std::function<void(uint32_t serverIp)> onServerSwitch;
     };
@@ -97,6 +100,9 @@ public:
     ~SlimProtoClient();
 
     void setPlayerName(const std::string& name);
+    // Server-silence watchdog: reconnect when no packet arrives for this long
+    // (squeezelite's 35 s default). Configured from [global] server-timeout-ms.
+    void setServerTimeout(uint32_t ms) { serverTimeoutMs_ = ms; }
     void setStatsProvider(std::function<StreamStats()> provider) {
         statsProvider_ = std::move(provider);
     }
@@ -152,6 +158,8 @@ private:
     StreamStats stats_{};
     std::mutex sendMutex_;  // serializes packet writes and guards stats_
     uint64_t lastHeartbeatMs_ = 0;
+    uint32_t serverTimeoutMs_ = 35000;
+    uint64_t lastServerMsgMs_ = 0;
     std::string playerName_;
     bool reconnect_ = false;
     std::function<StreamStats()> statsProvider_;

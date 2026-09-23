@@ -71,6 +71,10 @@ public:
     bool push(std::span<const int16_t> samples, size_t channels, const Abort& abort);
     size_t queued() const;    // ring occupancy in samples
     size_t capacity() const;  // ring capacity in samples
+    // Same values in bytes of interleaved s16, for the STAT output buffer
+    // fields (squeezelite reports the output buffer in bytes).
+    size_t queuedBytes() const { return queued() * sizeof(int16_t); }
+    size_t capacityBytes() const { return capacity() * sizeof(int16_t); }
 
     // FLUSH the receiver's buffered audio and drop our ring, keeping the
     // session (pause / track flush).
@@ -79,8 +83,8 @@ public:
     // the natural-end path has already drained and passes false.
     void stop(bool flushReceiver);
 
-    bool lost() const;        // receiver closed the session (peek)
-    bool consumeLost();       // ...and clear
+    bool lost() const;   // receiver closed the session (peek)
+    bool consumeLost();  // ...and clear
 
 private:
     [[nodiscard]] std::shared_ptr<RaopPlayer> snapshot() const;

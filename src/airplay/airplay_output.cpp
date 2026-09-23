@@ -1,7 +1,7 @@
 #include "airplay/airplay_output.h"
 
-#include "common/log.h"
 #include "airplay/raop_player.h"
+#include "common/log.h"
 
 #include <algorithm>
 #include <chrono>
@@ -55,6 +55,8 @@ bool AirplayOutput::prepare(uint32_t sampleRate) {
         player_->stop();
         player_.reset();
     }
+    // A fresh session must not inherit the previous one's receiver-loss flag.
+    lost_.store(false, std::memory_order_relaxed);
     if (!target_) return false;
     CredentialSink sink = credSink_;
     player_ = std::make_shared<RaopPlayer>(name_, identity_, *target_);

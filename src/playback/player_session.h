@@ -1,9 +1,10 @@
 #pragma once
 
 #include "airplay/airplay_output.h"
+#include "airplay/raop_types.h"
 #include "app/config.h"
-#include "playback/playback_stream.h"
 #include "lms/slimproto.h"
+#include "playback/playback_stream.h"
 #include "playback/stream_counters.h"
 #include "playback/volume_map.h"
 
@@ -54,7 +55,7 @@ public:
                   std::optional<std::string> lmsHost, uint16_t lmsPort, bool paceRealtime,
                   std::optional<std::string> sinkPath, std::optional<RaopTarget> raopTarget,
                   CredentialSink credSink, VolumeMode volumeMode, VolumeAnchors anchors,
-                  float volPct, int latencyMs);
+                  float volPct, int latencyMs, uint32_t serverTimeoutMs, NameSink nameSink);
     ~PlayerSession();
     PlayerSession(const PlayerSession&) = delete;
     PlayerSession& operator=(const PlayerSession&) = delete;
@@ -66,6 +67,9 @@ public:
 private:
     StreamStats currentStats();
     void startStream(const StrmStart& st);
+    void maybeStartPump();
+    void onDecoderReady();
+    void onPrebufferReady();
     void streamLoop(std::stop_token st);
     void launchAirplaySession();
     // Blocks (bounded) until the sender ring has played out, so the receiver
@@ -80,6 +84,8 @@ private:
     uint16_t lmsPort_;
     bool paceRealtime_;
     std::optional<std::string> sinkPath_;
+    uint32_t serverTimeoutMs_;
+    NameSink nameSink_;
 
     std::unique_ptr<SlimProtoClient> client_;
 
@@ -93,7 +99,18 @@ private:
     // The current track's pipeline; replaced per stream, closed by stopPlayback.
     std::unique_ptr<PlaybackStream> track_;
     std::jthread streamThread_;
-    std::atomic<bool> autostartPending_{false};
+    // True while streamLoop is on the stack (onStop uses it to decide whether a
+    // stop-path fade can be delegated to the pump).
+    std::atomic<bool> streamActive_{false};
+
+    // Per-stream protocol state (set in startStream, read by the reader-thread
+    // handlers while the pump runs).
+    std::atomic<uint8_t> autostart_{1};
+    std::atomic<bool> awaitCodc_{false};
+    std::atomic<bool> haveCodc_{false};
+    std::atomic<bool> haveCont_{false};
+    bool sentStml_ = false;
+    bool sentStms_ = false;
 
     // Session resilience flags (see streamLoop exit handling + callbacks).
     std::atomic<bool> flushed_{false};    // strm f: keep session for next track

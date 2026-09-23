@@ -35,6 +35,9 @@ public:
 
     std::optional<std::string> credsFor(const std::string& key) const;
     void saveCreds(const std::string& key, const std::string& credsJson);
+    // Persist a player rename (LMS 'setd') as a machine-managed `name` key,
+    // keeping the section header/key (and its mac/creds) stable.
+    void savePlayerName(const std::string& key, const std::string& name);
 
     const std::string& path() const { return path_; }
 
@@ -46,6 +49,7 @@ private:
         bool hasMac = false;
         std::array<uint8_t, 6> mac{};
         std::string creds;
+        bool hasNameOverride = false;
     };
 
     struct Line {

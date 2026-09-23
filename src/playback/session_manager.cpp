@@ -104,7 +104,9 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
             (void)deviceId;
             persistence_.saveCreds(key, creds);
         },
-        resolved->volumeMode, anchorsFor(*resolved), resolved->volPct, resolved->latencyMs);
+        resolved->volumeMode, anchorsFor(*resolved), resolved->volPct, resolved->latencyMs,
+        settings_.global.serverTimeoutMs,
+        [this, key](const std::string& name) { persistence_.savePlayerName(key, name); });
     session->start();
     sessions_[key] = std::move(session);
 }

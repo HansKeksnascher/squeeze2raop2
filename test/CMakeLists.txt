@@ -19,7 +19,8 @@ add_executable(squeeze2raop2_tests
   unit/test_icy_meta.cpp
   unit/test_stream_counters.cpp
   unit/test_session_exit.cpp
-  unit/test_mdns_names.cpp)
+  unit/test_mdns_names.cpp
+  unit/test_gain.cpp)
 target_link_libraries(squeeze2raop2_tests PRIVATE squeeze2raop2_core)
 target_include_directories(squeeze2raop2_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/framework)
 squeeze2raop2_target_settings(squeeze2raop2_tests)
@@ -29,7 +30,7 @@ set_tests_properties(unit PROPERTIES LABELS unit)
 
 # Per-suite cases for `ctest -j` / `-R`, all sharing the one binary.
 foreach(s util config persistence wav wire transport volume registry
-          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names)
+          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names gain)
   add_test(NAME unit_${s} COMMAND squeeze2raop2_tests --filter ${s})
   set_tests_properties(unit_${s} PROPERTIES LABELS unit)
 endforeach()
@@ -37,16 +38,16 @@ endforeach()
 # --- integration tests: spawn the bridge against the fake LMS ---------------
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
-  add_test(NAME single_player_stream
-           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/single_player_stream.py
-                   $<TARGET_FILE:squeeze2raop2>)
-  add_test(NAME two_player_registration
-           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/two_player_registration.py
-                   $<TARGET_FILE:squeeze2raop2>)
-  add_test(NAME queue_advance
-           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/queue_advance.py
-                   $<TARGET_FILE:squeeze2raop2>)
-  set_tests_properties(single_player_stream two_player_registration queue_advance
+  set(SQUEEZE2RAOP2_INTEGRATION_TESTS
+    single_player_stream two_player_registration queue_advance
+    skip_ahead replay_gain power_off codc_stream codc_unsupported
+    watchdog fade fade_out pause_resume)
+  foreach(scenario ${SQUEEZE2RAOP2_INTEGRATION_TESTS})
+    add_test(NAME ${scenario}
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/${scenario}.py
+                     $<TARGET_FILE:squeeze2raop2>)
+  endforeach()
+  set_tests_properties(${SQUEEZE2RAOP2_INTEGRATION_TESTS}
     PROPERTIES LABELS integration TIMEOUT 60)
 else()
   message(STATUS "Python3 not found; integration tests disabled")

@@ -19,6 +19,7 @@ void printHelp() {
         "    discovery = on|off    spawn sessions for discovered devices\n"
         "    iface = <name>        mdns network interface (default: all)\n"
         "    mdns-debug = on|off   browse-only mDNS debug mode\n"
+        "    server-timeout-ms = N  reconnect after N ms of LMS silence (1000-600000)\n"
         "    log = off|error|warn|info|debug\n"
         "    auto-register = on|off  create sections for discovered devices\n\n"
         "  [default]               defaults inherited by every [player]\n"

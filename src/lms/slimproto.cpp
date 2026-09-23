@@ -215,6 +215,7 @@ void SlimProtoClient::run(std::stop_token st) {
         }
         fails = 0;
         reconnect_ = true;
+        lastServerMsgMs_ = nowMs();
 
         // Hold this connection's socket for the duration of the read loop so a
         // reconnect cannot close the fd under us; the local reference is
@@ -236,6 +237,14 @@ void SlimProtoClient::run(std::stop_token st) {
             }
             if (pr == 0) {
                 maybeHeartbeat();
+                // Server-silence watchdog (squeezelite parity): no packet for
+                // the configured window means the control connection is dead.
+                if (serverTimeoutMs_ && lastServerMsgMs_ &&
+                    nowMs() - lastServerMsgMs_ > serverTimeoutMs_) {
+                    log::warn("no server messages for {} ms; reconnecting",
+                              nowMs() - lastServerMsgMs_);
+                    break;
+                }
                 continue;
             }
             if (expect == 0) {
@@ -261,6 +270,7 @@ void SlimProtoClient::run(std::stop_token st) {
                     pkt.swap(buf);
                     expect = 0;
                     process(pkt);
+                    lastServerMsgMs_ = nowMs();
                     // heartbeat driven by poll timeout
                 }
             }

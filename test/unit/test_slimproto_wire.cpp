@@ -127,6 +127,19 @@ public:
         expect(::recv(conn_, &c, 1, 0) == 0, "connection closed by client");
     }
 
+    // Drop the current connection and accept the client's reconnect (the
+    // watchdog closes the socket and dials again).
+    void acceptReconnect() {
+        if (conn_ >= 0) {
+            ::close(conn_);
+            conn_ = -1;
+        }
+        pollfd pfd{fd_, POLLIN, 0};
+        require(::poll(&pfd, 1, 5000) == 1, "client reconnects within 5s");
+        conn_ = ::accept(fd_, nullptr, nullptr);
+        require(conn_ >= 0, "accept reconnect");
+    }
+
 private:
     int fd_ = -1;
     int conn_ = -1;
@@ -282,6 +295,139 @@ SQ2_TEST(wire, stream_start_event) {
     // the 's' handler ACKs with STMf before invoking onStart
     const auto statF = server.readPacket();
     expect(opcodeOf(statF) == "STAT", "strm s acknowledged with STAT");
+
+    client.stop();
+    server.expectClosedByClient();
+}
+
+SQ2_TEST(wire, aude_power_event) {
+    LoopbackServer server;
+    std::atomic<int> lastEnable{-1};
+    std::atomic<int> count{0};
+    SlimProtoClient::Events events;
+    events.onAude = [&](bool enable) {
+        lastEnable.store(enable ? 1 : 0);
+        count.fetch_add(1);
+    };
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x02};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    // aude payload: enable_spdif, enable_dac.
+    const unsigned char off[2] = {0, 0};
+    server.sendPacket("aude", off);
+    for (int i = 0; i < 100 && count.load() < 1; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    expect(count.load() == 1 && lastEnable.load() == 0, "aude(0) reports power off");
+
+    const unsigned char on[2] = {1, 1};
+    server.sendPacket("aude", on);
+    for (int i = 0; i < 100 && count.load() < 2; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    expect(count.load() == 2 && lastEnable.load() == 1, "aude(1) reports power on");
+
+    client.stop();
+    server.expectClosedByClient();
+}
+
+SQ2_TEST(wire, codc_event) {
+    LoopbackServer server;
+    std::atomic<int> fmt{-1};
+    std::atomic<int> rateCode{-1};
+    std::atomic<int> seen{0};
+    SlimProtoClient::Events events;
+    events.onCodc = [&](StreamFormat f, const PcmParams& pcm) {
+        fmt.store(static_cast<int>(f));
+        rateCode.store(pcm.sampleRateCode);
+        seen.store(1);
+    };
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x03};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    // codc payload: format, size, rate, channels, endianness.
+    const unsigned char codc[5] = {'m', '1', '3', '2', '0'};
+    server.sendPacket("codc", codc);
+    for (int i = 0; i < 100 && !seen.load(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    expect(seen.load() == 1, "codc fired onCodc");
+    expect(fmt.load() == static_cast<int>(StreamFormat::Mp3), "codc format decoded");
+    expect(rateCode.load() == '3', "codc pcm params decoded");
+
+    client.stop();
+    server.expectClosedByClient();
+}
+
+SQ2_TEST(wire, setd_rename_and_query) {
+    LoopbackServer server;
+    SlimProtoClient::Events events;
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x04};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
+    client.setPlayerName("Original");
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    // setd rename: id 0 + "Renamed" + NUL.
+    const std::string rename = std::string("\0", 1) + "Renamed";
+    std::vector<unsigned char> setd(rename.begin(), rename.end());
+    setd.push_back('\0');
+    server.sendPacket("setd", setd);
+    const auto echo = server.readPacket();
+    expect(opcodeOf(echo) == "SETD", "rename echoed with SETD");
+    expect(std::string_view(reinterpret_cast<const char*>(echo.data() + 9)) == "Renamed",
+           "echo carries the new name");
+
+    // 5-byte query (id 0 only): the client must return the remembered name.
+    const unsigned char query[1] = {0};
+    server.sendPacket("setd", query);
+    const auto replied = server.readPacket();
+    expect(opcodeOf(replied) == "SETD", "query answered with SETD");
+    expect(std::string_view(reinterpret_cast<const char*>(replied.data() + 9)) == "Renamed",
+           "query returns the renamed value");
+
+    client.stop();
+    server.expectClosedByClient();
+}
+
+SQ2_TEST(wire, dsco_framing) {
+    LoopbackServer server;
+    SlimProtoClient::Events events;
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x05};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    client.sendDisco(2);  // REMOTE_DISCONNECT
+    const auto dsco = server.readPacket();
+    expect(opcodeOf(dsco) == "DSCO", "sendDisco emits DSCO");
+    const uint32_t dscoLen = (static_cast<uint32_t>(dsco[4]) << 24) |
+                             (static_cast<uint32_t>(dsco[5]) << 16) |
+                             (static_cast<uint32_t>(dsco[6]) << 8) | dsco[7];
+    expect(dscoLen == 1, "DSCO body is one reason byte");
+    expect(dsco[8] == 2, "DSCO carries the reason code");
+
+    client.stop();
+    server.expectClosedByClient();
+}
+
+SQ2_TEST(wire, server_silence_watchdog_reconnects) {
+    LoopbackServer server;
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x06};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", SlimProtoClient::Events{});
+    client.setServerTimeout(300);
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    expect(opcodeOf(server.readPacket()) == "HELO", "first connection HELO");
+
+    // Send nothing: the client must declare the connection dead and reconnect.
+    server.acceptReconnect();
+    expect(opcodeOf(server.readPacket()) == "HELO", "reconnect sends a fresh HELO");
 
     client.stop();
     server.expectClosedByClient();

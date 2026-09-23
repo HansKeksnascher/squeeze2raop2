@@ -1,8 +1,8 @@
 #include "playback/player_session.h"
 
+#include "app/shutdown_flag.h"
 #include "common/log.h"
 #include "common/net_util.h"
-#include "app/shutdown_flag.h"
 #include "common/util.h"
 
 #include <algorithm>
@@ -15,9 +15,9 @@ namespace squeeze2raop2 {
 PlayerSession::PlayerSession(std::string deviceId, std::string name, std::array<uint8_t, 6> mac,
                              std::optional<std::string> lmsHost, uint16_t lmsPort,
                              bool paceRealtime, std::optional<std::string> sinkPath,
-                             std::optional<RaopTarget> raopTarget,
-                             CredentialSink credSink, VolumeMode volumeMode,
-                             VolumeAnchors anchors, float volPct, int latencyMs)
+                             std::optional<RaopTarget> raopTarget, CredentialSink credSink,
+                             VolumeMode volumeMode, VolumeAnchors anchors, float volPct,
+                             int latencyMs, uint32_t serverTimeoutMs, NameSink nameSink)
     : deviceId_(std::move(deviceId)),
       name_(std::move(name)),
       mac_(mac),
@@ -25,6 +25,8 @@ PlayerSession::PlayerSession(std::string deviceId, std::string name, std::array<
       lmsPort_(lmsPort),
       paceRealtime_(paceRealtime),
       sinkPath_(std::move(sinkPath)),
+      serverTimeoutMs_(serverTimeoutMs),
+      nameSink_(std::move(nameSink)),
       anchors_(std::move(anchors)),
       volumeMode_(volumeMode),
       fixedVolumePct_(volPct) {
@@ -44,14 +46,21 @@ void PlayerSession::start() {
     SlimProtoClient::Events events;
     events.onStart = [this](const StrmStart& st) { startStream(st); };
     events.onCont = [this](uint32_t) {
-        if (!autostartPending_.exchange(false)) return;
-        client_->sendStat("STMs", currentStats());
-        streamThread_ = std::jthread([this](std::stop_token st) { streamLoop(st); });
+        // autostart >= 2 waits for cont before the pump starts (squeezelite
+        // parity); the pump's first decoded chunk then drives STMl/STMs.
+        haveCont_.store(true);
+        maybeStartPump();
     };
     events.onStop = [this]() {
+        client_->sendStat("STMf", currentStats());
+        // A configured fade-out is rendered by the pump; streamLoop tears the
+        // session down when it returns FadedOut.
+        if (streamActive_.load() && track_ && track_->requestFadeOut()) {
+            log::info("[ap] stop: fading out before teardown");
+            return;
+        }
         stopPlayback();
         output_->stop(true);
-        client_->sendStat("STMf", currentStats());
     };
     events.onFlush = [this](bool) {
         // Track transitions send 'strm f': drop buffered audio but KEEP the
@@ -75,6 +84,38 @@ void PlayerSession::start() {
     };
     events.onUnpause = [this](uint32_t) {
         if (track_) track_->unpause();
+    };
+    events.onSkipAhead = [this](uint32_t ms) {
+        // squeezelite drops the skipped frames from the output buffer; the
+        // bridge drops them from the decoded stream after flushing the ring.
+        if (!track_) return;
+        output_->silence();
+        track_->skipAhead(ms);
+    };
+    events.onCodc = [this](StreamFormat format, const PcmParams& pcm) {
+        if (!awaitCodc_.load() || !track_) return;
+        haveCodc_.store(true);
+        std::string error;
+        if (!track_->attachDecoder(format, pcm, error)) {
+            log::error("codc: unsupported codec '{}': {}", static_cast<char>(format), error);
+            client_->sendStat("STMn", currentStats());
+            track_.reset();
+            awaitCodc_.store(false);
+            return;
+        }
+        awaitCodc_.store(false);  // a duplicate codc is ignored
+        maybeStartPump();
+    };
+    events.onAude = [this](bool enable) {
+        if (enable) return;  // lazy session recreation covers power-on
+        log::info("[ap] aude power off; tearing down the session");
+        stopPlayback();
+        output_->stop(true);
+    };
+    events.onSetName = [this](const std::string& name) {
+        name_ = name;
+        client_->setPlayerName(name);
+        if (nameSink_) nameSink_(name);
     };
     events.onVolume = [this](double l, double r) {
         // The recovered LMS slider percent goes through the --vol-map dB
@@ -120,6 +161,7 @@ void PlayerSession::start() {
             "Firmware=squeeze2raop2 v0.1.0 (m1),pcm,mp3",
         std::move(events));
     client_->setPlayerName(name_);
+    client_->setServerTimeout(serverTimeoutMs_);
     client_->setStatsProvider([this] { return currentStats(); });
     client_->start(lmsHost_.value_or(""), lmsPort_);
     // the AirPlay session is prepared lazily when the first audio arrives;
@@ -155,12 +197,25 @@ void PlayerSession::stop() {
     if (client_) client_->stop();
 }
 
-StreamStats PlayerSession::currentStats() { return counters_.stats(); }
+StreamStats PlayerSession::currentStats() {
+    StreamStats st = counters_.stats();
+    // Real sender-ring occupancy, in bytes, for the STAT output buffer fields
+    // (squeezelite reports the output buffer the same way).
+    st.outputBufferSize = static_cast<uint32_t>(output_->capacityBytes());
+    st.outputBufferFullness = static_cast<uint32_t>(output_->queuedBytes());
+    return st;
+}
 
 void PlayerSession::startStream(const StrmStart& st) {
     stopPlayback();
     flushed_.store(false);
     retryUsed_.store(false);
+    autostart_.store(st.autostart);
+    awaitCodc_.store(false);
+    haveCodc_.store(false);
+    haveCont_.store(false);
+    sentStml_ = false;
+    sentStms_ = false;
 
     std::string host =
         st.serverIp ? ipv4ToString(st.serverIp) : (client_ ? client_->serverHost() : std::string());
@@ -172,9 +227,17 @@ void PlayerSession::startStream(const StrmStart& st) {
     }
     // Only formats the track pump actually consumes. LMS should honor the HELO
     // caps (pcm,mp3); a stray direct format would otherwise be pushed into the
-    // ring as raw PCM = noise.
-    if (st.format != StreamFormat::Pcm && st.format != StreamFormat::Mp3) {
+    // ring as raw PCM = noise. '?' (unknown) is allowed only with autostart>=2,
+    // where LMS learns the codec from the response header and returns it in
+    // 'codc' (squeezelite parity).
+    const bool unknown = st.format == StreamFormat::Unknown;
+    if (!unknown && st.format != StreamFormat::Pcm && st.format != StreamFormat::Mp3) {
         log::error("strm s: unsupported stream format '{}'", static_cast<char>(st.format));
+        client_->sendStat("STMn", currentStats());
+        return;
+    }
+    if (unknown && st.autostart < 2) {
+        log::error("strm s: unknown codec requires autostart >= 2");
         client_->sendStat("STMn", currentStats());
         return;
     }
@@ -183,34 +246,82 @@ void PlayerSession::startStream(const StrmStart& st) {
               st.request.find("Icy-MetaData") != std::string::npos ? "req" : "none");
     track_ = std::make_unique<PlaybackStream>(*output_, counters_, paceRealtime_, sinkPath_);
     track_->setMetaForward([this](std::string_view block) { client_->sendMeta(block); });
+    track_->setDecoderReady([this] { onDecoderReady(); });
+    track_->setUnderrun([this] { client_->sendStat("STMo", currentStats()); });
 
     std::string error;
-    const std::optional<std::string> headers = track_->open(st, host, port, error);
+    const std::optional<std::string> headers = track_->openSource(st, host, port, error);
     if (!headers) {
         log::error("stream connect {}:{} failed: {}", host, port, error);
+        client_->sendDisco(static_cast<uint8_t>(track_->disconnectCode()));
         client_->sendStat("STMn", currentStats());
+        track_.reset();
         return;
     }
     client_->sendResp(*headers);
     client_->sendStat("STMc", currentStats());
 
-    if (st.autostart >= 2) {
-        autostartPending_.store(true);
-        log::info("autostart={}, waiting for cont", st.autostart);
+    if (unknown) {
+        awaitCodc_.store(true);
+        log::info("autostart={}, unknown codec: waiting for codc", st.autostart);
+        return;  // maybeStartPump() runs from the codc handler
+    }
+    if (!track_->attachDecoder(st.format, st.pcm, error)) {
+        log::error("strm s: cannot create decoder: {}", error);
+        client_->sendStat("STMn", currentStats());
+        track_.reset();
         return;
     }
-    client_->sendStat("STMs", currentStats());
-    streamThread_ = std::jthread([this](std::stop_token stopTok) { streamLoop(stopTok); });
+    maybeStartPump();
+}
+
+// Start the pump once the codec is known and, for autostart >= 2, 'cont' has
+// arrived. Safe to call repeatedly; a running thread short-circuits.
+void PlayerSession::maybeStartPump() {
+    if (!track_) return;
+    if (streamThread_.joinable()) return;
+    if (awaitCodc_.load() && !haveCodc_.load()) return;
+    if (autostart_.load() >= 2 && !haveCont_.load()) return;
+    streamThread_ = std::jthread([this](std::stop_token st) { streamLoop(st); });
+}
+
+// First decoded chunk: announce decoder readiness (STMl for autostart 0) and,
+// with no AirPlay target, the track start (STMs) since the prebuffer gate is
+// disabled.
+void PlayerSession::onDecoderReady() {
+    if (autostart_.load() == 0 && !sentStml_) {
+        sentStml_ = true;
+        client_->sendStat("STMl", currentStats());
+    }
+    if (!output_->hasTarget() && !sentStms_) {
+        sentStms_ = true;
+        client_->sendStat("STMs", currentStats());
+    }
+}
+
+// The prebuffer gate opened: the receiver output is about to start (STMs) and
+// the sender is launched with the current volume.
+void PlayerSession::onPrebufferReady() {
+    if (!sentStms_) {
+        sentStms_ = true;
+        client_->sendStat("STMs", currentStats());
+    }
+    launchAirplaySession();
 }
 
 void PlayerSession::streamLoop(std::stop_token st) {
-    if (!track_) return;
+    streamActive_.store(true);
+    if (!track_) {
+        streamActive_.store(false);
+        return;
+    }
     const PcmFormat fmt = track_->format();
     const bool haveTarget = output_->hasTarget();
     if (haveTarget) {
         if (!output_->prepare(fmt.sampleRate)) {
             log::error("[ap] cannot start airplay session for {}", name_);
             client_->sendStat("STMn", currentStats());
+            streamActive_.store(false);
             return;
         }
         // (input rate is applied inside prepare(); the only later setInputRate
@@ -223,25 +334,32 @@ void PlayerSession::streamLoop(std::stop_token st) {
     // retry. Each pass re-arms the prebuffer gate because a retry creates a
     // fresh ring.
     for (;;) {
-        const PlaybackStream::End end = track_->run(st, [this] { launchAirplaySession(); });
+        const PlaybackStream::End end = track_->run(st, [this] { onPrebufferReady(); });
         if (end == PlaybackStream::End::DecodeError) client_->sendStat("STMn", currentStats());
+
+        const bool keepSession = flushed_.exchange(false);
+        const bool lost = output_->consumeLost();
+        const bool stopping = st.stop_requested() || !g_run.load();
+        const bool reachedEof = end == PlaybackStream::End::Eof;
+
+        // A stop-path fade already reached zero: the 'q' handler sent STMf.
+        if (end == PlaybackStream::End::FadedOut) {
+            log::debug("stream exit: fade-out complete");
+            if (!keepSession) output_->stop(false);
+            break;
+        }
 
         // Exit handling, decided by the pure decideExit() policy: a stop
         // request sends nothing (the flush/stop handlers already told LMS); a
         // receiver loss gets one transparent retry; a natural end (HTTP EOF
         // with the decoder drained) reports STMd — LMS advances the queue on
         // "decoder ready" — then STMu once the sender ring has played out.
-        const bool keepSession = flushed_.exchange(false);
-        const bool lost = output_->consumeLost();
-        const bool stopping = st.stop_requested() || !g_run.load();
-        const bool reachedEof = end == PlaybackStream::End::Eof;
         const ExitAction action = decideExit({stopping, lost, retryUsed_.load(), reachedEof});
         log::debug("stream exit: action={} stopping={} lost={} eof={} flushed={}",
                    static_cast<int>(action), stopping, lost, reachedEof, keepSession);
 
         switch (action) {
-        case ExitAction::SilentStop:
-            break;
+        case ExitAction::SilentStop: break;
         case ExitAction::Retry:
             retryUsed_.store(true);
             log::info("[ap] receiver session lost; retrying in 2s");
@@ -261,7 +379,9 @@ void PlayerSession::streamLoop(std::stop_token st) {
             client_->sendStat("STMd", currentStats());
             break;
         case ExitAction::EndedEof:
-            // Decoder complete: tell LMS we are ready for the next track.
+            // Decoder complete: DSCO(OK) closes the stream, then STMd tells LMS
+            // we are ready for the next track.
+            client_->sendDisco(static_cast<uint8_t>(track_->disconnectCode()));
             client_->sendStat("STMd", currentStats());
             // Then let the receiver play out the buffered tail before the
             // output underrun (normal end of playback).
@@ -271,6 +391,10 @@ void PlayerSession::streamLoop(std::stop_token st) {
             break;
         case ExitAction::EndedError:
             // Socket or decode error: the stream is dead, not merely finished.
+            // A source-side failure carries a DSCO reason; a decode error does
+            // not (its code is None).
+            if (track_->disconnectCode() != DisconnectCode::None)
+                client_->sendDisco(static_cast<uint8_t>(track_->disconnectCode()));
             client_->sendStat("STMu", currentStats());
             break;
         }
@@ -282,6 +406,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
     }
 
     track_->close();
+    streamActive_.store(false);
     log::info("stream ended, received={} bytes", counters_.bytesReceived());
 }
 
@@ -304,7 +429,6 @@ void PlayerSession::waitForOutputDrain(std::stop_token st) {
 void PlayerSession::stopPlayback() {
     if (streamThread_.joinable()) {
         streamThread_.request_stop();
-        autostartPending_.store(false);
         if (track_) {
             track_->unpause();
             // Unblock a read() parked in poll()/recv() before joining, so a

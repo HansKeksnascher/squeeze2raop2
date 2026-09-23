@@ -251,3 +251,63 @@ SQ2_TEST(persistence, legacy_import) {
     expect(text.find("[player \"Kitchen\"]") != std::string::npos,
            "legacy import wrote a player section");
 }
+
+SQ2_TEST(persistence, server_timeout_global) {
+    ScratchDir dir("timeout");
+    Persistence p;
+    Settings s;
+    std::string error;
+    expect(p.open(dir.file("default.conf"), s, error), "fresh open");
+    expect(s.global.serverTimeoutMs == 35000, "server-timeout-ms defaults to 35000");
+
+    const std::string path = dir.file("timeout.conf");
+    writeFile(path, "[global]\nserver-timeout-ms = 1500\nlog = info\n");
+    Persistence p2;
+    Settings s2;
+    expect(p2.open(path, s2, error), "open timeout config");
+    expect(s2.global.serverTimeoutMs == 1500, "server-timeout-ms parsed");
+
+    const std::string bad = dir.file("bad.conf");
+    writeFile(bad, "[global]\nserver-timeout-ms = 5\n");
+    Persistence p3;
+    Settings s3;
+    expect(!p3.open(bad, s3, error), "out-of-range server-timeout-ms rejected");
+    expect(!error.empty(), "rejection carries an error message");
+}
+
+SQ2_TEST(persistence, rename_persisted) {
+    ScratchDir dir("rename");
+    const std::string path = dir.file("rename.conf");
+    writeFile(path,
+              "[global]\nlog = info\n\n"
+              "[player \"Kitchen\"]\n"
+              "id = 542a1b5cc9e2\n"
+              "mac = aa:ba:87:2b:cf:01\n");
+    Persistence p;
+    Settings s;
+    std::string error;
+    expect(p.open(path, s, error), "open rename config");
+    auto before = p.resolve("542a1b5cc9e2", "Kitchen", false);
+    expect(before.has_value() && before->name == "Kitchen", "initial name");
+    const auto mac = before->mac;
+
+    p.savePlayerName(before->key, "Kueche15");
+
+    auto after = p.resolve("542a1b5cc9e2", "Kitchen", false);
+    expect(after.has_value() && after->name == "Kueche15", "renamed in memory");
+    expect(after->key == "542a1b5cc9e2", "key stays the id");
+    expect(after->mac == mac, "mac unchanged");
+
+    // Reopen from disk: the rename must survive, header/key/mac intact.
+    Persistence p2;
+    Settings s2;
+    expect(p2.open(path, s2, error), "reopen rename config");
+    const auto* byKey = findByKey(s2, "542a1b5cc9e2");
+    expect(byKey != nullptr, "section still resolved by id");
+    expect(byKey && byKey->name == "Kueche15", "rename persisted");
+    expect(byKey && byKey->mac == mac, "mac survived the rewrite");
+
+    const std::string text = readFile(path);
+    expect(text.find("name = Kueche15") != std::string::npos, "name key written");
+    expect(text.find("[player \"Kitchen\"]") != std::string::npos, "header left unchanged");
+}

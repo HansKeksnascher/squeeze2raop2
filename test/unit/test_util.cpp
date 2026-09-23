@@ -65,12 +65,12 @@ SQ2_TEST(util, short_packets_ignored) {
     client.process(withFiller("strmu", 21));  // u, one byte short
     client.process(withFiller("audg", 21));   // audg, old code read OOB
     client.process(withFiller("cont", 7));    // cont, one byte short
-    client.process(withFiller("codc", 9));    // codc, one byte short
+    client.process(withFiller("codc", 8));    // codc, one byte short (needs 9)
     client.process(withFiller("serv", 7));    // serv, one byte short
     client.process("strmq");                  // q -> onStop
     client.process(withFiller("strmt", 22));  // t at exact bound
     client.process(withFiller("cont", 8));    // cont -> onCont
-    client.process(withFiller("codc", 10));   // codc -> onCodc
+    client.process(withFiller("codc", 9));    // codc at exact bound -> onCodc
     client.process(withFiller("serv", 8));    // serv -> onServerSwitch
     expect(stops == 1, "one onStop");
     expect(conts == 1, "one onCont");

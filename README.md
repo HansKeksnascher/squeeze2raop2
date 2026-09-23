@@ -30,6 +30,12 @@ pair-verify, encrypted RTSP/RTP) from scratch — and it was written using
   pass-through `META` to LMS
 - Clean stop/pause: FLUSH + ring drain so the receiver doesn't keep playing
   its jitter-buffer tail
+- Squeezelite-parity slimproto: `aude` power on/off, `codc` codec negotiation,
+  `setd` rename (persisted as a machine-managed key), `strm a` skip-ahead,
+  replay gain, `STMl`/`STMo`/`DSCO` STAT events, and fade in/out (`strm`
+  transition types 2/3/4)
+- LMS-silence watchdog (`server-timeout-ms`) so a dead control connection is
+  reconnected instead of waiting on TCP keepalive
 - Scheduled latency tuning (`latency-ms`, default 500 ms)
 - Honest codec caps (`pcm,mp3`) so LMS transcodes everything else (FLAC etc.)
   losslessly on the LAN
@@ -62,6 +68,7 @@ CLI flag is `--config <file>`.
 lms       = 192.168.1.10:3483   # omit for UDP discovery on 3483
 discovery = on
 log       = debug
+# server-timeout-ms = 35000     # reconnect after this much LMS silence
 
 [default]                       # inherited by every player, then overridden
 volume-map = -30:1, -23:16, -15:50, 0:100
@@ -80,8 +87,8 @@ target = 192.168.1.157:7000      # fixed receiver => static player
 A section spawns at startup when it is user-authored; discovered devices are
 matched by `id`, then virtual `mac`, then name, and (with
 `auto-register = on`) get an `auto = true` section so their MAC and pairing
-credentials persist. The program rewrites only the machine-managed `mac` and
-`creds` keys, preserving your comments and layout. A legacy
+credentials persist. The program rewrites only the machine-managed `mac`,
+`creds` and `name` keys, preserving your comments and layout. A legacy
 `squeeze2raop2.state` is imported automatically on first run.
 
 ## The volume chain
@@ -124,8 +131,12 @@ Vendored under `third_party/`; each keeps its own license.
 ## Limitations
 
 - AirPlay volume can only go down to −30 dBFS; below that the receiver
-  mutes. Digital (bridge-side) attenuation is not implemented.
-- Codecs are `pcm` and `mp3` only; everything else relies on LMS transcoding.
+  mutes. The LMS volume slider therefore stays receiver-side; replay gain and
+  fades are the only bridge-side (digital) gain stages.
+- Crossfade (`strm` transition type 1) is not implemented: each track is torn
+  down or flushed between songs, so fade in/out only.
+- Codecs are `pcm` and `mp3` only; everything else relies on LMS transcoding
+  (or, for an unknown codec announced via `codc`, is rejected with `STMn`).
 - Developed and tested against one HomePod and one LMS 9.1 server.
 - mDNS is Linux-only (mDNSPosix).
 - LMS's HTTP JSON-RPC endpoint can return empty replies on some versions

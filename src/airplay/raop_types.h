@@ -20,4 +20,7 @@ struct RaopTarget {
 // can persist them (deviceId, credsJson).
 using CredentialSink = std::function<void(const std::string&, const std::string&)>;
 
+// Reports a player rename sent by LMS ('setd'), so the bridge can persist it.
+using NameSink = std::function<void(const std::string&)>;
+
 }  // namespace squeeze2raop2

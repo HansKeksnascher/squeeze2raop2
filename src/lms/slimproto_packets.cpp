@@ -94,8 +94,8 @@ private:
 };
 
 // Opcodes LMS sends that this client intentionally ignores.
-constexpr std::array<std::string_view, 10> kIgnoredOps{"aude", "DBUG", "SYST", "visu", "IR  ",
-                                                       "GRFe", "GRFh", "GRFb", "GRFm", "OCOB"};
+constexpr std::array<std::string_view, 9> kIgnoredOps{"DBUG", "SYST", "visu", "IR  ", "GRFe",
+                                                      "GRFh", "GRFb", "GRFm", "OCOB"};
 
 }  // namespace
 
@@ -311,7 +311,7 @@ void SlimProtoClient::process(const std::string& pkt) {
         const uint32_t metaint = *r.u32();
         if (events_.onCont) events_.onCont(metaint);
     } else if (op == "codc") {
-        if (len < 10) return;
+        if (len < 9) return;  // opcode(4) + format + 4 pcm bytes
         const StreamFormat f = static_cast<StreamFormat>(*r.u8());
         const PcmParams pcm{*r.u8(), *r.u8(), *r.u8(), *r.u8()};
         if (events_.onCodc) events_.onCodc(f, pcm);
@@ -338,6 +338,13 @@ void SlimProtoClient::process(const std::string& pkt) {
         const uint32_t gainR = *r.u32();
         if (events_.onVolume)
             events_.onVolume(lmsSliderPctFromGain(gainL), lmsSliderPctFromGain(gainR));
+    } else if (op == "aude") {
+        // Output enable/disable. squeezelite keys power on enable_spdif and
+        // ignores enable_dac; mirror that.
+        if (len < 6) return;
+        const uint8_t enableSpdif = *r.u8();
+        if (!r.skip(1)) return;  // enable_dac
+        if (events_.onAude) events_.onAude(enableSpdif != 0);
     } else if (op == "setd") {
         if (len < 5) return;
         if (*r.u8() != 0) return;
@@ -346,6 +353,8 @@ void SlimProtoClient::process(const std::string& pkt) {
         } else {
             std::string name(reinterpret_cast<const char*>(r.tail().data()), r.remaining());
             while (!name.empty() && name.back() == '\0') name.pop_back();
+            // Remember the name so a later 5-byte query echoes the new one.
+            playerName_ = name;
             if (events_.onSetName) events_.onSetName(name);
             sendSetdName(name);
         }
