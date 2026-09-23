@@ -31,6 +31,15 @@ struct AirplayDevice {
     bool airplay2() const {
         return (features & (1ULL << 38)) != 0 || (features & (1ULL << 48)) != 0;
     }
+    // Native AirPlay 2 only when the `_airplay._tcp` record is present AND
+    // advertises the HK bits; otherwise classic RAOP (squeeze2raop2 prefers
+    // AirPlay 2 and falls back).
+    bool useAirplay2() const { return hasAirplay() && airplay2(); }
+    // Port to reach the receiver over the chosen transport. Falls back to the
+    // other service if the preferred one is missing.
+    uint16_t preferredPort() const {
+        return useAirplay2() ? airplayPort : (raopPort ? raopPort : airplayPort);
+    }
 };
 
 class DeviceRegistry {

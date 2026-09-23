@@ -64,6 +64,10 @@ public:
     void updateTarget(RaopTarget t);
     void stop();
 
+    // Transport currently in use (native AirPlay 2 vs classic RAOP), taken from
+    // the live target. Used to detect a discovery race that changed it.
+    bool airplay2() const { return output_->airplay2(); }
+
 private:
     StreamStats currentStats();
     void startStream(const StrmStart& st);

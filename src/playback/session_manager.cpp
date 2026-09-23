@@ -46,29 +46,40 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
         return;
     }
 
+    // Identity/target resolution happens once for both the Added and the
+    // transport-change Updated path; auto-registration only for a new device.
+    auto resolved = persistence_.resolve(
+        dev.id, dev.name, ev == DeviceRegistry::Event::Added && settings_.global.autoRegister);
+    if (!resolved) return;
+
+    // Prefer native AirPlay 2 when the `_airplay._tcp` record is present and
+    // advertises the HK bits; otherwise classic RAOP. The two mDNS records for
+    // one receiver race, so a session first built from the raop record (no
+    // features yet) may need to be rebuilt once the airplay record lands.
+    const bool ap2 = dev.useAirplay2();
+    const uint16_t port = dev.preferredPort();
+
     if (ev == DeviceRegistry::Event::Updated) {
-        auto resolved = persistence_.resolve(dev.id, dev.name, /*autoRegister=*/false);
-        if (!resolved) return;
         auto it = sessions_.find(resolved->key);
         if (it == sessions_.end()) return;
-        // A user-pinned target wins over the dynamically discovered one.
-        if (resolved->target) return;
-        if (!dev.host.empty() && (dev.hasRaop() || dev.hasAirplay())) {
-            RaopTarget t =
-                makeTarget(dev.host,
-                           dev.airplay2() ? (dev.airplayPort ? dev.airplayPort : dev.raopPort)
-                                          : (dev.raopPort ? dev.raopPort : dev.airplayPort),
-                           dev.airplay2(), *resolved);
+        if (resolved->target) return;  // a user-pinned target wins
+        if (dev.host.empty() || (!dev.hasRaop() && !dev.hasAirplay())) return;
+        if (it->second->airplay2() == ap2) {
+            RaopTarget t = makeTarget(dev.host, port, ap2, *resolved);
             it->second->updateTarget(t);
             if (t.port) log::debug("session target refreshed: {} {}:{}", dev.name, t.host, t.port);
+            return;
         }
+        log::info("session transport changed for {} ({} -> {}); rebuilding",
+                  resolved->name.empty() ? resolved->key : resolved->name,
+                  it->second->airplay2() ? "ap2" : "ap1", ap2 ? "ap2" : "ap1");
+        it->second.reset();
+        sessions_.erase(it);
+        // fall through and recreate with the correct transport
+    } else if (ev != DeviceRegistry::Event::Added) {
         return;
     }
 
-    if (ev != DeviceRegistry::Event::Added) return;
-
-    auto resolved = persistence_.resolve(dev.id, dev.name, settings_.global.autoRegister);
-    if (!resolved) return;
     if (!resolved->enabled) {
         log::info("session skipped: {} (disabled)", dev.name);
         return;
@@ -88,13 +99,13 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
     if (resolved->target)
         raopTarget = makeTarget(resolved->target->first, resolved->target->second,
                                 resolved->airplay2, *resolved);
-    else if (!dev.host.empty())
-        raopTarget = makeTarget(dev.host, dev.airplay2() ? dev.airplayPort : dev.raopPort,
-                                dev.airplay2(), *resolved);
+    else if (!dev.host.empty() && (dev.hasRaop() || dev.hasAirplay()))
+        raopTarget = makeTarget(dev.host, port, ap2, *resolved);
 
     log::info("session created: {} mac={} ({} {}:{}{})", resolved->name, macToString(resolved->mac),
-              resolved->airplay2 ? "ap2" : "ap1", raopTarget ? raopTarget->host : dev.host,
-              raopTarget ? raopTarget->port : 0, resolved->password.empty() ? "" : " password");
+              (raopTarget ? raopTarget->airplay2 : resolved->airplay2) ? "ap2" : "ap1",
+              raopTarget ? raopTarget->host : dev.host, raopTarget ? raopTarget->port : 0,
+              resolved->password.empty() ? "" : " password");
 
     const std::string key = resolved->key;
     auto session = std::make_unique<PlayerSession>(
