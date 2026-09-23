@@ -26,7 +26,8 @@ int main(int argc, char** argv) {
     }
 
     log::setLevel(settings.global.logLevel);
-    log::info("squeeze2raop2 starting {} (config {})", SQUEEZE2RAOP2_VERSION, persistence.path());
+    log::info(log::Area::App, "squeeze2raop2 starting {} (config {})", SQUEEZE2RAOP2_VERSION,
+              persistence.path());
 
     // SA_RESTART matches glibc's signal() default; poll/select still return
     // EINTR (they are never restarted), which the read loops handle.
@@ -37,6 +38,6 @@ int main(int argc, char** argv) {
     ::sigaction(SIGPIPE, &sa, nullptr);
 
     runBridge(settings, persistence);
-    log::info("bye");
+    log::info(log::Area::App, "bye");
     return 0;
 }

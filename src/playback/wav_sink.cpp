@@ -56,11 +56,11 @@ void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format)
         writeInt<Endian::Little>(header.data() + 40, uint32_t{0xFFFFFFFF});
         if (fwrite(header.data(), 1, header.size(), fp_) != header.size()) {
             writeFailed_ = true;
-            log::error("sink write failed {}: {}", path_, errnoMessage(errno));
+            log::error(log::Area::Pb, "sink write failed {}: {}", path_, errnoMessage(errno));
             return;
         }
         headerWritten_ = true;
-        log::info("sink opened {} ({} Hz, {} bit, {} ch)", path_, format_.sampleRate,
+        log::info(log::Area::Pb, "sink opened {} ({} Hz, {} bit, {} ch)", path_, format_.sampleRate,
                   format_.bitsPerSample, format_.channels);
     }
 
@@ -85,7 +85,7 @@ void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format)
 
     if (fwrite(out, 1, outLen, fp_) != outLen) {
         writeFailed_ = true;
-        log::error("sink write failed {}: {}", path_, errnoMessage(errno));
+        log::error(log::Area::Pb, "sink write failed {}: {}", path_, errnoMessage(errno));
         return;
     }
     total_ += outLen;

@@ -57,7 +57,7 @@ bool recvFully(int fd, void* dst, size_t len) {
 bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
     UniqueFd fd{::socket(AF_INET, SOCK_DGRAM, 0)};
     if (!fd) {
-        log::error("discovery socket failed: {}", errnoMessage(errno));
+        log::error(log::Area::Lms, "discovery socket failed: {}", errnoMessage(errno));
         return false;
     }
     int one = 1;
@@ -72,7 +72,7 @@ bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
     sockaddr_in from{};
     while (nowMs() < deadline) {
         if (sendto(fd.get(), "e", 1, 0, reinterpret_cast<sockaddr*>(&d), sizeof(d)) < 0)
-            log::warn("discovery send failed: {}", errnoMessage(errno));
+            log::warn(log::Area::Lms, "discovery send failed: {}", errnoMessage(errno));
 
         const uint64_t now = nowMs();
         if (now >= deadline) break;
@@ -94,7 +94,7 @@ bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
             buf[static_cast<size_t>(n)] = '\0';
             if (buf[0] == 'E' || buf[0] == 'D') {
                 hostOut = ipv4ToString(from.sin_addr);
-                log::info("discovered LMS at {}:{}", hostOut, port);
+                log::info(log::Area::Lms, "discovered LMS at {}:{}", hostOut, port);
                 return true;
             }
         }
@@ -165,7 +165,7 @@ bool SlimProtoClient::connectOnce(bool reconnect) {
     std::string error;
     const int fd = connectTcp(host_, port_, error);
     if (fd < 0) {
-        log::warn("connect to {}:{} failed: {}", host_, port_, error);
+        log::warn(log::Area::Lms, "connect to {}:{} failed: {}", host_, port_, error);
         return false;
     }
     int one = 1;
@@ -200,7 +200,7 @@ void SlimProtoClient::run(std::stop_token st) {
     unsigned fails = 0;
     while (!st.stop_requested()) {
         if (host_.empty() && !discoverLms(host_, port_, 5000)) {
-            log::warn("LMS discovery failed, retrying in 5s");
+            log::warn(log::Area::Lms, "LMS discovery failed, retrying in 5s");
             for (unsigned i = 0; i < 50 && !st.stop_requested(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
@@ -208,7 +208,7 @@ void SlimProtoClient::run(std::stop_token st) {
         if (!connectOnce(reconnect_)) {
             ++fails;
             unsigned delay = std::min<unsigned>(fails * 2, 15);
-            log::warn("connect to {} failed, retrying in {}s", host_, delay);
+            log::warn(log::Area::Lms, "connect to {} failed, retrying in {}s", host_, delay);
             for (unsigned i = 0; i < delay * 10 && !st.stop_requested(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
@@ -241,7 +241,7 @@ void SlimProtoClient::run(std::stop_token st) {
                 // the configured window means the control connection is dead.
                 if (serverTimeoutMs_ && lastServerMsgMs_ &&
                     nowMs() - lastServerMsgMs_ > serverTimeoutMs_) {
-                    log::warn("no server messages for {} ms; reconnecting",
+                    log::warn(log::Area::Lms, "no server messages for {} ms; reconnecting",
                               nowMs() - lastServerMsgMs_);
                     break;
                 }
@@ -252,7 +252,7 @@ void SlimProtoClient::run(std::stop_token st) {
                 if (!recvFully(fd, hdr, sizeof(hdr))) break;
                 expect = static_cast<size_t>(readInt<Endian::Big, uint16_t>(hdr));
                 if (expect > kMaxPacket || expect < 4) {
-                    log::error("bogus packet length {}", expect);
+                    log::error(log::Area::Lms, "bogus packet length {}", expect);
                     break;
                 }
                 buf.clear();
@@ -275,7 +275,7 @@ void SlimProtoClient::run(std::stop_token st) {
                 }
             }
         }
-        log::info("connection lost");
+        log::info(log::Area::Lms, "connection lost");
         if (st.stop_requested()) break;
     }
 }

@@ -37,7 +37,7 @@ PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
     srcRate_ = in.sampleRate;
     if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
         (srcChannels_ != 1 && srcChannels_ != 2)) {
-        log::error("pcm codec: unsupported {} bit / {} ch stream", srcBits_, srcChannels_);
+        log::error(log::Area::Dec, "unsupported {} bit / {} ch stream", srcBits_, srcChannels_);
         failed_ = true;
     }
     bytesPerFrame_ = size_t(srcChannels_) * (srcBits_ / 8);
@@ -61,11 +61,11 @@ std::optional<size_t> PcmDecoder::checkHeader() {
         srcRate_ = readInt<Endian::Little, uint32_t>(p + 24);
         srcBits_ = static_cast<uint8_t>(readInt<Endian::Little, uint16_t>(p + 34));
         srcBigEndian_ = false;
-        log::info("pcm codec: WAV header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
+        log::info(log::Area::Dec, "WAV header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
                   srcChannels_);
         if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
             (srcChannels_ != 1 && srcChannels_ != 2)) {
-            log::error("pcm codec: unsupported WAV {} bit / {} ch", srcBits_, srcChannels_);
+            log::error(log::Area::Dec, "unsupported WAV {} bit / {} ch", srcBits_, srcChannels_);
             failed_ = true;
             return size_t{0};
         }
@@ -103,7 +103,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                     --exponent;
                 }
                 srcRate_ = rate;
-                log::info("pcm codec: AIFF header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
+                log::info(log::Area::Dec, "AIFF header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
                           srcChannels_);
             }
             if (tagIs(p + off, "SSND")) {
@@ -111,7 +111,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                 // the 4-byte sound-data offset at +8 needs 12 bytes. Reading it
                 // with fewer would run past the probe buffer.
                 if (off + 12 > have) {
-                    log::error("pcm codec: truncated AIFF SSND header");
+                    log::error(log::Area::Dec, "truncated AIFF SSND header");
                     failed_ = true;
                     return size_t{0};
                 }
@@ -119,7 +119,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                 const size_t skip = off + 8 + sndOffset;
                 if ((srcBits_ != 16 && srcBits_ != 24) || (srcBits_ == 24 && srcChannels_ != 2) ||
                     (srcChannels_ != 1 && srcChannels_ != 2)) {
-                    log::error("pcm codec: unsupported AIFF {} bit / {} ch", srcBits_,
+                    log::error(log::Area::Dec, "unsupported AIFF {} bit / {} ch", srcBits_,
                                srcChannels_);
                     failed_ = true;
                 } else {
@@ -131,14 +131,15 @@ std::optional<size_t> PcmDecoder::checkHeader() {
             const uint32_t len = readInt<Endian::Big, uint32_t>(p + off + 4);
             off += size_t(len) + 8;
         }
-        log::error("pcm codec: AIFF header without SSND chunk");
+        log::error(log::Area::Dec, "AIFF header without SSND chunk");
         failed_ = true;
         return size_t{0};
     }
 
     // No container: raw samples per the strm params (the common radio case).
-    log::info("pcm codec: raw pcm, {} bit / {} Hz / {} ch / {}, output {} Hz", srcBits_, srcRate_,
-              srcChannels_, srcBigEndian_ ? "big-endian" : "little-endian", fmt_.sampleRate);
+    log::info(log::Area::Dec, "raw pcm, {} bit / {} Hz / {} ch / {}, output {} Hz", srcBits_,
+              srcRate_, srcChannels_, srcBigEndian_ ? "big-endian" : "little-endian",
+              fmt_.sampleRate);
     return size_t{0};
 }
 
@@ -213,7 +214,7 @@ void PcmDecoder::setSourceRate(double framesPerSecond) {
     const bool wasEngaged = rateEngaged_;
     rateStep_ = step;
     rateEngaged_ = step != 1.0;
-    log::info("pcm codec: source rate {} fps -> step {:.6f} ({})", framesPerSecond, rateStep_,
+    log::info(log::Area::Dec, "source rate {} fps -> step {:.6f} ({})", framesPerSecond, rateStep_,
               rateEngaged_ ? "resampling" : "pass-through");
     if (wasEngaged && !rateEngaged_) resetRateStage();
 }
@@ -273,7 +274,7 @@ size_t PcmDecoder::drain(std::span<int16_t> out) {
         headerBytes_ = *skip;
         if (*skip > buf_.size()) {  // AIFF sound data starts beyond what we
             // have buffered (possible with a large SSND offset); fail closed.
-            log::error("pcm codec: SSND offset {} beyond header buffer", *skip);
+            log::error(log::Area::Dec, "SSND offset {} beyond header buffer", *skip);
             failed_ = true;
             return 0;
         }

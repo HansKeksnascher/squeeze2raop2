@@ -318,7 +318,7 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
         else
             return fail(error, lineNo, "log must be off|error|warn|info|debug");
     } else {
-        log::warn("config {}:{}: unknown [global] key '{}'", path_, lineNo, key);
+        log::warn(log::Area::App, "config {}:{}: unknown [global] key '{}'", path_, lineNo, key);
     }
     return true;
 }
@@ -329,7 +329,8 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
     // Identity/machine keys are meaningless in [default]; reject them up front.
     if (isDefault &&
         (key == "id" || key == "mac" || key == "name" || key == "target" || key == "creds")) {
-        log::warn("config {}:{}: '{}' is not valid in [default], ignoring", path_, lineNo, key);
+        log::warn(log::Area::App, "config {}:{}: '{}' is not valid in [default], ignoring", path_,
+                  lineNo, key);
         return true;
     }
 
@@ -409,7 +410,7 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
         pc.autoSection = b;
         if (!isDefault && b) section->autoRegistered = true;
     } else {
-        log::warn("config {}:{}: unknown key '{}'", path_, lineNo, key);
+        log::warn(log::Area::App, "config {}:{}: unknown key '{}'", path_, lineNo, key);
     }
     return true;
 }
@@ -448,7 +449,8 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
             std::string canonical;
             bool isPlayer = false;
             if (!parseSectionHeader(raw, canonical, isPlayer)) {
-                log::warn("config {}:{}: unknown section header, ignoring", path_, lineNo);
+                log::warn(log::Area::App, "config {}:{}: unknown section header, ignoring", path_,
+                          lineNo);
                 line.kind = Line::Kind::Other;
                 lines_.push_back(std::move(line));
                 current = Kind::Unknown;
@@ -476,7 +478,8 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
 
         const size_t eq = raw.find('=');
         if (eq == std::string::npos) {
-            log::warn("config {}:{}: not a key=value line, ignoring", path_, lineNo);
+            log::warn(log::Area::App, "config {}:{}: not a key=value line, ignoring", path_,
+                      lineNo);
             line.kind = Line::Kind::Other;
             lines_.push_back(std::move(line));
             continue;
@@ -492,7 +495,8 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
         line.valuePrefix = raw.substr(0, (vstart == std::string::npos) ? raw.size() : vstart);
         if (vstart == std::string::npos) line.valuePrefix.push_back(' ');
         if (current == Kind::None || current == Kind::Unknown) {
-            log::warn("config {}:{}: key '{}' outside a section, ignoring", path_, lineNo, keyRaw);
+            log::warn(log::Area::App, "config {}:{}: key '{}' outside a section, ignoring", path_,
+                      lineNo, keyRaw);
             lines_.push_back(std::move(line));
             continue;
         }
@@ -546,7 +550,8 @@ bool Persistence::importLegacy(const std::string& legacyPath, std::string& error
             iss >> macText;
             std::array<uint8_t, 6> mac{};
             if (!macFromString(macText, mac)) {
-                log::warn("legacy state {}:{}: bad mac, skipping", legacyPath, lineNo);
+                log::warn(log::Area::App, "legacy state {}:{}: bad mac, skipping", legacyPath,
+                          lineNo);
                 continue;
             }
             Section& s = ensureSection(canonical, canonical, hex);
@@ -568,7 +573,8 @@ bool Persistence::importLegacy(const std::string& legacyPath, std::string& error
         }
     }
     (void)error;
-    if (imported > 0) log::info("persistence: imported {} entries from {}", imported, legacyPath);
+    if (imported > 0)
+        log::info(log::Area::App, "imported {} entries from {}", imported, legacyPath);
     return imported > 0;
 }
 
@@ -667,7 +673,7 @@ bool Persistence::saveLocked() {
     {
         std::ofstream out(tmp, std::ios::trunc);
         if (!out) {
-            log::error("cannot write config file {}", tmp);
+            log::error(log::Area::App, "cannot write config file {}", tmp);
             return false;
         }
         for (const auto& l : lines_) {
@@ -712,7 +718,7 @@ bool Persistence::saveLocked() {
         }
         out.flush();
         if (!out) {
-            log::error("cannot write config file {}", tmp);
+            log::error(log::Area::App, "cannot write config file {}", tmp);
             out.close();
             ::remove(tmp.c_str());
             return false;
@@ -723,7 +729,7 @@ bool Persistence::saveLocked() {
         (void)::close(fd);
     }
     if (std::rename(tmp.c_str(), path_.c_str()) != 0) {
-        log::error("cannot replace config file {}: {}", path_, errnoMessage(errno));
+        log::error(log::Area::App, "cannot replace config file {}: {}", path_, errnoMessage(errno));
         ::remove(tmp.c_str());
         return false;
     }

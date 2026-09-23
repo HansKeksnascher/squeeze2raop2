@@ -16,7 +16,7 @@ VolumeAnchors SessionManager::anchorsFor(const ResolvedPlayerConfig& cfg) const 
     // The loader already validated the spec; the fallback keeps programmatic
     // configs safe.
     if (auto parsed = VolumeAnchors::parse(cfg.volumeMap)) return *parsed;
-    log::warn("volume map '{}' invalid; using default", cfg.volumeMap);
+    log::warn(log::Area::Ses, "volume map '{}' invalid; using default", cfg.volumeMap);
     if (auto fallback = VolumeAnchors::parse(kDefaultVolumeMap)) return *fallback;
     return VolumeAnchors{};
 }
@@ -40,7 +40,7 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
         if (!resolved) return;
         auto it = sessions_.find(resolved->key);
         if (it == sessions_.end()) return;
-        log::info("session closed: {} ({})", dev.name, dev.id);
+        log::info(log::Area::Ses, "session closed: {} ({})", dev.name, dev.id);
         it->second.reset();  // ~PlayerSession stops client + stream
         sessions_.erase(it);
         return;
@@ -67,10 +67,12 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
         if (it->second->airplay2() == ap2) {
             RaopTarget t = makeTarget(dev.host, port, ap2, *resolved);
             it->second->updateTarget(t);
-            if (t.port) log::debug("session target refreshed: {} {}:{}", dev.name, t.host, t.port);
+            if (t.port)
+                log::debug(log::Area::Ses, "session target refreshed: {} {}:{}", dev.name, t.host,
+                           t.port);
             return;
         }
-        log::info("session transport changed for {} ({} -> {}); rebuilding",
+        log::info(log::Area::Ses, "session transport changed for {} ({} -> {}); rebuilding",
                   resolved->name.empty() ? resolved->key : resolved->name,
                   it->second->airplay2() ? "ap2" : "ap1", ap2 ? "ap2" : "ap1");
         it->second.reset();
@@ -81,7 +83,7 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
     }
 
     if (!resolved->enabled) {
-        log::info("session skipped: {} (disabled)", dev.name);
+        log::info(log::Area::Ses, "session skipped: {} (disabled)", dev.name);
         return;
     }
     if (sessions_.count(resolved->key)) return;
@@ -102,7 +104,8 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
     else if (!dev.host.empty() && (dev.hasRaop() || dev.hasAirplay()))
         raopTarget = makeTarget(dev.host, port, ap2, *resolved);
 
-    log::info("session created: {} mac={} ({} {}:{}{})", resolved->name, macToString(resolved->mac),
+    log::info(log::Area::Ses, "session created: {} mac={} ({} {}:{}{})", resolved->name,
+              macToString(resolved->mac),
               (raopTarget ? raopTarget->airplay2 : resolved->airplay2) ? "ap2" : "ap1",
               raopTarget ? raopTarget->host : dev.host, raopTarget ? raopTarget->port : 0,
               resolved->password.empty() ? "" : " password");

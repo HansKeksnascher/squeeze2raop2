@@ -95,17 +95,17 @@ std::optional<Args> parseArgs(int argc, char** argv, int& exitCode) {
         }
         if (arg == "--config") {
             if (i + 1 >= argc) {
-                log::error("--config requires a file path");
+                log::error(log::Area::App, "--config requires a file path");
                 exitCode = 1;
                 return std::nullopt;
             }
             args.configPath = argv[++i];
             continue;
         }
-        log::error(
-            "unknown option {} (behavior is configured in the config file; "
-            "use --config <file>)",
-            arg);
+        log::error(log::Area::App,
+                   "unknown option {} (behavior is configured in the config file; "
+                   "use --config <file>)",
+                   arg);
         exitCode = 1;
         return std::nullopt;
     }

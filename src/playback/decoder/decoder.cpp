@@ -53,7 +53,7 @@ double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t win
         if (off > 44.0) {  // 0.1%
             pcmAppliedRate_ = fps / overdrive;
             setSourceRate(pcmAppliedRate_);
-            log::warn("[ap] pcm source {} fps ({} ppm off): regulating", fps,
+            log::warn(log::Area::Dec, "pcm source {} fps ({} ppm off): regulating", fps,
                       int((fps - kNominal) / kNominal * 1e6));
         }
         return pcmAppliedRate_;
@@ -61,7 +61,7 @@ double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t win
     if (off <= 20.0) {  // back within ~0.045%: release to pass-through
         pcmAppliedRate_ = 0.0;
         setSourceRate(kNominal);
-        log::info("[ap] pcm source rate nominal: pass-through");
+        log::info(log::Area::Dec, "pcm source rate nominal: pass-through");
         return pcmAppliedRate_;
     }
     // Keep regulating; refresh the overdrive decision.

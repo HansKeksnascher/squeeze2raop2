@@ -143,7 +143,8 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
         leftover_ = buf.substr(pos + 4);
         metaInterval_ = parseIcyMetaint(headers_);
         metaCountdown_ = metaInterval_;
-        if (metaInterval_) log::info("icy metadata active, interval={}", metaInterval_);
+        if (metaInterval_)
+            log::info(log::Area::Lms, "icy metadata active, interval={}", metaInterval_);
         return true;
     }
 }

@@ -73,7 +73,7 @@ void AirplayOutput::launch(double volumePct) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!player_) return;
     if (!player_->active()) {
-        log::info("[ap] session launching for {} ({})", name_,
+        log::info(log::Area::Ap, "session launching for {} ({})", name_,
                   target_ && target_->airplay2 ? "ap2" : "ap1");
         player_->start();
     }

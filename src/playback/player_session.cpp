@@ -54,7 +54,7 @@ void PlayerSession::start() {
         // A configured fade-out is rendered by the pump; streamLoop tears the
         // session down when it returns FadedOut.
         if (streamActive_.load() && track_ && track_->requestFadeOut()) {
-            log::info("[ap] stop: fading out before teardown");
+            log::info(log::Area::Ap, "stop: fading out before teardown");
             return;
         }
         stopPlayback();
@@ -76,7 +76,7 @@ void PlayerSession::start() {
         // followed by 'p 0'. The deadline lives in the track's pump loop.
         if (track_) track_->pause(ms);
         output_->silence();
-        log::debug("pause {}", ms);
+        log::debug(log::Area::Ses, "pause requested: interval={} ms", ms);
         // STMp is sent by the slimproto 'p' handler (squeezelite parity);
         // sending it here too duplicates the event.
     };
@@ -95,7 +95,8 @@ void PlayerSession::start() {
         haveCodc_.store(true);
         std::string error;
         if (!track_->attachDecoder(format, pcm, error)) {
-            log::error("codc: unsupported codec '{}': {}", static_cast<char>(format), error);
+            log::error(log::Area::Ses, "codc: unsupported codec '{}': {}",
+                       static_cast<char>(format), error);
             client_->sendStat("STMn", currentStats());
             track_.reset();
             awaitCodc_.store(false);
@@ -106,7 +107,7 @@ void PlayerSession::start() {
     };
     events.onAude = [this](bool enable) {
         if (enable) return;  // lazy session recreation covers power-on
-        log::info("[ap] aude power off; tearing down the session");
+        log::info(log::Area::Ap, "aude power off; tearing down the session");
         stopPlayback();
         output_->stop(true);
     };
@@ -121,8 +122,8 @@ void PlayerSession::start() {
         // (0 % = -144 mute sentinel, 100 % = 0 dB).
         double pct = (l == r) ? r : (l + r) / 2.0;
         if (volumeMode_ == VolumeMode::Fixed) {
-            log::info("volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})", l, r, pct,
-                      fixedVolumePct_);
+            log::info(log::Area::Ses, "volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})", l, r,
+                      pct, fixedVolumePct_);
             return;
         }
         pct = anchors_.airplayPctFromLms(pct);
@@ -131,9 +132,9 @@ void PlayerSession::start() {
         // would mute the next session until the first AUDG.
         if (pct > 0.0) lastLmsPct_.store(pct, std::memory_order_relaxed);
         if (output_->setVolume(pct)) {
-            log::info("[ap] volume {:.1f} pct applied (lms)", pct);
+            log::info(log::Area::Ap, "volume {:.1f} pct applied (lms)", pct);
         } else {
-            log::info("volume -> {:.1f} pct ({})", pct,
+            log::info(log::Area::Ses, "volume -> {:.1f} pct ({})", pct,
                       pct > 0.0 ? "remembered for next session" : "mute, not remembered");
         }
     };
@@ -181,7 +182,7 @@ void PlayerSession::launchAirplaySession() {
         const double remembered = lastLmsPct_.load(std::memory_order_relaxed);
         if (remembered > 0.0) pct = remembered;
     }
-    log::info("[ap] volume {:.1f} pct applied (post-start)", pct);
+    log::info(log::Area::Ap, "volume {:.1f} pct applied (post-start)", pct);
     output_->launch(pct);
 }
 
@@ -219,7 +220,7 @@ void PlayerSession::startStream(const StrmStart& st) {
         st.serverIp ? ipv4ToString(st.serverIp) : (client_ ? client_->serverHost() : std::string());
     uint16_t port = st.serverPort ? st.serverPort : 9000;
     if (host.empty() || st.request.empty()) {
-        log::error("strm-s missing stream target or request header");
+        log::error(log::Area::Ses, "strm-s missing stream target or request header");
         client_->sendStat("STMn", currentStats());
         return;
     }
@@ -230,17 +231,18 @@ void PlayerSession::startStream(const StrmStart& st) {
     // 'codc' (squeezelite parity).
     const bool unknown = st.format == StreamFormat::Unknown;
     if (!unknown && st.format != StreamFormat::Pcm && st.format != StreamFormat::Mp3) {
-        log::error("strm s: unsupported stream format '{}'", static_cast<char>(st.format));
+        log::error(log::Area::Ses, "strm s: unsupported stream format '{}'",
+                   static_cast<char>(st.format));
         client_->sendStat("STMn", currentStats());
         return;
     }
     if (unknown && st.autostart < 2) {
-        log::error("strm s: unknown codec requires autostart >= 2");
+        log::error(log::Area::Ses, "strm s: unknown codec requires autostart >= 2");
         client_->sendStat("STMn", currentStats());
         return;
     }
 
-    log::info("stream GET {}:{} icy={}", host, port,
+    log::info(log::Area::Ses, "stream GET {}:{} icy={}", host, port,
               st.request.find("Icy-MetaData") != std::string::npos ? "req" : "none");
     track_ = std::make_unique<PlaybackStream>(*output_, counters_, paceRealtime_, sinkPath_);
     track_->setMetaForward([this](std::string_view block) { client_->sendMeta(block); });
@@ -250,7 +252,7 @@ void PlayerSession::startStream(const StrmStart& st) {
     std::string error;
     const std::optional<std::string> headers = track_->openSource(st, host, port, error);
     if (!headers) {
-        log::error("stream connect {}:{} failed: {}", host, port, error);
+        log::error(log::Area::Ses, "stream connect {}:{} failed: {}", host, port, error);
         client_->sendDisco(static_cast<uint8_t>(track_->disconnectCode()));
         client_->sendStat("STMn", currentStats());
         track_.reset();
@@ -261,11 +263,11 @@ void PlayerSession::startStream(const StrmStart& st) {
 
     if (unknown) {
         awaitCodc_.store(true);
-        log::info("autostart={}, unknown codec: waiting for codc", st.autostart);
+        log::info(log::Area::Ses, "autostart={}, unknown codec: waiting for codc", st.autostart);
         return;  // maybeStartPump() runs from the codc handler
     }
     if (!track_->attachDecoder(st.format, st.pcm, error)) {
-        log::error("strm s: cannot create decoder: {}", error);
+        log::error(log::Area::Ses, "strm s: cannot create decoder: {}", error);
         client_->sendStat("STMn", currentStats());
         track_.reset();
         return;
@@ -317,7 +319,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
     const bool haveTarget = output_->hasTarget();
     if (haveTarget) {
         if (!output_->prepare(fmt.sampleRate)) {
-            log::error("[ap] cannot start airplay session for {}", name_);
+            log::error(log::Area::Ap, "cannot start airplay session for {}", name_);
             client_->sendStat("STMn", currentStats());
             streamActive_.store(false);
             return;
@@ -325,7 +327,8 @@ void PlayerSession::streamLoop(std::stop_token st) {
         // (input rate is applied inside prepare(); the only later setInputRate
         // is the track's mid-stream format-adoption update)
         if (fmt.channels != 2)
-            log::warn("input is {}-channel; bridges Apple receivers expect stereo", fmt.channels);
+            log::warn(log::Area::Ses, "input is {}-channel; bridges Apple receivers expect stereo",
+                      fmt.channels);
     }
 
     // Streaming phase: re-entered after a single transparent receiver-loss
@@ -342,7 +345,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
 
         // A stop-path fade already reached zero: the 'q' handler sent STMf.
         if (end == PlaybackStream::End::FadedOut) {
-            log::debug("stream exit: fade-out complete");
+            log::debug(log::Area::Ses, "stream exit: fade-out complete");
             if (!keepSession) output_->stop(false);
             break;
         }
@@ -353,27 +356,27 @@ void PlayerSession::streamLoop(std::stop_token st) {
         // with the decoder drained) reports STMd — LMS advances the queue on
         // "decoder ready" — then STMu once the sender ring has played out.
         const ExitAction action = decideExit({stopping, lost, retryUsed_.load(), reachedEof});
-        log::debug("stream exit: action={} stopping={} lost={} eof={} flushed={}",
+        log::debug(log::Area::Ses, "stream exit: action={} stopping={} lost={} eof={} flushed={}",
                    static_cast<int>(action), stopping, lost, reachedEof, keepSession);
 
         switch (action) {
         case ExitAction::SilentStop: break;
         case ExitAction::Retry:
             retryUsed_.store(true);
-            log::info("[ap] receiver session lost; retrying in 2s");
+            log::info(log::Area::Ap, "receiver session lost; retrying in 2s");
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (output_->prepare(track_->format().sampleRate)) {
                 track_->reapplyNowPlaying();
                 // The HTTP source stays open across a receiver restart, so loop
                 // back into the read phase (with a fresh prebuffer).
-                log::info("[ap] receiver session re-established; resuming stream");
+                log::info(log::Area::Ap, "receiver session re-established; resuming stream");
                 continue;
             }
-            log::error("[ap] cannot restart airplay session for {}", name_);
+            log::error(log::Area::Ap, "cannot restart airplay session for {}", name_);
             client_->sendStat("STMn", currentStats());
             break;
         case ExitAction::GaveUp:
-            log::info("[ap] receiver session lost again; giving up (STMd)");
+            log::info(log::Area::Ap, "receiver session lost again; giving up (STMd)");
             client_->sendStat("STMd", currentStats());
             break;
         case ExitAction::EndedEof:
@@ -405,7 +408,7 @@ void PlayerSession::streamLoop(std::stop_token st) {
 
     track_->close();
     streamActive_.store(false);
-    log::info("stream ended, received={} bytes", counters_.bytesReceived());
+    log::info(log::Area::Ses, "stream ended, received={} bytes", counters_.bytesReceived());
 }
 
 // Play out the sender ring before reporting the end of playback: the decoder

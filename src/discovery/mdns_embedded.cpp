@@ -250,7 +250,7 @@ struct MdnsBrowser::Impl {
 
     void publishResolved(ResolveTracker& t) {
         if (t.port == 0 || t.address.empty()) {
-            log::debug("mdns: resolve incomplete for {}", t.instance);
+            log::debug(log::Area::Mdns, "resolve incomplete for {}", t.instance);
             return;
         }
         if (!cb) return;
@@ -260,8 +260,8 @@ struct MdnsBrowser::Impl {
         record.host = t.address;
         record.port = t.port;
         record.txt = t.txt;
-        log::info("mdns: {} resolved {}:{} ({} txt keys)", t.instance, record.host, record.port,
-                  record.txt.size());
+        log::info(log::Area::Mdns, "{} resolved {}:{} ({} txt keys)", t.instance, record.host,
+                  record.port, record.txt.size());
         cb(record, MdnsBrowser::RecordEvent::Added);
     }
 
@@ -272,7 +272,8 @@ struct MdnsBrowser::Impl {
         // Accepting QC_addnocache matters: mDNS delivers it when the RR cache is
         // full, and dropping it would silently lose SRV/TXT/A answers.
         if (add == QC_rmv) return;
-        log::debug("mdns: resolve cb add={} rrtype={}", static_cast<int>(add), rr->rrtype);
+        log::debug(log::Area::Mdns, "resolve cb add={} rrtype={}", static_cast<int>(add),
+                   rr->rrtype);
 
         ResolveTracker* owner = trackerForQuestion(q);
         if (!owner || !owner->owner) return;
@@ -327,11 +328,11 @@ struct MdnsBrowser::Impl {
 
         std::string fqdn = instance + "." + serviceType + ".local";
         if (!initQuestion(t.srvQ, fqdn, kDNSType_SRV, &t)) {
-            log::warn("mdns: cannot form SRV name {}", fqdn);
+            log::warn(log::Area::Mdns, "cannot form SRV name {}", fqdn);
             return false;
         }
         if (mDNS_StartQuery(&gMdns, &t.srvQ) != mStatus_NoError) {
-            log::warn("mdns: SRV query failed for {}", fqdn);
+            log::warn(log::Area::Mdns, "SRV query failed for {}", fqdn);
             return false;
         }
         t.srvActive = true;
@@ -341,9 +342,9 @@ struct MdnsBrowser::Impl {
                 t.txtActive = true;
             }
         } else {
-            log::debug("mdns: cannot form TXT name {}", fqdn);
+            log::debug(log::Area::Mdns, "cannot form TXT name {}", fqdn);
         }
-        log::debug("mdns: resolver started for {}, srv={} txt={}", instance,
+        log::debug(log::Area::Mdns, "resolver started for {}, srv={} txt={}", instance,
                    static_cast<int>(t.srvActive), static_cast<int>(t.txtActive));
         return true;
     }
@@ -373,7 +374,7 @@ struct MdnsBrowser::Impl {
         if (!impl) return;
 
         std::string ptrName = domainToString(&rr->rdata->u.name);
-        log::debug("mdns: browse ptr '{}' type={} add={}", ptrName, rr->rrtype,
+        log::debug(log::Area::Mdns, "browse ptr '{}' type={} add={}", ptrName, rr->rrtype,
                    static_cast<int>(add));
         std::string recordName = domainToString(rr->name);
 
@@ -465,7 +466,8 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
         if (id) {
             impl->iface = id;
         } else {
-            log::warn("mdns: interface {} not registered; browsing on all interfaces", ifaceName);
+            log::warn(log::Area::Mdns, "interface {} not registered; browsing on all interfaces",
+                      ifaceName);
         }
     }
 
@@ -484,7 +486,7 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
             return false;
         }
         impl->browseActive[i] = true;
-        log::info("mdns: browsing {}", kServiceTypes[i]);
+        log::info(log::Area::Mdns, "browsing {}", kServiceTypes[i]);
     }
 
     // Wake pipe so pending commands interrupt the select() wait immediately.
@@ -521,7 +523,7 @@ void MdnsBrowser::stop() {
     impl_.reset();
     MdnsBrowser* expected = this;
     g_activeBrowser.compare_exchange_strong(expected, nullptr);
-    log::info("mdns: stopped");
+    log::info(log::Area::Mdns, "stopped");
 }
 
 }  // namespace squeeze2raop2

@@ -42,22 +42,22 @@ void runBridge(const Settings& settings, Persistence& persistence) {
         MdnsBrowser browser;
         MdnsBrowser::RecordCallback cb = [](const MdnsRecord& rec, MdnsBrowser::RecordEvent ev) {
             const char* what = (ev == MdnsBrowser::RecordEvent::Added) ? "added" : "removed";
-            log::info("mdns[{}] {} {} -> {}\n  txt:", what, rec.type, rec.instance,
+            log::info(log::Area::Mdns, "record {} {} {} -> {}", what, rec.type, rec.instance,
                       rec.port ? rec.host + ":" + std::to_string(rec.port) : std::string());
-            for (const auto& [k, v] : rec.txt) log::info("   {}={}", k, v);
+            for (const auto& [k, v] : rec.txt) log::info(log::Area::Mdns, "  txt {}={}", k, v);
         };
         if (!browser.start(settings.global.mdnsIface, cb, error)) {
-            log::error("mdns: {}", error);
+            log::error(log::Area::Mdns, "browse failed: {}", error);
             return;
         }
-        log::info("mdns debug mode: browsing (ctrl-c to exit)");
+        log::info(log::Area::Mdns, "debug mode: browsing (ctrl-c to exit)");
         while (g_run.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
         browser.stop();
         return;
     }
 
     if (!settings.global.discovery) {
-        log::info("discovery disabled; running static devices only");
+        log::info(log::Area::App, "discovery disabled; running static devices only");
     }
     MdnsBrowser browser;
     MdnsBrowser::RecordCallback cb = [&registry](const MdnsRecord& rec,
@@ -76,15 +76,14 @@ void runBridge(const Settings& settings, Persistence& persistence) {
     };
     if (settings.global.discovery) {
         if (!browser.start(settings.global.mdnsIface, cb, error)) {
-            log::warn("mdns: {} (continuing without discovery)", error);
+            log::warn(log::Area::Mdns, "browse failed: {} (continuing without discovery)", error);
         }
     }
 
-    log::info("running (ctrl-c to exit)");
+    log::info(log::Area::App, "running (ctrl-c to exit)");
     while (g_run.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     browser.stop();
-    log::info("bye");
 }
 
 }  // namespace squeeze2raop2

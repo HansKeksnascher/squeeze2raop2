@@ -78,7 +78,7 @@ bool PlaybackStream::attachDecoder(StreamFormat format, const PcmParams& pcm, st
         error = "unsupported stream format";
         return false;
     }
-    log::info("strm s: {} stream via decoder pipeline", decoder_->name());
+    log::info(log::Area::Pb, "decoder: {} stream", decoder_->name());
     if (sinkPath_) {
         sink_ = std::make_unique<PcmFileSink>(*sinkPath_);
         if (!sink_->open(decoder_->format(), error)) {
@@ -102,7 +102,7 @@ void PlaybackStream::unpause() { pauseUntilMs_.store(0, std::memory_order_relaxe
 void PlaybackStream::skipAhead(uint32_t ms) {
     const uint32_t rate = format().sampleRate ? format().sampleRate : 44100;
     skipFrames_.fetch_add(skipFramesFor(ms, rate), std::memory_order_relaxed);
-    log::info("[ap] skip ahead {} ms ({} frames)", ms, skipFramesFor(ms, rate));
+    log::info(log::Area::Pb, "skip ahead {} ms ({} frames)", ms, skipFramesFor(ms, rate));
 }
 
 bool PlaybackStream::requestFadeOut() {
@@ -136,7 +136,7 @@ void PlaybackStream::onMeta(std::string_view block) {
     // Some stations repeat the identical block every meta interval (~5/s);
     // only log and push on an actual change.
     if (*title == lastTitle_) return;
-    log::info("icy title: {}", *title);
+    log::info(log::Area::Pb, "icy title: {}", *title);
     lastTitle_ = *title;
     output_.setNowPlaying(*title, "", "");
 }
@@ -152,7 +152,8 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
     const size_t prebufferSamples = haveTarget ? output_.capacity() / 2 : 0;
     bool prebuffering = haveTarget && prebufferSamples != 0;
     const uint64_t prebufferStartMs = nowMs();
-    if (prebuffering) log::info("[ap] prebuffering {} samples (50% of ring)", prebufferSamples);
+    if (prebuffering)
+        log::info(log::Area::Pb, "prebuffering {} samples (50% of ring)", prebufferSamples);
 
     PcmFormat fmt = format();
     char buf[4096];
@@ -207,7 +208,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             if (prebuffering) {
                 const size_t avail = output_.queued();
                 if (avail >= prebufferSamples) {
-                    log::info("[ap] prebuffered {} samples in {} ms; launching", avail,
+                    log::info(log::Area::Pb, "prebuffered {} samples in {} ms; launching", avail,
                               nowMs() - prebufferStartMs);
                     prebuffering = false;
                     onPrebufferReady();
@@ -230,7 +231,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
                     ringEmptySinceMs_ = nowMs();
                 } else if (!underrunFired_ && nowMs() - ringEmptySinceMs_ >= 1000) {
                     underrunFired_ = true;
-                    log::info("[ap] output underrun while stream active (STMo)");
+                    log::info(log::Area::Pb, "output underrun while stream active (STMo)");
                     if (underrun_) underrun_();
                 }
             } else {
@@ -239,7 +240,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
         } else if (rr.result == HttpStreamReader::ReadResult::Closed) {
             // Socket error, not a mere no-data timeout: without this branch the
             // loop used to spin hot on a dead socket forever.
-            log::warn("stream socket error; ending stream");
+            log::warn(log::Area::Pb, "stream socket error; ending stream");
             disconnect_ = DisconnectCode::Remote;
             break;
         }
@@ -362,7 +363,7 @@ bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, P
         std::span<const int16_t> chunk = decoder_->nextChunk();
         if (chunk.empty()) {
             if (decoder_->hasError()) {
-                log::error("{} decode failed; dropping stream", decoder_->name());
+                log::error(log::Area::Pb, "{} decode failed; dropping stream", decoder_->name());
                 return false;
             }
             break;
@@ -372,7 +373,7 @@ bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, P
             fmt = norm;
             counters_.setOutputRate(fmt.sampleRate);
             output_.setInputRate(fmt.sampleRate);
-            log::info("[ap] {} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
+            log::info(log::Area::Pb, "{} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
                       fmt.channels);
         }
         if (!decoderReadyFired_) {

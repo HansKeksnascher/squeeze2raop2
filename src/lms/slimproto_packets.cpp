@@ -163,8 +163,8 @@ void SlimProtoClient::sendHelo(bool reconnect) {
     body.skip(10);  // reserved: packet bytes 26..35
     body.bytes(std::as_bytes(std::span{caps}));
 
-    log::info("HELO mac={} cap={}", macToString(mac_), caps);
-    if (!sendPacket("HELO", body.data())) log::error("HELO send failed");
+    log::info(log::Area::Lms, "HELO mac={} cap={}", macToString(mac_), caps);
+    if (!sendPacket("HELO", body.data())) log::error(log::Area::Lms, "HELO send failed");
 }
 
 StreamStats SlimProtoClient::lastStats() {
@@ -196,11 +196,12 @@ void SlimProtoClient::sendStat(const char (&event)[5], StreamStats stats,
     body.u32(stats.elapsedMs);
     body.u32(serverTimestamp);
     body.u16(0);
-    if (!sendPacket("STAT", body.data())) log::warn("STAT send failed");
+    if (!sendPacket("STAT", body.data())) log::warn(log::Area::Lms, "STAT send failed");
 }
 
 void SlimProtoClient::sendResp(const std::string& header) {
-    if (!sendPacket("RESP", std::as_bytes(std::span{header}))) log::warn("RESP send failed");
+    if (!sendPacket("RESP", std::as_bytes(std::span{header})))
+        log::warn(log::Area::Lms, "RESP send failed");
 }
 
 void SlimProtoClient::sendSetdName(const std::string& name) {
@@ -208,11 +209,12 @@ void SlimProtoClient::sendSetdName(const std::string& name) {
     body.u8(0);
     body.bytes(std::as_bytes(std::span{name}));
     body.u8(0);  // trailing NUL
-    if (!sendPacket("SETD", body.data())) log::warn("SETD send failed");
+    if (!sendPacket("SETD", body.data())) log::warn(log::Area::Lms, "SETD send failed");
 }
 
 void SlimProtoClient::sendDisco(uint8_t reason) {
-    if (!sendPacket("DSCO", std::as_bytes(std::span{&reason, 1}))) log::warn("DSCO send failed");
+    if (!sendPacket("DSCO", std::as_bytes(std::span{&reason, 1})))
+        log::warn(log::Area::Lms, "DSCO send failed");
 }
 
 void SlimProtoClient::sendMeta(std::string_view data) {
@@ -249,18 +251,18 @@ void SlimProtoClient::process(const std::string& pkt) {
             break;
         }
         case 'q':
-            log::debug("strm q (stop)");
+            log::debug(log::Area::Lms, "strm q (stop)");
             if (events_.onStop) events_.onStop();
             break;
         case 'f':
-            log::debug("strm f (flush)");
+            log::debug(log::Area::Lms, "strm f (flush)");
             if (events_.onFlush) events_.onFlush(true);
             sendStat("STMf", lastStats());
             break;
         case 'p': {
             const auto ms = r.u32At(18);
             if (!ms) return;
-            log::debug("strm p (pause, interval={})", *ms);
+            log::debug(log::Area::Lms, "strm p (pause, interval={})", *ms);
             if (events_.onPause) events_.onPause(*ms);
             if (!*ms) sendStat("STMp", lastStats());
             break;
@@ -268,14 +270,14 @@ void SlimProtoClient::process(const std::string& pkt) {
         case 'a': {
             const auto ms = r.u32At(18);
             if (!ms) return;
-            log::debug("strm a (skip ahead, interval={})", *ms);
+            log::debug(log::Area::Lms, "strm a (skip ahead, interval={})", *ms);
             if (events_.onSkipAhead) events_.onSkipAhead(*ms);
             break;
         }
         case 'u': {
             const auto jiffies = r.u32At(18);
             if (!jiffies) return;
-            log::debug("strm u (unpause, jiffies={})", *jiffies);
+            log::debug(log::Area::Lms, "strm u (unpause, jiffies={})", *jiffies);
             if (events_.onUnpause) events_.onUnpause(*jiffies);
             sendStat("STMr", lastStats());
             break;
@@ -300,13 +302,13 @@ void SlimProtoClient::process(const std::string& pkt) {
             st.serverIp = *r.u32();
             const auto rest = r.tail();
             st.request.assign(reinterpret_cast<const char*>(rest.data()), rest.size());
-            log::debug("strm s autostart={} format={} threshold={}", st.autostart,
+            log::debug(log::Area::Lms, "strm s autostart={} format={} threshold={}", st.autostart,
                        static_cast<char>(st.format), st.thresholdKb);
             sendStat("STMf", lastStats());
             if (events_.onStart) events_.onStart(st);
             break;
         }
-        default: log::warn("unhandled strm command '{}'", command); break;
+        default: log::warn(log::Area::Lms, "unhandled strm command '{}'", command); break;
         }
     } else if (op == "cont") {
         if (const auto metaint = r.u32()) {
@@ -325,7 +327,7 @@ void SlimProtoClient::process(const std::string& pkt) {
         // applying them would push 0 dB = full blast. Leave the receiver at
         // its current level.
         if (!adjust) {
-            log::debug("audg dvc=0 ignored (fixed-output mode)");
+            log::debug(log::Area::Lms, "audg dvc=0 ignored (fixed-output mode)");
             return;
         }
         if (!r.skip(1)) return;  // packet byte 13
@@ -365,9 +367,9 @@ void SlimProtoClient::process(const std::string& pkt) {
         const uint32_t ip = *r.u32();
         if (events_.onServerSwitch) events_.onServerSwitch(ip);
     } else if (std::ranges::find(kIgnoredOps, op) != kIgnoredOps.end()) {
-        log::debug("ignored {}", op);
+        log::debug(log::Area::Lms, "ignored {}", op);
     } else {
-        log::warn("unhandled opcode {}", op);
+        log::warn(log::Area::Lms, "unhandled opcode {}", op);
     }
 }
 

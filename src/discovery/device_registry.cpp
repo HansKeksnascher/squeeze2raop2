@@ -136,7 +136,7 @@ void DeviceRegistry::onRaopV4(const std::string& instance, const std::string& ho
     });
     // Notify without holding mutex_: callbacks build/destroy whole player
     // sessions; re-entering the registry from one must not deadlock.
-    log::info("registry: raop record {}: {} name='{}' port={} encrypted={} pw={} model={}",
+    log::info(log::Area::Mdns, "raop record {}: {} name='{}' port={} encrypted={} pw={} model={}",
               added ? "added" : "updated", snapshot.id, snapshot.name, port, snapshot.encrypted,
               snapshot.pw, snapshot.model);
     notify(added ? Event::Added : Event::Updated, snapshot);
@@ -166,7 +166,8 @@ void DeviceRegistry::onAirplayV4(const std::string& instance, const std::string&
             d.pw = (it->second == "true" || it->second == "1");
     });
     // Notify without holding mutex_ (see onRaopV4).
-    log::info("registry: airplay record {}: {} name='{}' port={} features=0x{:x} pk={} pw={}",
+    log::info(log::Area::Mdns,
+              "airplay record {}: {} name='{}' port={} features=0x{:x} pk={} pw={}",
               added ? "added" : "updated", snapshot.id, snapshot.name, port, snapshot.features,
               snapshot.pk.empty() ? "-" : "present", snapshot.pw);
     notify(added ? Event::Added : Event::Updated, snapshot);
@@ -176,7 +177,7 @@ void DeviceRegistry::onRaopGone(const std::string& instance) {
     auto marked = markGone(keyFor(instance), true);
     if (!marked) return;
     if (marked->first == Event::Removed)
-        log::info("registry: removed {} (raop gone)", marked->second.id);
+        log::info(log::Area::Mdns, "removed {} (raop gone)", marked->second.id);
     notify(marked->first, marked->second);
 }
 
@@ -184,7 +185,7 @@ void DeviceRegistry::onAirplayGone(const std::string& instance) {
     auto marked = markGone(keyFor(instance), false);
     if (!marked) return;
     if (marked->first == Event::Removed)
-        log::info("registry: removed {} (airplay gone)", marked->second.id);
+        log::info(log::Area::Mdns, "removed {} (airplay gone)", marked->second.id);
     notify(marked->first, marked->second);
 }
 

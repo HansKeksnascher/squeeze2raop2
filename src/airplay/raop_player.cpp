@@ -20,12 +20,14 @@ fxchain::RaopDeviceInfo::Auth authFor(const RaopTarget& target) {
 }
 
 void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
-    squeeze2raop2::log::Level mapped = squeeze2raop2::log::Level::Debug;
-    switch (level) {
-    case fxchain::RaopLogLevel::Info: mapped = squeeze2raop2::log::Level::Info; break;
-    case fxchain::RaopLogLevel::Warn: mapped = squeeze2raop2::log::Level::Warn; break;
-    }
-    squeeze2raop2::log::write(mapped, std::string("[ap] ") + msg);
+    // The sender has only Info/Warn; its Info is per-packet chatter, so map it
+    // to our Debug and keep Warn. Strip the sender's hardcoded "Cast: " prefix.
+    const squeeze2raop2::log::Level mapped = (level == fxchain::RaopLogLevel::Warn)
+                                                 ? squeeze2raop2::log::Level::Warn
+                                                 : squeeze2raop2::log::Level::Debug;
+    std::string_view text = msg;
+    if (text.starts_with("Cast: ")) text.remove_prefix(6);
+    squeeze2raop2::log::write(mapped, squeeze2raop2::log::Area::Ap, text);
 }
 
 }  // namespace
@@ -37,20 +39,22 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
     fxchain::RaopEvents events;
     events.launched = [this](bool ok, const std::string& error) {
         if (!ok)
-            log::warn("[ap] {} start failure: {}", name_, error);
+            log::warn(log::Area::Ap, "{} start failure: {}", name_, error);
         else
-            log::info("[ap] {} session launched", name_);
+            log::info(log::Area::Ap, "{} session launched", name_);
     };
     events.closed = [this]() {
-        log::info("[ap] {} session closed", name_);
+        log::info(log::Area::Ap, "{} session closed", name_);
         if (onClosed_) onClosed_();
     };
     events.pinRequired = [this](const std::string& targetHost) {
-        log::warn("[ap] {} requires a PIN for pairing; not yet supported in bridge (target={})",
-                  name_, targetHost);
+        log::warn(log::Area::Ap,
+                  "{} requires a PIN for pairing; not yet supported in bridge (target={})", name_,
+                  targetHost);
     };
     events.credentialsObtained = [this](const std::string& deviceId, const std::string& credsJson) {
-        log::info("[ap] {} stored long-term credentials ({} bytes)", name_, credsJson.size());
+        log::info(log::Area::Ap, "{} stored long-term credentials ({} bytes)", name_,
+                  credsJson.size());
         if (onCredentials_) onCredentials_(deviceId, credsJson);
     };
 

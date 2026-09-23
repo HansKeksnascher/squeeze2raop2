@@ -8,7 +8,7 @@ import harness
 
 
 def body(c):
-    c.wait_bridge(lambda t: "pause 0" in t, what="the bridge to receive the pause")
+    c.wait_bridge(lambda t: "pause requested" in t, what="the bridge to receive the pause")
     c.wait_lms(lambda t: "STAT STMp" in t, what="the pause ack")
     c.wait_lms(lambda t: "STAT STMr" in t, what="the resume ack")
     c.wait_bridge(lambda t: "stream ended" in t, timeout=30.0,
