@@ -2,7 +2,7 @@
 
 #include "airplay/airplay_output.h"
 #include "lms/lms_stream.h"
-#include "lms/slimproto.h"
+#include "lms/wire_types.h"
 #include "playback/decoder/decoder.h"
 #include "playback/gain.h"
 #include "playback/ring_telemetry.h"

@@ -109,14 +109,11 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
 
     const std::string key = resolved->key;
     auto session = std::make_unique<PlayerSession>(
-        key, resolved->name, resolved->mac, settings_.global.lmsHost, settings_.global.lmsPort,
-        resolved->paceRealtime, sinkPath, raopTarget,
+        *resolved, settings_.global, anchorsFor(*resolved), sinkPath, raopTarget,
         [this, key](const std::string& deviceId, const std::string& creds) {
             (void)deviceId;
             persistence_.saveCreds(key, creds);
         },
-        resolved->volumeMode, anchorsFor(*resolved), resolved->volPct, resolved->latencyMs,
-        settings_.global.serverTimeoutMs,
         [this, key](const std::string& name) { persistence_.savePlayerName(key, name); });
     session->start();
     sessions_[key] = std::move(session);

@@ -51,11 +51,10 @@ struct ExitInputs {
 // streamThread_.
 class PlayerSession {
 public:
-    PlayerSession(std::string deviceId, std::string name, std::array<uint8_t, 6> mac,
-                  std::optional<std::string> lmsHost, uint16_t lmsPort, bool paceRealtime,
-                  std::optional<std::string> sinkPath, std::optional<RaopTarget> raopTarget,
-                  CredentialSink credSink, VolumeMode volumeMode, VolumeAnchors anchors,
-                  float volPct, int latencyMs, uint32_t serverTimeoutMs, NameSink nameSink);
+    PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig& global,
+                  VolumeAnchors anchors, std::optional<std::string> sinkPath,
+                  std::optional<RaopTarget> raopTarget, CredentialSink credSink,
+                  NameSink nameSink);
     ~PlayerSession();
     PlayerSession(const PlayerSession&) = delete;
     PlayerSession& operator=(const PlayerSession&) = delete;
@@ -81,7 +80,6 @@ private:
     void waitForOutputDrain(std::stop_token st);
     void stopPlayback();
 
-    std::string deviceId_;
     std::string name_;
     std::array<uint8_t, 6> mac_{};
     std::optional<std::string> lmsHost_;

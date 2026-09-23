@@ -6,7 +6,7 @@
 #include "playback/decoder/pcm_decoder.h"
 
 #include "check.h"
-#include "lms/slimproto.h"
+#include "lms/wire_types.h"
 
 #include <cstddef>
 #include <cstdint>

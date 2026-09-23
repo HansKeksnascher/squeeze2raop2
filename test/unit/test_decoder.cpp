@@ -7,7 +7,7 @@
 #include "playback/decoder/decoder.h"
 
 #include "check.h"
-#include "lms/slimproto.h"
+#include "lms/wire_types.h"
 #include "mp3_fixture.h"
 
 #include <algorithm>

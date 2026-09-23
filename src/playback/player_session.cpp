@@ -12,24 +12,21 @@
 
 namespace squeeze2raop2 {
 
-PlayerSession::PlayerSession(std::string deviceId, std::string name, std::array<uint8_t, 6> mac,
-                             std::optional<std::string> lmsHost, uint16_t lmsPort,
-                             bool paceRealtime, std::optional<std::string> sinkPath,
+PlayerSession::PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig& global,
+                             VolumeAnchors anchors, std::optional<std::string> sinkPath,
                              std::optional<RaopTarget> raopTarget, CredentialSink credSink,
-                             VolumeMode volumeMode, VolumeAnchors anchors, float volPct,
-                             int latencyMs, uint32_t serverTimeoutMs, NameSink nameSink)
-    : deviceId_(std::move(deviceId)),
-      name_(std::move(name)),
-      mac_(mac),
-      lmsHost_(std::move(lmsHost)),
-      lmsPort_(lmsPort),
-      paceRealtime_(paceRealtime),
+                             NameSink nameSink)
+    : name_(cfg.name),
+      mac_(cfg.mac),
+      lmsHost_(global.lmsHost),
+      lmsPort_(global.lmsPort),
+      paceRealtime_(cfg.paceRealtime),
       sinkPath_(std::move(sinkPath)),
-      serverTimeoutMs_(serverTimeoutMs),
+      serverTimeoutMs_(global.serverTimeoutMs),
       nameSink_(std::move(nameSink)),
       anchors_(std::move(anchors)),
-      volumeMode_(volumeMode),
-      fixedVolumePct_(volPct) {
+      volumeMode_(cfg.volumeMode),
+      fixedVolumePct_(cfg.volPct) {
     // Compute the receiver identity before any thread exists (the sender reads
     // it): uppercase hex MAC with the separators removed.
     std::string identity = macToString(mac_);
@@ -37,7 +34,7 @@ PlayerSession::PlayerSession(std::string deviceId, std::string name, std::array<
                            [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     std::erase(identity, ':');
     output_ = std::make_unique<AirplayOutput>(name_, std::move(identity), std::move(raopTarget),
-                                              std::move(credSink), latencyMs);
+                                              std::move(credSink), cfg.latencyMs);
 }
 
 PlayerSession::~PlayerSession() { stop(); }
