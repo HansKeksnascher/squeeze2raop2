@@ -13,4 +13,5 @@
 	url = https://github.com/Mbed-TLS/mbedtls
 [submodule "third_party/libxaac"]
 	path = third_party/libxaac
-	url = https://github.com/ittiam-systems/libxaac.git
+	url = git@github.com:HansKeksnascher/libxaac.git
+	branch = main
