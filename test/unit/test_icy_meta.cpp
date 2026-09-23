@@ -5,14 +5,13 @@
 
 #include "check.h"
 
-#include <cstdio>
 #include <string>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::parseStreamTitle;
 using squeeze2raop2::withIcyRequestHeader;
 
-int main() {
+SQ2_TEST(icy, request_header) {
     // Already carries the header: unchanged.
     {
         const std::string req = "GET /x HTTP/1.0\r\nIcy-MetaData: 1\r\n\r\n";
@@ -37,13 +36,12 @@ int main() {
         expect(withIcyRequestHeader(req) == req + "\r\nIcy-MetaData: 1\r\n",
                "terminated then appended");
     }
+}
 
+SQ2_TEST(icy, stream_title) {
     expect(parseStreamTitle("StreamTitle='Hello';") == std::string("Hello"), "title parsed");
     expect(parseStreamTitle("x StreamTitle='A B' y") == std::string("A B"), "title with spaces");
     expect(!parseStreamTitle("StreamTitle='';").has_value(), "empty title");
     expect(!parseStreamTitle("no title here").has_value(), "missing key");
     expect(!parseStreamTitle("StreamTitle='unterminated").has_value(), "unterminated title");
-
-    std::printf("ok\n");
-    return 0;
 }

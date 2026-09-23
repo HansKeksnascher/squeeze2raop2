@@ -19,7 +19,7 @@
 #include <thread>
 #include <vector>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::PcmParams;
 using squeeze2raop2::SlimProtoClient;
 using squeeze2raop2::StreamFormat;
@@ -33,15 +33,15 @@ class LoopbackServer {
 public:
     LoopbackServer() {
         fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        expect(fd_ >= 0, "server socket");
+        require(fd_ >= 0, "server socket");
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = 0;
-        expect(::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "bind");
-        expect(::listen(fd_, 1) == 0, "listen");
+        require(::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "bind");
+        require(::listen(fd_, 1) == 0, "listen");
         socklen_t len = sizeof(addr);
-        expect(::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "getsockname");
+        require(::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "getsockname");
         port_ = ntohs(addr.sin_port);
     }
     ~LoopbackServer() {
@@ -52,18 +52,18 @@ public:
     uint16_t port() const { return port_; }
 
     void acceptConnection() {
-        expect(conn_ < 0, "one connection at a time");
+        require(conn_ < 0, "one connection at a time");
         // client connects immediately after start()
         pollfd pfd{fd_, POLLIN, 0};
-        expect(::poll(&pfd, 1, 5000) == 1, "client connects within 5s");
+        require(::poll(&pfd, 1, 5000) == 1, "client connects within 5s");
         conn_ = ::accept(fd_, nullptr, nullptr);
-        expect(conn_ >= 0, "accept");
+        require(conn_ >= 0, "accept");
     }
 
     // Framed server-side receive with a hard deadline (keeps failures
     // graceful instead of hanging the test).
     std::vector<unsigned char> readPacket() {
-        expect(conn_ >= 0, "connection open for reads");
+        require(conn_ >= 0, "connection open for reads");
         auto readExact = [&](unsigned char* dst, size_t n) {
             size_t got = 0;
             auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -73,10 +73,10 @@ public:
                     static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                          deadline - std::chrono::steady_clock::now())
                                          .count());
-                if (remaining <= 0) expect(false, "timed out waiting for packet bytes");
-                if (::poll(&pfd, 1, remaining) != 1) expect(false, "poll for packet bytes");
+                if (remaining <= 0) require(false, "timed out waiting for packet bytes");
+                if (::poll(&pfd, 1, remaining) != 1) require(false, "poll for packet bytes");
                 ssize_t r = ::recv(conn_, dst + got, n - got, 0);
-                expect(r > 0, "recv packet bytes");
+                require(r > 0, "recv packet bytes");
                 got += static_cast<size_t>(r);
             }
         };
@@ -95,9 +95,9 @@ public:
     // LMS -> client framing: [2b BE length = opcode+payload][opcode][payload]
     // (SlimProtoClient::run reads the 2-byte length prefix itself).
     void sendPacket(std::string_view opcode, std::span<const unsigned char> payload) {
-        expect(conn_ >= 0, "connection open for sends");
-        expect(opcode.size() == 4, "4-byte opcode");
-        expect(payload.size() <= 32000, "payload fits the 2-byte length prefix");
+        require(conn_ >= 0, "connection open for sends");
+        require(opcode.size() == 4, "4-byte opcode");
+        require(payload.size() <= 32000, "payload fits the 2-byte length prefix");
         const uint16_t len = static_cast<uint16_t>(4 + payload.size());
         const unsigned char hdr[2] = {static_cast<unsigned char>(len >> 8),
                                       static_cast<unsigned char>(len & 0xFF)};
@@ -108,7 +108,7 @@ public:
             size_t done = 0;
             while (done < n) {
                 ssize_t r = ::send(conn_, data + done, n - done, 0);
-                expect(r > 0, "send packet to client");
+                require(r > 0, "send packet to client");
                 done += static_cast<size_t>(r);
             }
         };
@@ -139,7 +139,7 @@ std::string opcodeOf(const std::vector<unsigned char>& pkt) {
 
 }  // namespace
 
-static void testHeloFramingAndStatRoundTrip() {
+SQ2_TEST(wire, helo_framing_and_stat_round_trip) {
     LoopbackServer server;
 
     std::atomic<bool> volumeSeen{false};
@@ -249,7 +249,7 @@ static void testHeloFramingAndStatRoundTrip() {
     server.expectClosedByClient();
 }
 
-static void testStreamStartEvent() {
+SQ2_TEST(wire, stream_start_event) {
     LoopbackServer server;
     std::atomic<bool> startSeen{false};
     std::atomic<uint32_t> startPort{0};
@@ -285,11 +285,4 @@ static void testStreamStartEvent() {
 
     client.stop();
     server.expectClosedByClient();
-}
-
-int main() {
-    testHeloFramingAndStatRoundTrip();
-    testStreamStartEvent();
-    std::printf("ok\n");
-    return 0;
 }

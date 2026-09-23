@@ -9,16 +9,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::Endian;
 using squeeze2raop2::readInt;
 using squeeze2raop2::writeInt;
 
-namespace {
-
-void testBigEndian() {
+SQ2_TEST(byte_order, big_endian) {
     std::array<std::byte, 4> b{};
     writeInt<Endian::Big>(b.data(), uint32_t{0x11223344});
     expect(b[0] == std::byte{0x11} && b[1] == std::byte{0x22} && b[2] == std::byte{0x33} &&
@@ -27,14 +24,14 @@ void testBigEndian() {
     expect(readInt<Endian::Big, uint32_t>(b.data()) == 0x11223344u, "big-endian round trip");
 }
 
-void testLittleEndian() {
+SQ2_TEST(byte_order, little_endian) {
     std::array<std::byte, 2> b{};
     writeInt<Endian::Little>(b.data(), uint16_t{0x1234});
     expect(b[0] == std::byte{0x34} && b[1] == std::byte{0x12}, "little-endian byte order");
     expect(readInt<Endian::Little, uint16_t>(b.data()) == 0x1234, "little-endian round trip");
 }
 
-void testWidths() {
+SQ2_TEST(byte_order, widths) {
     std::array<std::byte, 1> one{};
     writeInt<Endian::Big>(one.data(), uint8_t{0xAB});
     expect(one[0] == std::byte{0xAB}, "8-bit big-endian");
@@ -46,14 +43,4 @@ void testWidths() {
     expect(eight.front() == std::byte{0x01} && eight.back() == std::byte{0x08},
            "64-bit big-endian");
     expect(readInt<Endian::Big, uint64_t>(eight.data()) == v, "64-bit round trip");
-}
-
-}  // namespace
-
-int main() {
-    testBigEndian();
-    testLittleEndian();
-    testWidths();
-    std::printf("ok\n");
-    return 0;
 }

@@ -3,11 +3,9 @@
 #include "check.h"
 
 #include <array>
-#include <optional>
 #include <string>
-#include <vector>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::Args;
 using squeeze2raop2::parseArgs;
 using squeeze2raop2::PlayerConfig;
@@ -15,7 +13,7 @@ using squeeze2raop2::ResolvedPlayerConfig;
 using squeeze2raop2::resolvePlayer;
 using squeeze2raop2::VolumeMode;
 
-static void testBuiltins() {
+SQ2_TEST(config, builtins) {
     PlayerConfig defaults;
     PlayerConfig player;
     const ResolvedPlayerConfig r = resolvePlayer(defaults, player);
@@ -28,7 +26,7 @@ static void testBuiltins() {
     expect(!r.target.has_value(), "[defaults] no static target");
 }
 
-static void testDefaultInheritance() {
+SQ2_TEST(config, default_inheritance) {
     PlayerConfig defaults;
     defaults.volumeMode = VolumeMode::Fixed;
     defaults.volPct = 40.0f;
@@ -53,7 +51,7 @@ static void testDefaultInheritance() {
     expect(overridden.volumeMode == VolumeMode::Fixed, "unoverridden still inherits");
 }
 
-static void testIdentityAndTarget() {
+SQ2_TEST(config, identity_and_target) {
     PlayerConfig defaults;
     PlayerConfig player;
     player.id = "542a1b5cc9e2";
@@ -81,7 +79,7 @@ static void testIdentityAndTarget() {
     expect(!n.explicitMac, "no explicit mac");
 }
 
-static void testParseArgs() {
+SQ2_TEST(config, parse_args) {
     {
         const char* argv[] = {"prog", "--config", "/tmp/x.conf"};
         int code = 7;
@@ -103,13 +101,4 @@ static void testParseArgs() {
         expect(!args.has_value(), "unknown option rejected");
         expect(code == 1, "unknown option exit code");
     }
-}
-
-int main() {
-    testBuiltins();
-    testDefaultInheritance();
-    testIdentityAndTarget();
-    testParseArgs();
-    std::printf("ok\n");
-    return 0;
 }

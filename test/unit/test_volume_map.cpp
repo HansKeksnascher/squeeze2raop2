@@ -3,8 +3,9 @@
 #include "check.h"
 
 #include <cmath>
+#include <cstdint>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::kDefaultVolumeMap;
 using squeeze2raop2::lmsSliderPctFromGain;
 using squeeze2raop2::VolumeAnchors;
@@ -13,7 +14,14 @@ namespace {
 
 bool near(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
 
-void testParse() {
+// 16.16 fixed-point multiplier for a linear amplitude of 10^(db/20).
+uint32_t gainForDb(double db) {
+    return static_cast<uint32_t>(std::lround(std::pow(10.0, db / 20.0) * 65536.0));
+}
+
+}  // namespace
+
+SQ2_TEST(volume, parse) {
     auto v = VolumeAnchors::parse(kDefaultVolumeMap);
     expect(v.has_value(), "default spec parses");
     expect(v->points().size() == 4, "four anchors");
@@ -43,7 +51,7 @@ void testParse() {
     expect(near(u->dbAt(16.0), -25.41, 0.01), "single-segment interpolation");
 }
 
-void testChain() {
+SQ2_TEST(volume, chain) {
     auto v = VolumeAnchors::parse(kDefaultVolumeMap);
     expect(v.has_value(), "chain spec parses");
     expect(v->airplayPctFromLms(0.0) == 0.0, "LMS mute -> pct 0");
@@ -63,12 +71,7 @@ void testChain() {
     }
 }
 
-// 16.16 fixed-point multiplier for a linear amplitude of 10^(db/20).
-uint32_t gainForDb(double db) {
-    return static_cast<uint32_t>(std::lround(std::pow(10.0, db / 20.0) * 65536.0));
-}
-
-void testLmsCurve() {
+SQ2_TEST(volume, lms_curve) {
     // LMS mute is an explicit zero gain.
     expect(lmsSliderPctFromGain(0) == 0.0, "zero gain -> mute");
 
@@ -94,14 +97,4 @@ void testLmsCurve() {
     }
     expect(lmsSliderPctFromGain(1) == 0.0, "sub-audible gain clamps to mute");
     expect(near(lmsSliderPctFromGain(65536), 100.0, 1e-9), "full scale clamps to 100");
-}
-
-}  // namespace
-
-int main() {
-    testParse();
-    testChain();
-    testLmsCurve();
-    std::printf("ok\n");
-    return 0;
 }

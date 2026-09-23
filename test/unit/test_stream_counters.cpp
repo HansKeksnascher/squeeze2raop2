@@ -6,13 +6,12 @@
 #include "check.h"
 
 #include <cstdint>
-#include <cstdio>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::StreamCounters;
 using squeeze2raop2::StreamStats;
 
-int main() {
+SQ2_TEST(counters, accounting) {
     StreamCounters c;
     c.reset(44100);
 
@@ -47,7 +46,4 @@ int main() {
     c.onFed(48000, 2, 0);
     s = c.stats();
     expect(s.elapsedMs == 500, "elapsed uses the adopted rate");
-
-    std::printf("ok\n");
-    return 0;
 }

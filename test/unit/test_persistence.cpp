@@ -6,13 +6,13 @@
 
 #include <unistd.h>
 #include <array>
-#include <cstdio>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::Persistence;
 using squeeze2raop2::ResolvedPlayerConfig;
 using squeeze2raop2::Settings;
@@ -21,13 +21,15 @@ namespace {
 
 class ScratchDir {
 public:
-    ScratchDir() {
+    explicit ScratchDir(const char* tag) {
         path_ = std::filesystem::temp_directory_path() /
-                ("squeeze2raop2_persist_test_" + std::to_string(::getpid()));
+                ("squeeze2raop2_persist_test_" + std::to_string(::getpid()) + "_" + tag);
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
     }
     ~ScratchDir() { std::filesystem::remove_all(path_); }
+    ScratchDir(const ScratchDir&) = delete;
+    ScratchDir& operator=(const ScratchDir&) = delete;
 
     std::string file(const std::string& name) const { return (path_ / name).string(); }
 
@@ -51,7 +53,10 @@ const ResolvedPlayerConfig* findByKey(const Settings& s, const std::string& key)
     return nullptr;
 }
 
-void testFreshCreatesTemplate(const ScratchDir& dir) {
+}  // namespace
+
+SQ2_TEST(persistence, fresh_creates_template) {
+    ScratchDir dir("fresh");
     Persistence p;
     Settings s;
     std::string error;
@@ -66,7 +71,8 @@ void testFreshCreatesTemplate(const ScratchDir& dir) {
     expect(text.find("[default]") != std::string::npos, "template has [default]");
 }
 
-void testParseAndInheritance(const ScratchDir& dir) {
+SQ2_TEST(persistence, parse_and_inheritance) {
+    ScratchDir dir("parsed");
     const std::string path = dir.file("parsed.conf");
     writeFile(path,
               "# top comment\n"
@@ -105,7 +111,8 @@ void testParseAndInheritance(const ScratchDir& dir) {
     expect(r.target.has_value() && r.target->first == "192.168.1.157", "target parsed");
 }
 
-void testUserEditsPreserved(const ScratchDir& dir) {
+SQ2_TEST(persistence, user_edits_preserved) {
+    ScratchDir dir("edits");
     const std::string path = dir.file("edits.conf");
     writeFile(path,
               "# keep me\n"
@@ -132,7 +139,8 @@ void testUserEditsPreserved(const ScratchDir& dir) {
     expect(text.find("mac = ") != std::string::npos, "mac written back");
 }
 
-void testAutoRegisterStable(const ScratchDir& dir) {
+SQ2_TEST(persistence, auto_register_stable) {
+    ScratchDir dir("auto");
     const std::string path = dir.file("auto.conf");
     Persistence p;
     Settings s;
@@ -158,7 +166,8 @@ void testAutoRegisterStable(const ScratchDir& dir) {
     expect(!disabled.has_value(), "no auto-register when disabled");
 }
 
-void testCredsRoundTrip(const ScratchDir& dir) {
+SQ2_TEST(persistence, creds_round_trip) {
+    ScratchDir dir("creds");
     const std::string path = dir.file("creds.conf");
     {
         Persistence p;
@@ -178,7 +187,8 @@ void testCredsRoundTrip(const ScratchDir& dir) {
     expect(p2.credsFor("542a1b5cc9e2").has_value(), "creds persisted");
 }
 
-void testResolvePrecedence(const ScratchDir& dir) {
+SQ2_TEST(persistence, resolve_precedence) {
+    ScratchDir dir("precedence");
     const std::string path = dir.file("precedence.conf");
     const auto macForId = squeeze2raop2::fakeMacFor("abcdefabcdef");
     writeFile(path, "[global]\nlog = info\n\n[player \"Pinned\"]\nmac = " +
@@ -196,7 +206,8 @@ void testResolvePrecedence(const ScratchDir& dir) {
     expect(byMac->explicitMac, "mac is explicit");
 }
 
-void testStaticPlayers(const ScratchDir& dir) {
+SQ2_TEST(persistence, static_players) {
+    ScratchDir dir("static");
     const std::string path = dir.file("static.conf");
     writeFile(path,
               "[global]\ndiscovery = off\n\n"
@@ -212,7 +223,8 @@ void testStaticPlayers(const ScratchDir& dir) {
     expect(players.front().sinkPath.value_or("") == "/tmp/k.wav", "static config resolved");
 }
 
-void testLegacyImport(const ScratchDir& dir) {
+SQ2_TEST(persistence, legacy_import) {
+    ScratchDir dir("migrated");
     const std::string statePath = dir.file("migrated.state");
     writeFile(statePath,
               "mac  Kitchen aa:ba:87:2b:cf:01\n"
@@ -238,20 +250,4 @@ void testLegacyImport(const ScratchDir& dir) {
     const std::string text = readFile(configPath);
     expect(text.find("[player \"Kitchen\"]") != std::string::npos,
            "legacy import wrote a player section");
-}
-
-}  // namespace
-
-int main() {
-    ScratchDir dir;
-    testFreshCreatesTemplate(dir);
-    testParseAndInheritance(dir);
-    testUserEditsPreserved(dir);
-    testAutoRegisterStable(dir);
-    testCredsRoundTrip(dir);
-    testResolvePrecedence(dir);
-    testStaticPlayers(dir);
-    testLegacyImport(dir);
-    std::printf("ok\n");
-    return 0;
 }

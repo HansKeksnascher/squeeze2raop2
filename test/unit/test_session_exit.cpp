@@ -5,9 +5,7 @@
 
 #include "check.h"
 
-#include <cstdio>
-
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::decideExit;
 using squeeze2raop2::ExitAction;
 using squeeze2raop2::ExitInputs;
@@ -19,7 +17,7 @@ static_assert(decideExit({false, true, true, false}) == ExitAction::GaveUp);
 static_assert(decideExit({false, false, false, true}) == ExitAction::EndedEof);
 static_assert(decideExit({false, false, false, false}) == ExitAction::EndedError);
 
-int main() {
+SQ2_TEST(session_exit, policy) {
     // A stop request always wins, whatever else is set.
     expect(decideExit({true, false, false, false}) == ExitAction::SilentStop, "stop -> silent");
     expect(decideExit({true, true, true, true}) == ExitAction::SilentStop, "stop beats all");
@@ -33,7 +31,4 @@ int main() {
     // Natural end vs error.
     expect(decideExit({false, false, false, true}) == ExitAction::EndedEof, "eof -> STMd");
     expect(decideExit({false, false, false, false}) == ExitAction::EndedError, "error -> STMu");
-
-    std::printf("ok\n");
-    return 0;
 }

@@ -8,14 +8,12 @@
 #include "check.h"
 #include "lms/slimproto.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <span>
 #include <vector>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::PcmDecoder;
 using squeeze2raop2::PcmFormat;
 
@@ -75,10 +73,10 @@ std::vector<std::byte> aiffHeader() {
     putBe32(buf.data() + 4, 0);
     putTag(buf.data() + 8, "AIFF");
     putTag(buf.data() + 12, "COMM");
-    putBe32(buf.data() + 16, 18);  // COMM chunk size
-    putBe16(buf.data() + 20, 2);   // channels
-    putBe32(buf.data() + 22, 100); // sample frames
-    putBe16(buf.data() + 26, 16);  // bits per sample
+    putBe32(buf.data() + 16, 18);   // COMM chunk size
+    putBe16(buf.data() + 20, 2);    // channels
+    putBe32(buf.data() + 22, 100);  // sample frames
+    putBe16(buf.data() + 26, 16);   // bits per sample
     // IEEE 754 80-bit extended for 44100: exponent 0x400E, mantissa 0xAC440000.
     buf[28] = std::byte{0x40};
     buf[29] = std::byte{0x0E};
@@ -88,7 +86,9 @@ std::vector<std::byte> aiffHeader() {
     return buf;
 }
 
-void testWavDecode() {
+}  // namespace
+
+SQ2_TEST(pcm_decoder, wav_decode) {
     const std::vector<int16_t> samples{100, -200, 3000, -4000, 12345, -12345};
     auto wav = wavWithSamples(samples);
 
@@ -106,7 +106,7 @@ void testWavDecode() {
         expect(out[i] == samples[i], "wav s16 LE sample passthrough");
 }
 
-void testAiffHeader() {
+SQ2_TEST(pcm_decoder, aiff_header) {
     auto aiff = aiffHeader();
 
     PcmDecoder dec(PcmFormat{}, 0);
@@ -118,13 +118,4 @@ void testAiffHeader() {
     expect(dec.valid(), "aiff header adopted");
     const PcmFormat fmt = dec.format();
     expect(fmt.sampleRate == 44100 && fmt.channels == 2 && fmt.bitsPerSample == 16, "aiff fmt");
-}
-
-}  // namespace
-
-int main() {
-    testWavDecode();
-    testAiffHeader();
-    std::printf("ok\n");
-    return 0;
 }

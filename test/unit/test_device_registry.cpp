@@ -3,14 +3,15 @@
 // std::from_chars(...,16) call rejected the "0x" prefix and stopped at the
 // comma, so every receiver parsed as features=0 and was classified AP1.
 
-#include "check.h"
 #include "discovery/device_registry.h"
+
+#include "check.h"
 
 #include <map>
 #include <string>
 
 using namespace squeeze2raop2;
-using sq2t::expect;
+using squeeze2raop2::test::expect;
 
 namespace {
 
@@ -24,7 +25,9 @@ AirplayDevice registerAirplay(const std::map<std::string, std::string>& txt) {
     return seen;
 }
 
-void testTwoWordFeatures() {
+}  // namespace
+
+SQ2_TEST(registry, two_word_features) {
     // HomePod (AudioAccessory5,1): low word first, both HK pairing bits set.
     AirplayDevice hp = registerAirplay({{"features", "0x4A7FCA00,0x3C354BD0"}});
     expect(hp.features == 0x3C354BD04A7FCA00ULL, "homepod features combine low|high<<32");
@@ -36,15 +39,15 @@ void testTwoWordFeatures() {
     expect(sonos.airplay2(), "sonos classified AP2");
 }
 
-void testPrefixAndCase() {
+SQ2_TEST(registry, prefix_and_case) {
     AirplayDevice upper = registerAirplay({{"features", "0x4A7FCA00,0x3C354BD0"}});
     AirplayDevice lower = registerAirplay({{"features", "0x4a7fca00,0x3c354bd0"}});
-    AirplayDevice bare  = registerAirplay({{"features", "4a7fca00,3c354bd0"}});
+    AirplayDevice bare = registerAirplay({{"features", "4a7fca00,3c354bd0"}});
     expect(upper.features == lower.features, "hex case-insensitive");
     expect(upper.features == bare.features, "0x prefix optional");
 }
 
-void testSingleWordAndGarbage() {
+SQ2_TEST(registry, single_word_and_garbage) {
     // A lone low word carries no HK bits -> not AP2 (bit 38/48 live in the
     // high word).
     AirplayDevice one = registerAirplay({{"features", "0x4A7FCA00"}});
@@ -59,13 +62,4 @@ void testSingleWordAndGarbage() {
     // Missing key: leave the default (0).
     AirplayDevice none = registerAirplay({{"model", "Whatever"}});
     expect(none.features == 0, "missing features stays 0");
-}
-
-}  // namespace
-
-int main() {
-    testTwoWordFeatures();
-    testPrefixAndCase();
-    testSingleWordAndGarbage();
-    return 0;
 }

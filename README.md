@@ -41,10 +41,17 @@ Linux, CMake ≥ 3.16, C++20:
 ```sh
 cmake -B build
 cmake --build build -j
-ctest --test-dir build
+ctest --test-dir build                 # all tiers
+ctest --test-dir build -L unit         # unit cases (one runner, --filter subsets)
+ctest --test-dir build -L integration  # bridge + fake-LMS scenarios
 # vendored sender's own tests (excluded from all):
 cmake --build build --target raop_core_tests raop_loop_tests
 ```
+
+Unit tests self-register with `SQ2_TEST(suite, name)` and run in one process
+(`./build/test/squeeze2raop2_tests`); add `--list` or `--filter <suite>` to
+select cases. Integration scenarios live in `test/integration/` and assert on
+the bridge's behaviour, exiting non-zero on failure.
 
 Example: bridge a HomePod as an LMS player named `Kueche15`. All behavior lives
 in one INI-style config/state file (default `./squeeze2raop2.conf`); the only

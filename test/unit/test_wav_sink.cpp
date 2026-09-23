@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::PcmFileSink;
 using squeeze2raop2::PcmFormat;
 
@@ -19,13 +19,15 @@ namespace {
 
 class ScratchDir {
 public:
-    ScratchDir() {
+    explicit ScratchDir(const char* tag) {
         path_ = std::filesystem::temp_directory_path() /
-                ("squeeze2raop2_wav_test_" + std::to_string(::getpid()));
+                ("squeeze2raop2_wav_test_" + std::to_string(::getpid()) + "_" + tag);
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
     }
     ~ScratchDir() { std::filesystem::remove_all(path_); }
+    ScratchDir(const ScratchDir&) = delete;
+    ScratchDir& operator=(const ScratchDir&) = delete;
 
     std::string file(const std::string& name) const { return (path_ / name).string(); }
 
@@ -35,7 +37,7 @@ private:
 
 std::vector<unsigned char> readFile(const std::string& path) {
     std::FILE* f = std::fopen(path.c_str(), "rb");
-    expect(f != nullptr, "open written wav for reading");
+    require(f != nullptr, "open written wav for reading");
     std::vector<unsigned char> bytes;
     unsigned char buf[4096];
     size_t n = 0;
@@ -65,7 +67,8 @@ void expectTag(const std::vector<unsigned char>& b, size_t off, std::string_view
 }  // namespace
 
 // Pins the RIFF header layout, including the audit's dataSize+36 fix.
-static void testLeHeaderAndPayload(const ScratchDir& dir) {
+SQ2_TEST(wav, le_header_and_payload) {
+    ScratchDir dir("le");
     const PcmFormat fmt{44100, 16, 2, false};
     const std::array<unsigned char, 8> payload{0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00};
 
@@ -97,7 +100,8 @@ static void testLeHeaderAndPayload(const ScratchDir& dir) {
 }
 
 // 16-bit big-endian input must be byte-swapped into the LE file.
-static void testBeSwap(const ScratchDir& dir) {
+SQ2_TEST(wav, be_swap) {
+    ScratchDir dir("be");
     const PcmFormat fmt{44100, 16, 2, true};
     const std::array<unsigned char, 4> input{0x12, 0x34, 0xAB, 0xCD};
 
@@ -115,7 +119,8 @@ static void testBeSwap(const ScratchDir& dir) {
 
 // An incoming stream that already starts with a RIFF header gets its 44-byte
 // header stripped on the first feed (total_ == 0 gate).
-static void testRiffHeaderStripped(const ScratchDir& dir) {
+SQ2_TEST(wav, riff_header_stripped) {
+    ScratchDir dir("stripped");
     const PcmFormat fmt{44100, 16, 2, false};
     std::vector<unsigned char> incoming(44 + 6, 0x00);
     incoming[0] = 'R';
@@ -135,13 +140,4 @@ static void testRiffHeaderStripped(const ScratchDir& dir) {
     expect(bytes.size() == 44 + tail.size(), "incoming RIFF header stripped, payload kept");
     for (size_t i = 0; i < tail.size(); ++i)
         expect(bytes[44 + i] == static_cast<unsigned char>(tail[i]), "payload after strip");
-}
-
-int main() {
-    ScratchDir dir;
-    testLeHeaderAndPayload(dir);
-    testBeSwap(dir);
-    testRiffHeaderStripped(dir);
-    std::printf("ok\n");
-    return 0;
 }

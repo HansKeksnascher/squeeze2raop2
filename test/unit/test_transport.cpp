@@ -25,7 +25,7 @@
 #include <string>
 #include <thread>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::HttpStreamReader;
 using squeeze2raop2::SlimProtoClient;
 using squeeze2raop2::StreamStats;
@@ -38,17 +38,17 @@ class LoopbackListener {
 public:
     LoopbackListener() {
         fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        expect(fd_ >= 0, "listener socket");
+        require(fd_ >= 0, "listener socket");
         int one = 1;
         (void)::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = 0;
-        expect(::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "bind");
-        expect(::listen(fd_, 8) == 0, "listen");
+        require(::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "bind");
+        require(::listen(fd_, 8) == 0, "listen");
         socklen_t len = sizeof(addr);
-        expect(::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "getsockname");
+        require(::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "getsockname");
         port_ = ntohs(addr.sin_port);
     }
     ~LoopbackListener() {
@@ -69,7 +69,9 @@ private:
     uint16_t port_ = 0;
 };
 
-void testConcurrentSendDuringReconnect() {
+}  // namespace
+
+SQ2_TEST(transport, concurrent_send_during_reconnect) {
     LoopbackListener listener;
     std::atomic<bool> run{true};
 
@@ -107,7 +109,7 @@ void testConcurrentSendDuringReconnect() {
     expect(true, "concurrent send during reconnect completed");
 }
 
-void testHttpHeaderInterrupt() {
+SQ2_TEST(transport, http_header_interrupt) {
     LoopbackListener listener;
     // Server accepts but never replies, so openBlocking parks in poll().
     std::thread acceptor([&] {
@@ -136,13 +138,4 @@ void testHttpHeaderInterrupt() {
     acceptor.join();
 
     expect(!ok.load(), "openBlocking returns false after interrupt");
-}
-
-}  // namespace
-
-int main() {
-    testConcurrentSendDuringReconnect();
-    testHttpHeaderInterrupt();
-    std::printf("ok\n");
-    return 0;
 }

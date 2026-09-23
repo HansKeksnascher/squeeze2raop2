@@ -6,12 +6,11 @@
 #include "check.h"
 
 #include <cstdint>
-#include <cstdio>
 
-using namespace sq2t;
+using namespace squeeze2raop2::test;
 using squeeze2raop2::RingTelemetry;
 
-int main() {
+SQ2_TEST(ring_telemetry, summary_window) {
     RingTelemetry t;
     expect(!t.observe(1000, 1000).has_value(), "first sample arms the window");
     expect(!t.observe(500, 5000).has_value(), "no boundary before 10 s");
@@ -20,7 +19,9 @@ int main() {
     expect(!t.observe(7, 12000).has_value(), "window re-arms after the summary");
     const auto w2 = t.observe(7, 21000);
     expect(w2.has_value() && *w2 == 10000, "second window");
+}
 
+SQ2_TEST(ring_telemetry, starvation_latch) {
     RingTelemetry s;
     expect(!s.starved(), "not starved initially");
     (void)s.observe(0, 100);
@@ -29,7 +30,4 @@ int main() {
     expect(s.starved(), "starve stays latched while empty");
     (void)s.observe(50, 300);
     expect(!s.starved(), "recovery clears the latch");
-
-    std::printf("ok\n");
-    return 0;
 }
