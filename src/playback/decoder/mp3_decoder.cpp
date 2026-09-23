@@ -4,19 +4,12 @@
 
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_ONLY_MP3
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wold-style-cast"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wuseless-cast"
-#pragma GCC diagnostic ignored "-Wcast-align"
-#pragma GCC diagnostic ignored "-Wdouble-promotion"
-#endif
+
+#include "common/third_party_warnings.h"
+
+SQUEEZE2RAOP2_TP_WARNINGS_PUSH
 #include <minimp3.h>
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+SQUEEZE2RAOP2_TP_WARNINGS_POP
 
 #include <algorithm>
 #include <array>
@@ -35,8 +28,6 @@ namespace {
 // spuriously resetting mid-stream. At EOF the threshold drops to the minimum.
 constexpr size_t kLiveWindow = 2048 + 8;
 constexpr size_t kEofWindow = 8;
-// Compact the consumed prefix once it passes this size.
-constexpr size_t kCompactThreshold = 1 << 16;
 // minimp3's decode entry point takes an int byte count.
 constexpr size_t kMaxWindow = std::numeric_limits<int>::max();
 
@@ -87,21 +78,10 @@ void Mp3Decoder::decodeMore() {
                         std::span{pcm}.first(got).end());
         }
 
-        if (consumed_ >= kCompactThreshold) {
-            buffer_.erase(buffer_.begin(),
-                          buffer_.begin() + static_cast<std::ptrdiff_t>(consumed_));
-            consumed_ = 0;
-        }
+        compactConsumed(buffer_, consumed_);
     }
 }
 
-size_t Mp3Decoder::drain(std::span<int16_t> out) {
-    const size_t n = std::min(pcm_.size(), out.size());
-    if (n) {
-        std::ranges::copy(std::span{pcm_}.first(n), out.begin());
-        pcm_.erase(pcm_.begin(), pcm_.begin() + static_cast<std::ptrdiff_t>(n));
-    }
-    return n;
-}
+size_t Mp3Decoder::drain(std::span<int16_t> out) { return takeSamples(out, pcm_); }
 
 }  // namespace squeeze2raop2

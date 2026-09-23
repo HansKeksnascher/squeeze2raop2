@@ -6,6 +6,7 @@
 
 #include "aac_fixture.h"
 #include "check.h"
+#include "decoder_util.h"
 #include "lms/wire_types.h"
 #include "m4a_fixture.h"
 
@@ -24,23 +25,6 @@ using squeeze2raop2::PcmFormat;
 using squeeze2raop2::StreamFormat;
 
 namespace {
-
-std::vector<int16_t> drainAll(Decoder& dec) {
-    std::vector<int16_t> out;
-    std::array<int16_t, 4096> buf{};
-    for (;;) {
-        const size_t n = dec.drain(buf);
-        if (n == 0) break;
-        out.insert(out.end(), buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
-    }
-    return out;
-}
-
-int peak(const std::vector<int16_t>& pcm) {
-    int p = 0;
-    for (const int16_t s : pcm) p = std::max(p, std::abs(static_cast<int>(s)));
-    return p;
-}
 
 void expectDecoded(Decoder& dec, const std::vector<int16_t>& pcm, const char* tag) {
     expect(!dec.hasError(), tag);

@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace squeeze2raop2 {
 
@@ -81,6 +82,22 @@ protected:
     virtual PcmFormat decodedFormat() const = 0;
     // True for decoders with an active source-rate stage (PCM with a target).
     virtual bool regulatesRate() const { return false; }
+
+    // Interleaved s16 stereo at the decoder's decoded rate/channels — the
+    // output shape every native decoder produces.
+    PcmFormat s16StereoFormat() const {
+        return PcmFormat{.sampleRate = sampleRate(),
+                         .bitsPerSample = 16,
+                         .channels = static_cast<uint8_t>(channels()),
+                         .bigEndian = false};
+    }
+
+    // Move up to out.size() queued decoded samples out of `pcm` and drop them.
+    static size_t takeSamples(std::span<int16_t> out, std::vector<int16_t>& pcm);
+    // Drop the decoded prefix of a compressed window once it is large enough.
+    static void compactConsumed(std::vector<std::byte>& buffer, size_t& consumed);
+    // Consumed-prefix size at which compactConsumed() drops the window prefix.
+    static constexpr size_t kCompactThreshold = 1 << 16;
 
     const PcmFormat& inputFormat() const { return input_; }
 

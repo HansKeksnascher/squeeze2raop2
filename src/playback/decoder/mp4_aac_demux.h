@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -29,18 +30,18 @@ public:
     void drain(std::vector<std::byte>& out);
 
     bool failed() const { return failed_; }
-    bool ready() const { return ready_; }
     size_t pending() const { return buf_.size() - pos_; }
 
 private:
     void pump();
     void compact();
-    void parseMoov(const std::byte* p, size_t n);
-    void parseTrak(const std::byte* p, size_t n);
-    void parseBoxes(const std::byte* p, size_t n);
-    void parseStsd(const std::byte* p, size_t n);
-    void parseStsz(const std::byte* p, size_t n);
-    void parseEsds(const std::byte* p, size_t n);
+    // Each parse* receives the payload (header stripped) of one container.
+    void parseMoov(std::span<const std::byte> boxes);
+    void parseTrak(std::span<const std::byte> boxes);
+    void parseBoxes(std::span<const std::byte> boxes);
+    void parseStsd(std::span<const std::byte> body);
+    void parseStsz(std::span<const std::byte> body);
+    void parseEsds(std::span<const std::byte> body);
     void synthAdts(std::span<const std::byte> sample, std::vector<std::byte>& out);
 
     std::vector<std::byte> buf_;     // unconsumed input bytes
@@ -55,10 +56,9 @@ private:
     bool ready_ = false;
     bool failed_ = false;
     bool done_ = false;
-    bool finished_ = false;
     bool trackAudio_ = false;
     bool haveConfig_ = false;
-    uint8_t asc_[64] = {};
+    std::array<uint8_t, 64> asc_ = {};
     size_t ascLen_ = 0;
     uint8_t profile_ = 1;  // ADTS profile = AOT - 1 (LC core)
     uint8_t sfi_ = 4;      // sampling-frequency index (44100)

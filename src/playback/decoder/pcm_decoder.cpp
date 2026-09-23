@@ -21,8 +21,6 @@ constexpr size_t kChunkFrames = 1152;
 // mirroring the sender resampler's inBuf_ sizing.
 constexpr size_t kStageMaxFrames = 8192;
 
-bool tagIs(const std::byte* p, const char (&tag)[5]) { return std::memcmp(p, tag, 4) == 0; }
-
 }  // namespace
 
 PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
@@ -55,7 +53,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
 
     // RIFF/WAVE: fmt chunk carries the real format; skip RIFF hdr + fmt
     // chunk + the 'data' chunk header (pcm.c's skip arithmetic).
-    if (have >= 44 && tagIs(p, "RIFF") && tagIs(p + 8, "WAVE") && tagIs(p + 12, "fmt ")) {
+    if (have >= 44 && fourccIs(p, "RIFF") && fourccIs(p + 8, "WAVE") && fourccIs(p + 12, "fmt ")) {
         const uint32_t fmtSize = readInt<Endian::Little, uint32_t>(p + 16);
         srcChannels_ = static_cast<uint8_t>(readInt<Endian::Little, uint16_t>(p + 22));
         srcRate_ = readInt<Endian::Little, uint32_t>(p + 24);
@@ -78,14 +76,14 @@ std::optional<size_t> PcmDecoder::checkHeader() {
 
     // FORM/AIFF|AIFC: walk chunks, COMM carries the format (big-endian),
     // SSND starts the sound data (its own 8-byte header + data offset).
-    if (have >= 64 && tagIs(p, "FORM") && (tagIs(p + 8, "AIFF") || tagIs(p + 8, "AIFC"))) {
+    if (have >= 64 && fourccIs(p, "FORM") && (fourccIs(p + 8, "AIFF") || fourccIs(p + 8, "AIFC"))) {
         size_t off = 12;
         srcBigEndian_ = true;
         while (off + 8 <= have) {
             // COMM body is read through the rate u32 at +18..+21, so the chunk
             // needs 22 bytes, not 18 (the exponent pair at +16/+17 alone would
             // only need 18).
-            if (tagIs(p + off, "COMM") && off + 22 <= have) {
+            if (fourccIs(p + off, "COMM") && off + 22 <= have) {
                 srcChannels_ = static_cast<uint8_t>(readInt<Endian::Big, uint16_t>(p + off + 8));
                 srcBits_ = static_cast<uint8_t>(readInt<Endian::Big, uint16_t>(p + off + 14));
                 // IEEE 80-bit extended rate, same simplification as pcm.c:
@@ -106,7 +104,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                 log::info(log::Area::Dec, "AIFF header, {} bit / {} Hz / {} ch", srcBits_, srcRate_,
                           srcChannels_);
             }
-            if (tagIs(p + off, "SSND")) {
+            if (fourccIs(p + off, "SSND")) {
                 // The chunk header (tag + length) fits by the loop guard, but
                 // the 4-byte sound-data offset at +8 needs 12 bytes. Reading it
                 // with fewer would run past the probe buffer.

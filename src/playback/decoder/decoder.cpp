@@ -28,6 +28,20 @@ std::span<const int16_t> Decoder::nextChunk() {
     return std::span<const int16_t>(chunk_).first(n);
 }
 
+size_t Decoder::takeSamples(std::span<int16_t> out, std::vector<int16_t>& pcm) {
+    const size_t n = std::min(pcm.size(), out.size());
+    if (!n) return 0;
+    std::ranges::copy(std::span{pcm}.first(n), out.begin());
+    pcm.erase(pcm.begin(), pcm.begin() + static_cast<std::ptrdiff_t>(n));
+    return n;
+}
+
+void Decoder::compactConsumed(std::vector<std::byte>& buffer, size_t& consumed) {
+    if (consumed < kCompactThreshold) return;
+    buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(consumed));
+    consumed = 0;
+}
+
 // Measure the source's arrival rate over the telemetry window. The socket
 // feed IS the arrival (the reader strips icy meta and hands every audio byte
 // to the decoder), so Δ(receivedBytes) is the source rate — any backlog or

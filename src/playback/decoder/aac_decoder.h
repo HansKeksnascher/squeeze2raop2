@@ -39,20 +39,23 @@ public:
     bool hasError() const override { return failed_; }
     std::string_view name() const override { return "aac"; }
 
-    // Opaque libxaac state (API object + memory/table allocations); defined in
-    // the .cpp so the third-party headers stay out of this header. Public only
-    // so the file-local init helper can name it.
-    struct Xaac;
-
 protected:
     PcmFormat decodedFormat() const override;
 
 private:
-    // Lazily allocate and initialise the libxaac decoder. Returns true once
-    // initialised; false when more input is needed or on failure.
+    // Opaque libxaac state (API object + memory/table allocations); defined in
+    // the .cpp so the third-party headers stay out of this header.
+    struct Xaac;
+    // Allocate and initialise libxaac's API object, tables and memory.
+    static bool initXaac(Xaac& x);
+
+    // Lazily initialise the libxaac decoder. Returns true once initialised;
+    // false when more input is needed or on failure.
     bool ensureInit();
     // Decode as many frames as the buffered input allows into pcm_.
     void decodeMore();
+    // Pull the MP4 demuxer's output into buffer_, failing on demux errors.
+    void drainDemuxed();
     // Copy pending compressed bytes into the library's input buffer; returns
     // the number copied.
     size_t fillInput();
@@ -60,7 +63,6 @@ private:
     size_t frameEnd(size_t limit) const;
     // Append `bytes` of s16 from the library output buffer to pcm_.
     void appendPcm(size_t bytes);
-    void compact();
     void fail(std::string_view why);
 
     std::unique_ptr<Xaac> xaac_;
@@ -74,7 +76,6 @@ private:
     bool failed_ = false;
     bool initDone_ = false;
     bool inputOver_ = false;
-    uint8_t containerCode_ = 0;
 };
 
 }  // namespace squeeze2raop2

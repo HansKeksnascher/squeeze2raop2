@@ -7,6 +7,7 @@
 #include "playback/decoder/decoder.h"
 
 #include "check.h"
+#include "decoder_util.h"
 #include "lms/wire_types.h"
 #include "mp3_fixture.h"
 
@@ -30,27 +31,6 @@ constexpr size_t kProbe = 512;
 void putLe16(std::byte* p, uint16_t v) {
     p[0] = static_cast<std::byte>(v & 0xFF);
     p[1] = static_cast<std::byte>((v >> 8) & 0xFF);
-}
-
-std::vector<int16_t> chunksAll(Decoder& dec) {
-    std::vector<int16_t> out;
-    for (;;) {
-        const std::span<const int16_t> chunk = dec.nextChunk();
-        if (chunk.empty()) break;
-        out.insert(out.end(), chunk.begin(), chunk.end());
-    }
-    return out;
-}
-
-std::vector<int16_t> drainAll(Decoder& dec) {
-    std::vector<int16_t> out;
-    std::array<int16_t, 4096> buf{};
-    for (;;) {
-        const size_t n = dec.drain(buf);
-        if (n == 0) break;
-        out.insert(out.end(), buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n));
-    }
-    return out;
 }
 
 }  // namespace
@@ -112,10 +92,7 @@ SQ2_TEST(decoder, mp3_decodes_frame_and_flushes_tail) {
     expect(dec->format().sampleRate == 44100, "detected rate");
     expect(dec->format().channels == 2, "detected channels");
     expect(pcm.size() >= 1152, "at least one MPEG-1 frame of samples");
-
-    int peak = 0;
-    for (const int16_t s : pcm) peak = std::max(peak, std::abs(static_cast<int>(s)));
-    expect(peak > 0, "non-silent decode");
+    expect(peak(pcm) > 0, "non-silent decode");
 }
 
 SQ2_TEST(decoder, rate_regulation) {

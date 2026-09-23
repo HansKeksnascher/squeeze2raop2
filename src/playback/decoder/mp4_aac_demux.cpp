@@ -8,39 +8,54 @@
 
 #include "playback/decoder/mp4_aac_demux.h"
 
-#include "common/log.h"
+#include "common/byte_order.h"
 
 #include <algorithm>
-#include <cstring>
+#include <array>
+#include <iterator>
 #include <limits>
 
 namespace squeeze2raop2 {
 
 namespace {
 
-uint8_t byteAt(const std::byte* p) { return std::to_integer<uint8_t>(p[0]); }
+// A parsed ISOBMFF box header. `size` is the total box size including the
+// header; a declared size of 0 means "to the end of the available bytes" and
+// is resolved by the caller via boxSize().
+struct BoxHeader {
+    std::byte type[4] = {};
+    uint64_t size = 0;
+    size_t header = 0;  // 8, or 16 with a 64-bit largesize
+};
 
-uint16_t rd16(const std::byte* p) {
-    return static_cast<uint16_t>((static_cast<uint16_t>(byteAt(p)) << 8) | byteAt(p + 1));
+enum class BoxParse { Ok, NeedMore, Malformed };
+
+// Parse the box header at the front of `buf`. NeedMore means the header (or a
+// 64-bit largesize) is not fully buffered yet; Malformed means the declared
+// size is smaller than the header.
+BoxParse readBoxHeader(std::span<const std::byte> buf, BoxHeader& out) {
+    if (buf.size() < 8) return BoxParse::NeedMore;
+    out.size = readInt<Endian::Big, uint32_t>(buf.data());
+    std::copy_n(buf.data() + 4, 4, out.type);
+    out.header = 8;
+    if (out.size == 1) {
+        if (buf.size() < 16) return BoxParse::NeedMore;
+        out.size = readInt<Endian::Big, uint64_t>(buf.data() + 8);
+        out.header = 16;
+    }
+    if (out.size != 0 && out.size < out.header) return BoxParse::Malformed;
+    return BoxParse::Ok;
 }
 
-uint32_t rd32(const std::byte* p) {
-    return (static_cast<uint32_t>(byteAt(p)) << 24) | (static_cast<uint32_t>(byteAt(p + 1)) << 16) |
-           (static_cast<uint32_t>(byteAt(p + 2)) << 8) | static_cast<uint32_t>(byteAt(p + 3));
-}
-
-uint64_t rd64(const std::byte* p) { return (static_cast<uint64_t>(rd32(p)) << 32) | rd32(p + 4); }
-
-bool isType(const std::byte* p, const char (&tag)[5]) { return std::memcmp(p, tag, 4) == 0; }
+// Total box size, resolving a declared 0 ("to EOF") against the bytes at hand.
+uint64_t boxSize(const BoxHeader& h, size_t avail) { return h.size == 0 ? avail : h.size; }
 
 // AAC sampling-frequency index for a rate (ISO/IEC 14496-3 table 1.18).
 uint8_t rateIndex(uint32_t rate) {
-    static constexpr uint32_t kRates[] = {96000, 88200, 64000, 48000, 44100, 32000, 24000,
-                                          22050, 16000, 12000, 11025, 8000,  7350};
-    for (uint8_t i = 0; i < sizeof(kRates) / sizeof(kRates[0]); ++i) {
-        if (kRates[i] == rate) return i;
-    }
-    return 4;  // 44100
+    static constexpr std::array<uint32_t, 13> kRates = {
+        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350};
+    const auto it = std::ranges::find(kRates, rate);
+    return it == kRates.end() ? 4 : static_cast<uint8_t>(std::distance(kRates.begin(), it));
 }
 
 }  // namespace
@@ -55,7 +70,6 @@ void Mp4AacDemuxer::feed(std::span<const std::byte> data) {
 }
 
 void Mp4AacDemuxer::finish() {
-    finished_ = true;
     if (failed_ || done_) return;
     pump();
     compact();
@@ -78,7 +92,8 @@ void Mp4AacDemuxer::pump() {
 
         if (skipRemaining_) {
             const size_t avail = buf_.size() - pos_;
-            const size_t take = static_cast<size_t>(std::min<uint64_t>(skipRemaining_, avail));
+            const size_t take =
+                static_cast<size_t>(std::min(skipRemaining_, static_cast<uint64_t>(avail)));
             pos_ += take;
             skipRemaining_ -= take;
             if (skipRemaining_) return;
@@ -93,7 +108,8 @@ void Mp4AacDemuxer::pump() {
             if (nextSample_ >= sampleSizes_.size()) {
                 // No more samples: drain the rest of mdat.
                 const size_t avail = buf_.size() - pos_;
-                const size_t take = static_cast<size_t>(std::min<uint64_t>(mdatRemaining_, avail));
+                const size_t take =
+                    static_cast<size_t>(std::min(mdatRemaining_, static_cast<uint64_t>(avail)));
                 pos_ += take;
                 mdatRemaining_ -= take;
                 if (mdatRemaining_ == 0) {
@@ -112,8 +128,8 @@ void Mp4AacDemuxer::pump() {
             const size_t avail = buf_.size() - pos_;
             const size_t take = std::min(need, avail);
             if (take) {
-                sample_.insert(sample_.end(), buf_.begin() + static_cast<std::ptrdiff_t>(pos_),
-                               buf_.begin() + static_cast<std::ptrdiff_t>(pos_ + take));
+                const auto from = buf_.begin() + static_cast<std::ptrdiff_t>(pos_);
+                sample_.insert(sample_.end(), from, from + static_cast<std::ptrdiff_t>(take));
                 pos_ += take;
                 mdatRemaining_ -= take;
             }
@@ -127,37 +143,30 @@ void Mp4AacDemuxer::pump() {
             continue;
         }
 
-        if (buf_.size() - pos_ < 8) return;
-        const std::byte* hdr = buf_.data() + pos_;
-        uint64_t size = rd32(hdr);
-        const std::byte* type = hdr + 4;
-        size_t headerLen = 8;
-        if (size == 1) {
-            if (buf_.size() - pos_ < 16) return;
-            size = rd64(hdr + 8);
-            headerLen = 16;
-        } else if (size == 0) {
-            size = buf_.size() - pos_;  // extends to the end of what we have
-        }
-        if (size < headerLen) {
+        const size_t avail = buf_.size() - pos_;
+        BoxHeader h;
+        const BoxParse status = readBoxHeader(std::span{buf_}.subspan(pos_), h);
+        if (status == BoxParse::NeedMore) return;
+        if (status == BoxParse::Malformed) {
             failed_ = true;
             return;
         }
+        const uint64_t size = boxSize(h, avail);
 
-        if (isType(type, "mdat")) {
+        if (fourccIs(h.type, "mdat")) {
             if (!ready_) {
                 failed_ = true;  // moov must precede mdat
                 return;
             }
-            pos_ += headerLen;
-            mdatRemaining_ = (size == 0) ? std::numeric_limits<uint64_t>::max() : size - headerLen;
+            pos_ += h.header;
+            mdatRemaining_ = h.size == 0 ? std::numeric_limits<uint64_t>::max() : h.size - h.header;
             inMdat_ = true;
             continue;
         }
-        if (isType(type, "moov")) {
-            const size_t avail = buf_.size() - pos_;
+        if (fourccIs(h.type, "moov")) {
             if (size > avail) return;  // wait for the whole moov
-            parseMoov(hdr + headerLen, static_cast<size_t>(size) - headerLen);
+            parseMoov(
+                std::span{buf_}.subspan(pos_ + h.header, static_cast<size_t>(size) - h.header));
             if (failed_) return;
             pos_ += static_cast<size_t>(size);
             ready_ = haveConfig_ && !sampleSizes_.empty();
@@ -169,7 +178,6 @@ void Mp4AacDemuxer::pump() {
         }
 
         // Skip ftyp/free/wide/uuid/... (consume what we have and wait).
-        const size_t avail = buf_.size() - pos_;
         if (size > avail) {
             pos_ += avail;
             skipRemaining_ = size - avail;
@@ -180,107 +188,88 @@ void Mp4AacDemuxer::pump() {
     }
 }
 
-void Mp4AacDemuxer::parseMoov(const std::byte* p, size_t n) {
+void Mp4AacDemuxer::parseMoov(std::span<const std::byte> boxes) {
     size_t off = 0;
-    while (off + 8 <= n) {
-        uint64_t size = rd32(p + off);
-        const std::byte* t = p + off + 4;
-        size_t hdr = 8;
-        if (size == 1) {
-            if (off + 16 > n) return;
-            size = rd64(p + off + 8);
-            hdr = 16;
-        } else if (size == 0) {
-            size = n - off;
-        }
-        if (size < hdr || off + size > n) return;
-        if (isType(t, "trak")) parseTrak(p + off + hdr, static_cast<size_t>(size) - hdr);
+    for (;;) {
+        BoxHeader h;
+        if (readBoxHeader(boxes.subspan(off), h) != BoxParse::Ok) return;
+        const uint64_t size = boxSize(h, boxes.size() - off);
+        if (off + size > boxes.size()) return;
+        if (fourccIs(h.type, "trak"))
+            parseTrak(boxes.subspan(off + h.header, static_cast<size_t>(size) - h.header));
         off += static_cast<size_t>(size);
     }
 }
 
-void Mp4AacDemuxer::parseTrak(const std::byte* p, size_t n) {
+void Mp4AacDemuxer::parseTrak(std::span<const std::byte> boxes) {
     trackAudio_ = false;
-    parseBoxes(p, n);
+    parseBoxes(boxes);
 }
 
-void Mp4AacDemuxer::parseBoxes(const std::byte* p, size_t n) {
+void Mp4AacDemuxer::parseBoxes(std::span<const std::byte> boxes) {
     size_t off = 0;
-    while (off + 8 <= n) {
-        uint64_t size = rd32(p + off);
-        const std::byte* t = p + off + 4;
-        size_t hdr = 8;
-        if (size == 1) {
-            if (off + 16 > n) return;
-            size = rd64(p + off + 8);
-            hdr = 16;
-        } else if (size == 0) {
-            size = n - off;
-        }
-        if (size < hdr || off + size > n) return;
-        const std::byte* body = p + off + hdr;
-        const size_t blen = static_cast<size_t>(size) - hdr;
-        if (isType(t, "mdia") || isType(t, "minf") || isType(t, "stbl") || isType(t, "edts") ||
-            isType(t, "udta")) {
-            parseBoxes(body, blen);
-        } else if (isType(t, "stsd")) {
-            parseStsd(body, blen);
-        } else if (isType(t, "stsz")) {
-            parseStsz(body, blen);
-        } else if (isType(t, "esds")) {
-            parseEsds(body, blen);
+    for (;;) {
+        BoxHeader h;
+        if (readBoxHeader(boxes.subspan(off), h) != BoxParse::Ok) return;
+        const uint64_t size = boxSize(h, boxes.size() - off);
+        if (off + size > boxes.size()) return;
+        const auto body = boxes.subspan(off + h.header, static_cast<size_t>(size) - h.header);
+        if (fourccIs(h.type, "mdia") || fourccIs(h.type, "minf") || fourccIs(h.type, "stbl") ||
+            fourccIs(h.type, "edts") || fourccIs(h.type, "udta")) {
+            parseBoxes(body);
+        } else if (fourccIs(h.type, "stsd")) {
+            parseStsd(body);
+        } else if (fourccIs(h.type, "stsz")) {
+            parseStsz(body);
+        } else if (fourccIs(h.type, "esds")) {
+            parseEsds(body);
         }
         off += static_cast<size_t>(size);
     }
 }
 
-void Mp4AacDemuxer::parseStsd(const std::byte* p, size_t n) {
-    if (n < 8) return;
+void Mp4AacDemuxer::parseStsd(std::span<const std::byte> body) {
+    if (body.size() < 8) return;
     size_t off = 8;  // version/flags + entry_count
-    while (off + 8 <= n) {
-        uint64_t size = rd32(p + off);
-        const std::byte* fmt = p + off + 4;
-        size_t hdr = 8;
-        if (size == 1) {
-            if (off + 16 > n) return;
-            size = rd64(p + off + 8);
-            hdr = 16;
-        }
-        if (size < hdr || off + size > n) return;
-        if (isType(fmt, "mp4a")) {
+    for (;;) {
+        BoxHeader h;
+        if (readBoxHeader(body.subspan(off), h) != BoxParse::Ok) return;
+        const uint64_t size = boxSize(h, body.size() - off);
+        if (off + size > body.size()) return;
+        if (fourccIs(h.type, "mp4a")) {
             trackAudio_ = true;
-            const std::byte* entry = p + off + hdr;
-            const size_t elen = static_cast<size_t>(size) - hdr;
+            const auto entry = body.subspan(off + h.header, static_cast<size_t>(size) - h.header);
             // AudioSampleEntry fixed fields, then child boxes (esds).
-            if (elen >= 28) {
-                const uint16_t ch = rd16(entry + 16);
-                const uint32_t sr = rd32(entry + 24) >> 16;
+            if (entry.size() >= 28) {
+                const uint16_t ch = readInt<Endian::Big, uint16_t>(entry.data() + 16);
+                const uint32_t sr = readInt<Endian::Big, uint32_t>(entry.data() + 24) >> 16;
                 if (ch >= 1 && ch <= 7 && !haveConfig_) channels_ = static_cast<uint8_t>(ch);
                 if (sr && !haveConfig_) sampleRate_ = sr;
             }
-            if (elen > 28) parseBoxes(entry + 28, elen - 28);
+            if (entry.size() > 28) parseBoxes(entry.subspan(28));
         }
         off += static_cast<size_t>(size);
     }
 }
 
-void Mp4AacDemuxer::parseStsz(const std::byte* p, size_t n) {
-    if (!trackAudio_ || !sampleSizes_.empty() || n < 12) return;
-    const uint32_t uniform = rd32(p + 4);
-    const uint32_t count = rd32(p + 8);
+void Mp4AacDemuxer::parseStsz(std::span<const std::byte> body) {
+    if (!trackAudio_ || !sampleSizes_.empty() || body.size() < 12) return;
+    const uint32_t uniform = readInt<Endian::Big, uint32_t>(body.data() + 4);
+    const uint32_t count = readInt<Endian::Big, uint32_t>(body.data() + 8);
     if (uniform != 0) {
         sampleSizes_.assign(count, uniform);
         return;
     }
-    if (static_cast<uint64_t>(n) < 12ull + static_cast<uint64_t>(count) * 4ull) return;
+    if (body.size() < 12 + static_cast<size_t>(count) * 4) return;
     sampleSizes_.reserve(count);
-    for (uint32_t i = 0; i < count; ++i) sampleSizes_.push_back(rd32(p + 12 + i * 4));
+    for (uint32_t i = 0; i < count; ++i)
+        sampleSizes_.push_back(readInt<Endian::Big, uint32_t>(body.data() + 12 + i * 4));
 }
 
-void Mp4AacDemuxer::parseEsds(const std::byte* p, size_t n) {
-    if (haveConfig_ || n < 4) return;
-    const uint8_t* q = reinterpret_cast<const uint8_t*>(p) + 4;  // version/flags
-    const uint8_t* end = reinterpret_cast<const uint8_t*>(p) + n;
+void Mp4AacDemuxer::parseEsds(std::span<const std::byte> body) {
+    if (haveConfig_ || body.size() < 4) return;
+    const uint8_t* q = reinterpret_cast<const uint8_t*>(body.data()) + 4;  // version/flags
+    const uint8_t* end = reinterpret_cast<const uint8_t*>(body.data()) + body.size();
     while (q < end) {
         const uint8_t tag = *q++;
         uint32_t len = 0;
@@ -291,9 +280,8 @@ void Mp4AacDemuxer::parseEsds(const std::byte* p, size_t n) {
             ++cnt;
             if (!(b & 0x80u)) break;
         }
-        if (static_cast<uint64_t>(q - reinterpret_cast<const uint8_t*>(p)) + len > n) {
-            len = static_cast<uint32_t>(end - q);
-        }
+        const size_t remaining = static_cast<size_t>(end - q);
+        if (len > remaining) len = static_cast<uint32_t>(remaining);
         if (tag == 0x03) {  // ES_Descriptor: ES_ID(2) + flags(1) [+ optional]
             if (q + 3 > end) return;
             const uint8_t flags = q[2];
@@ -320,8 +308,8 @@ void Mp4AacDemuxer::parseEsds(const std::byte* p, size_t n) {
             continue;
         }
         if (tag == 0x05) {  // DecoderSpecificInfo: AudioSpecificConfig
-            ascLen_ = std::min<size_t>(len, sizeof(asc_));
-            std::memcpy(asc_, q, ascLen_);
+            ascLen_ = std::min<size_t>(len, asc_.size());
+            std::copy_n(q, ascLen_, asc_.begin());
             if (ascLen_ >= 2) {
                 const uint8_t aot = static_cast<uint8_t>((asc_[0] >> 3) & 0x1Fu);
                 uint8_t sfi =

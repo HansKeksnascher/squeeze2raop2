@@ -6,6 +6,8 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <string_view>
 
 namespace squeeze2raop2 {
 
@@ -48,6 +50,13 @@ constexpr void writeInt(std::byte* dst, T value) {
     const std::array<std::byte, sizeof(T)> bytes =
         std::bit_cast<std::array<std::byte, sizeof(T)>>(detail::toWire(value, wire));
     for (size_t i = 0; i < sizeof(T); ++i) dst[i] = bytes[i];
+}
+
+// True when the four bytes at `src` are the given four-character code (RIFF
+// chunk tags, AIFF chunks, ISOBMFF box types, ...). The caller guarantees the
+// range is readable.
+[[nodiscard]] inline bool fourccIs(const std::byte* src, std::string_view code) {
+    return code.size() == 4 && std::memcmp(src, code.data(), 4) == 0;
 }
 
 }  // namespace squeeze2raop2

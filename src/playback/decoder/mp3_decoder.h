@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/third_party_warnings.h"
 #include "playback/decoder/decoder.h"
 
 #include <cstddef>
@@ -7,21 +8,9 @@
 #include <span>
 #include <vector>
 
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wold-style-cast"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wuseless-cast"
-#pragma GCC diagnostic ignored "-Wcast-align"
-#pragma GCC diagnostic ignored "-Wdouble-promotion"
-#endif
-
+SQUEEZE2RAOP2_TP_WARNINGS_PUSH
 #include <minimp3.h>
-
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+SQUEEZE2RAOP2_TP_WARNINGS_POP
 
 namespace squeeze2raop2 {
 
@@ -48,12 +37,7 @@ public:
     std::string_view name() const override { return "mp3"; }
 
 protected:
-    PcmFormat decodedFormat() const override {
-        return PcmFormat{.sampleRate = sampleRate_,
-                         .bitsPerSample = 16,
-                         .channels = static_cast<uint8_t>(channels_),
-                         .bigEndian = false};
-    }
+    PcmFormat decodedFormat() const override { return s16StereoFormat(); }
 
 private:
     void decodeMore();

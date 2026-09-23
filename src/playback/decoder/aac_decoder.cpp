@@ -5,22 +5,14 @@
 #include "playback/decoder/aac_decoder.h"
 
 #include "common/log.h"
+#include "common/third_party_warnings.h"
 #include "playback/decoder/mp4_aac_demux.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <new>
 
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wold-style-cast"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wuseless-cast"
-#pragma GCC diagnostic ignored "-Wcast-align"
-#pragma GCC diagnostic ignored "-Wdouble-promotion"
-#endif
+SQUEEZE2RAOP2_TP_WARNINGS_PUSH
 extern "C" {
 #include "ixheaac_error_standards.h"
 #include "ixheaac_type_def.h"
@@ -28,15 +20,26 @@ extern "C" {
 #include "ixheaacd_apicmd_standards.h"
 #include "ixheaacd_memory_standards.h"
 }
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+SQUEEZE2RAOP2_TP_WARNINGS_POP
 
 namespace squeeze2raop2 {
 
+namespace {
+
+// libxaac's single decoder entry point (declared by its testbench, not in a
+// public header). Plain C types keep the third-party type soup out of here.
+extern "C" int32_t ixheaacd_dec_api(void* obj, int32_t cmd, int32_t idx, void* value);
+
+bool isFatal(int32_t err) { return (static_cast<uint32_t>(err) & IA_FATAL_ERROR) != 0u; }
+
+int32_t callApi(void* api, int32_t cmd, int32_t idx, void* value) {
+    return ixheaacd_dec_api(api, cmd, idx, value);
+}
+
+}  // namespace
+
 // libxaac state: the API object plus every allocation it requires. All blocks
-// are owned here and released in one place. Defined before the init helper so
-// the helper can name the type.
+// are owned here and released in one place.
 struct AacDecoder::Xaac {
     void* api = nullptr;
     uint8_t* in = nullptr;
@@ -62,21 +65,9 @@ struct AacDecoder::Xaac {
     }
 };
 
-namespace {
-
-// libxaac's single decoder entry point (declared by its testbench, not in a
-// public header). Plain C types keep the third-party type soup out of here.
-extern "C" int32_t ixheaacd_dec_api(void* obj, int32_t cmd, int32_t idx, void* value);
-
-bool isFatal(int32_t err) { return (static_cast<uint32_t>(err) & 0x80000000u) != 0u; }
-
-int32_t callApi(void* api, int32_t cmd, int32_t idx, void* value) {
-    return ixheaacd_dec_api(api, cmd, idx, value);
-}
-
 // Allocate libxaac's API object and all of its tables/memory, then run the
 // two-stage config init. Mirrors test/decoder/ixheaacd_main.c.
-bool initXaac(AacDecoder::Xaac& x) {
+bool AacDecoder::initXaac(Xaac& x) {
     uint32_t apiSize = 0;
     if (isFatal(callApi(nullptr, IA_API_CMD_GET_API_SIZE, 0, &apiSize)) || apiSize == 0)
         return false;
@@ -136,10 +127,7 @@ bool initXaac(AacDecoder::Xaac& x) {
     return x.in != nullptr && x.out != nullptr && x.inSize != 0 && x.outSize != 0;
 }
 
-}  // namespace
-
-AacDecoder::AacDecoder(const PcmFormat& in, uint8_t containerCode)
-    : Decoder(in), containerCode_(containerCode) {
+AacDecoder::AacDecoder(const PcmFormat& in, uint8_t containerCode) : Decoder(in) {
     if (containerCode == '5') {
         mp4_ = std::make_unique<Mp4AacDemuxer>();
     } else if (containerCode != '2' && containerCode != 0) {
@@ -203,14 +191,6 @@ void AacDecoder::appendPcm(size_t bytes) {
     std::memcpy(pcm_.data() + base, xaac_->out, samples * sizeof(int16_t));
 }
 
-void AacDecoder::compact() {
-    constexpr size_t kThreshold = 1 << 16;
-    if (consumed_ >= kThreshold) {
-        buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(consumed_));
-        consumed_ = 0;
-    }
-}
-
 bool AacDecoder::ensureInit() {
     if (initDone_) return true;
     if (failed_) return false;
@@ -240,7 +220,7 @@ bool AacDecoder::ensureInit() {
         callApi(xaac_->api, IA_API_CMD_GET_CURIDX_INPUT_BUF, 0, &consumed);
         if (consumed) {
             consumed_ += consumed;
-            compact();
+            compactConsumed(buffer_, consumed_);
             retries = 0;
         }
         if (isFatal(err)) {
@@ -298,7 +278,7 @@ void AacDecoder::decodeMore() {
         callApi(xaac_->api, IA_API_CMD_GET_OUTPUT_BYTES, 0, &outBytes);
         if (consumed) {
             consumed_ += consumed;
-            compact();
+            compactConsumed(buffer_, consumed_);
         }
         if (outBytes) appendPcm(outBytes);
         if (isFatal(err)) {
@@ -312,15 +292,20 @@ void AacDecoder::decodeMore() {
     }
 }
 
+void AacDecoder::drainDemuxed() {
+    if (mp4_->failed()) {
+        fail("mp4 demux");
+        return;
+    }
+    mp4_->drain(buffer_);
+}
+
 void AacDecoder::feed(std::span<const std::byte> data) {
     if (failed_ || data.empty()) return;
     if (mp4_) {
         mp4_->feed(data);
-        if (mp4_->failed()) {
-            fail("mp4 demux");
-            return;
-        }
-        mp4_->drain(buffer_);
+        drainDemuxed();
+        if (failed_) return;
     } else {
         buffer_.insert(buffer_.end(), data.begin(), data.end());
     }
@@ -332,34 +317,19 @@ void AacDecoder::finish() {
     eof_ = true;
     if (mp4_) {
         mp4_->finish();
-        if (mp4_->failed()) {
-            fail("mp4 demux");
-            return;
-        }
-        mp4_->drain(buffer_);
+        drainDemuxed();
+        if (failed_) return;
     }
     decodeMore();
 }
 
-size_t AacDecoder::drain(std::span<int16_t> out) {
-    const size_t n = std::min(pcm_.size(), out.size());
-    if (n) {
-        std::memcpy(out.data(), pcm_.data(), n * sizeof(int16_t));
-        pcm_.erase(pcm_.begin(), pcm_.begin() + static_cast<std::ptrdiff_t>(n));
-    }
-    return n;
-}
+size_t AacDecoder::drain(std::span<int16_t> out) { return takeSamples(out, pcm_); }
 
 size_t AacDecoder::pendingBytes() const {
     const size_t buffered = buffer_.size() - consumed_;
     return buffered + (mp4_ ? mp4_->pending() : 0);
 }
 
-PcmFormat AacDecoder::decodedFormat() const {
-    return PcmFormat{.sampleRate = sampleRate_,
-                     .bitsPerSample = 16,
-                     .channels = static_cast<uint8_t>(channels_),
-                     .bigEndian = false};
-}
+PcmFormat AacDecoder::decodedFormat() const { return s16StereoFormat(); }
 
 }  // namespace squeeze2raop2
