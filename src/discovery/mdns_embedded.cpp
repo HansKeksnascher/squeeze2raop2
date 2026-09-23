@@ -1,6 +1,7 @@
 #include "discovery/mdns.h"
 
 #include "common/log.h"
+#include "common/net_util.h"
 #include "common/util.h"
 #include "discovery/mdns_names.h"
 
@@ -106,27 +107,6 @@ private:
     std::function<void()> fn_;
 };
 
-// Owns the wake pipe fd; no manual close or ordering comment needed.
-struct UniqueFd {
-    int fd = -1;
-
-    UniqueFd() = default;
-    explicit UniqueFd(int f) : fd(f) {}
-    UniqueFd(const UniqueFd&) = delete;
-    UniqueFd& operator=(const UniqueFd&) = delete;
-    UniqueFd(UniqueFd&& other) noexcept : fd(std::exchange(other.fd, -1)) {}
-    UniqueFd& operator=(UniqueFd&& other) noexcept {
-        if (this != &other) {
-            if (fd >= 0) ::close(fd);
-            fd = std::exchange(other.fd, -1);
-        }
-        return *this;
-    }
-    ~UniqueFd() {
-        if (fd >= 0) ::close(fd);
-    }
-};
-
 }  // namespace
 
 // All mDNS core access happens on the loop thread: mDNS is single-threaded
@@ -190,15 +170,15 @@ struct MdnsBrowser::Impl {
     }
 
     void wake() {
-        if (wakeWr.fd >= 0) {
+        if (wakeWr.get() >= 0) {
             const char token = 1;
-            (void)::write(wakeWr.fd, &token, 1);
+            (void)::write(wakeWr.get(), &token, 1);
         }
     }
 
     void drainWake() {
         char buf[64];
-        while (::read(wakeRd.fd, buf, sizeof(buf)) > 0) {
+        while (::read(wakeRd.get(), buf, sizeof(buf)) > 0) {
         }
     }
 
@@ -224,13 +204,13 @@ struct MdnsBrowser::Impl {
             timeout.tv_usec = 0;
             int nfds = 0;
             mDNSPosixGetFDSet(&gMdns, &nfds, &readfds, &writefds, &timeout);
-            if (wakeRd.fd >= 0) {
-                FD_SET(wakeRd.fd, &readfds);
-                if (wakeRd.fd + 1 > nfds) nfds = wakeRd.fd + 1;
+            if (wakeRd.get() >= 0) {
+                FD_SET(wakeRd.get(), &readfds);
+                if (wakeRd.get() + 1 > nfds) nfds = wakeRd.get() + 1;
             }
             int rc = ::select(nfds, &readfds, &writefds, nullptr, &timeout);
             if (rc > 0) {
-                if (wakeRd.fd >= 0 && FD_ISSET(wakeRd.fd, &readfds)) drainWake();
+                if (wakeRd.get() >= 0 && FD_ISSET(wakeRd.get(), &readfds)) drainWake();
                 mDNSPosixProcessFDSet(&gMdns, &readfds, &writefds);
                 runCommands();
             }
