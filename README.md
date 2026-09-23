@@ -37,9 +37,10 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
   scheduled AirPlay latency (default 500 ms).
 - **Resilient control link** — an LMS-silence watchdog (`server-timeout-ms`)
   reconnects a dead control connection instead of waiting on TCP keepalive.
-- **Honest codec caps** — advertises `pcm,mp3` only, so LMS transcodes FLAC and
-  everything else losslessly on the LAN; a codec announced via `codc` that the
-  bridge can't decode is rejected with `STMn`.
+- **Honest codec caps** — advertises `pcm,mp3,aac`, so LMS transcodes FLAC and
+  everything else losslessly on the LAN; AAC radio and `.m4a` files stream
+  natively (ADTS + MP4 demux, AAC-LC/HE-AAC) and are decoded in-process. A codec
+  announced via `codc` that the bridge can't decode is rejected with `STMn`.
 
 ## Build and run
 
@@ -48,7 +49,7 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
 Linux, CMake ≥ 3.16, C++20:
 
 ```sh
-git submodule update --init --recursive   # sender, mDNSResponder, minimp3, mbedtls
+git submodule update --init --recursive   # sender, mDNSResponder, minimp3, mbedtls, libxaac
 cmake -B build
 cmake --build build -j
 ```
@@ -107,9 +108,11 @@ credentials persist. The program rewrites only the machine-managed `mac`,
 ## Runtime requirements
 
 The dynamically linked binary needs only the GNU C/C++ runtime. The vendored
-sender, mbedTLS, mDNSResponder and minimp3 are all linked in statically, so
-there is **no** Avahi/D-Bus, ALSA/PulseAudio or TLS dependency. The `-static`
-artifact is a musl build, so it carries no runtime libraries at all.
+sender, mbedTLS, mDNSResponder, minimp3 and libxaac are all linked in
+statically, so there is **no** Avahi/D-Bus, ALSA/PulseAudio or TLS dependency.
+The `-static` artifact is a musl build, so it carries no runtime libraries at
+all. AAC decoding can be dropped at configure time with
+`-DSQUEEZE2RAOP2_WITH_AAC=OFF`.
 
 | Artifact | Needs at runtime |
 |---|---|
@@ -130,6 +133,7 @@ Vendored as git submodules under `third_party/`; each keeps its own license.
 | [airplay2-sender-cpp](https://github.com/HansKeksnascher/airplay2-sender-cpp) (fork) | AirPlay 2 sender core: HAP pair-verify, encrypted RTSP/RTP, retransmit | Apache-2.0 |
 | [apple-oss-distributions/mDNSResponder](https://github.com/apple-oss-distributions/mDNSResponder) (mDNSPosix) | embedded mDNS browse/announce | Apache-2.0 |
 | [minimp3](https://github.com/lieff/minimp3) | single-header MP3 decoder | CC0 1.0 |
+| [libxaac](https://github.com/ittiam-systems/libxaac) | AAC-LC/HE-AAC decoder (ADTS + MP4 demux) | Apache-2.0 |
 | [Mbed-TLS/mbedtls](https://github.com/Mbed-TLS/mbedtls) | TLS/crypto underneath the sender | Apache-2.0 |
 
 ## Credits
@@ -142,6 +146,7 @@ Vendored as git submodules under `third_party/`; each keeps its own license.
 - **Triode (Adrian Smith)** — squeezelite, the slimproto protocol reference
 - **The Logitech Media Server team** — LMS itself, plus the slimserver Perl
   sources that document the audg/volume encoding and STAT semantics
+- **Ittiam Systems / AOSP** — libxaac, the Apache-2.0 AAC decoder
 - **The pyatv project** — AirPlay sender protocol reference (dB volume
   scale, FLUSH form, user-agent/digest auth details)
 - **The owntone project** — receiver-side behavior parity reference

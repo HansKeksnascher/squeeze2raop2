@@ -73,7 +73,7 @@ bool PlaybackStream::attachDecoder(StreamFormat format, const PcmParams& pcm, st
     // One decoder per stream format, one feed pipeline for both. PCM regulates
     // to the AirPlay output clock (44100) so a source that under-delivers
     // cannot drain the pipeline.
-    decoder_ = Decoder::create(format, input, 44100);
+    decoder_ = Decoder::create(format, input, 44100, pcm.sampleSizeCode);
     if (!decoder_) {
         error = "unsupported stream format";
         return false;

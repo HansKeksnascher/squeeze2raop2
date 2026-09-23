@@ -66,9 +66,11 @@ public:
     // Factory for the supported stream formats; nullptr for others (the
     // strm guard already rejects them, so this is a closed-world helper).
     // `outputRate` is the pipeline's target output clock (0 = no rate
-    // regulation; the AirPlay pipeline passes 44100).
+    // regulation; the AirPlay pipeline passes 44100). `containerCode` is the
+    // LMS pcm_sample_size byte for AAC transports ('2' ADTS, '5' MP4) and is
+    // ignored by every other format.
     static std::unique_ptr<Decoder> create(StreamFormat format, const PcmFormat& in,
-                                           uint32_t outputRate);
+                                           uint32_t outputRate, uint8_t containerCode = 0);
 
 protected:
     explicit Decoder(const PcmFormat& input);

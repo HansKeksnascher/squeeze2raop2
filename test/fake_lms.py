@@ -54,7 +54,8 @@ class FakeLms:
     def __init__(self, tcp_port, http_port, stream_seconds, volume_pct, stop_after, queue_tracks=0,
                  autostart=1, fmt="p", replay_gain=0, transition=0, transition_secs=0,
                  skip_ms=0, send_aude_off=False, codc_codec=None, stall_after=0.0,
-                 silent=False, pause_after=0.0, pause_for=0.0):
+                 silent=False, pause_after=0.0, pause_for=0.0, aac_fixture=None,
+                 container="adts", aac_reps=0):
         self.tcp_port = tcp_port
         self.http_port = http_port
         self.stream_seconds = stream_seconds
@@ -74,6 +75,9 @@ class FakeLms:
         self.skip_ms = skip_ms
         self.send_aude_off = send_aude_off
         self.codc_codec = codc_codec
+        self.aac_fixture = aac_fixture
+        self.container = container
+        self.aac_reps = aac_reps
         self.stall_after = stall_after
         self.silent = silent
         self.pause_after = pause_after
@@ -99,11 +103,16 @@ class FakeLms:
                         break
                     request += part
                 report("http %s" % request.split(b"\r\n")[0].decode(errors="replace"))
-                seconds = self.stream_seconds if self.queue_tracks else self.stream_seconds + 60.0
-                audio = build_stream_bytes(seconds, 44100)
+                if self.aac_fixture:
+                    audio = self._aac_stream()
+                    content_type = b"audio/aac" if self.container == "adts" else b"audio/mp4"
+                else:
+                    seconds = self.stream_seconds if self.queue_tracks else self.stream_seconds + 60.0
+                    audio = build_stream_bytes(seconds, 44100)
+                    content_type = b"audio/wav"
                 conn.sendall(
                     b"HTTP/1.1 200 OK\r\n"
-                    b"Content-Type: audio/wav\r\n"
+                    b"Content-Type: " + content_type + b"\r\n"
                     b"Server: fake-lms\r\n"
                     b"\r\n"
                 )
@@ -132,16 +141,36 @@ class FakeLms:
                     conn.shutdown(socket.SHUT_WR)
                     conn.close()
                     report("track streamed to EOF and closed")
+                elif self.aac_fixture:
+                    # A file-backed AAC fixture is a finite stream: close so the
+                    # bridge decodes to EOF and reports the end.
+                    conn.shutdown(socket.SHUT_WR)
+                    conn.close()
+                    report("aac fixture streamed and closed")
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
+
+    def _aac_stream(self):
+        # Repeat the short fixture to cover the requested duration; the exact
+        # loop point does not matter for the bridge's decode assertion.
+        data = open(self.aac_fixture, "rb").read()
+        reps = self.aac_reps if self.aac_reps > 0 else max(1, int((self.stream_seconds + 60.0) / 0.12))
+        return data * reps
 
     def send_strm_start(self, sock):
         unknown = self.fmt == "?"
         packed = bytearray()
         packed += b"s"      # command: start
         packed += str(self.autostart).encode()  # autostart 0-3
-        packed += self.fmt.encode()             # format: 'p', 'm' or '?'
-        packed += b"?" if unknown else b"1"     # sample size: 16 bit
+        packed += self.fmt.encode()             # format: 'p', 'm', 'a' or '?'
+        if unknown:
+            sample_size = b"?"
+        elif self.fmt == "a":
+            # LMS pcm_sample_size carries the AAC transport: '2' ADTS, '5' MP4.
+            sample_size = b"2" if self.container == "adts" else b"5"
+        else:
+            sample_size = b"1"                  # 16 bit
+        packed += sample_size
         packed += b"?" if unknown else b"3"     # sample rate: 44.1 kHz
         packed += b"?" if unknown else b"2"     # channels: stereo
         packed += b"?"      # endianness unknown (wav container)
@@ -339,6 +368,12 @@ def main():
                         help="send strm-p after N s of playback")
     parser.add_argument("--pause-for-sec", type=float, default=0.0,
                         help="resume with strm-u after N s paused")
+    parser.add_argument("--aac-fixture", default=None,
+                        help="serve this AAC file as format 'a' (ADTS/MP4)")
+    parser.add_argument("--container", default="adts", choices=["adts", "mp4"],
+                        help="AAC transport, mapped to the pcm sample-size code")
+    parser.add_argument("--aac-reps", type=int, default=0,
+                        help="repeat the AAC fixture this many times (0 = auto)")
     args = parser.parse_args()
     lms = FakeLms(
         args.tcp_port,
@@ -359,6 +394,9 @@ def main():
         silent=args.silent,
         pause_after=args.pause_after_sec,
         pause_for=args.pause_for_sec,
+        aac_fixture=args.aac_fixture,
+        container=args.container,
+        aac_reps=args.aac_reps,
     )
     lms.run()
 

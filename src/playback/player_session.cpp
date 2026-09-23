@@ -147,18 +147,19 @@ void PlayerSession::start() {
     const std::string modelName =
         output_->hasTarget() ? (output_->airplay2() ? "squeeze2raop2@ap2" : "squeeze2raop2@raop")
                              : "squeeze2raop2";
-    client_ = std::make_unique<SlimProtoClient>(
-        mac_,
-        "Model=squeezelite,ModelName=" + modelName +
-            ",AccuratePlayPoints=1,HasDigitalOut=1,MaxSampleRate=96000,"
-            // Only formats the bridge actually decodes: raw PCM (headerless,
-            // LMS transcode profiles like flc-pcm) and native MP3 (minimp3).
-            // pcm first: local FLAC etc. transcode losslessly on the LAN;
-            // mp3 second: MP3 sources (radio) stream direct regardless.
-            // Do NOT advertise wav/aif/aac/flc/alc: no decoder here, and
-            // direct-streamed wav/aif would ship their container headers.
-            "Firmware=squeeze2raop2 " SQUEEZE2RAOP2_VERSION ",pcm,mp3",
-        std::move(events));
+    // Only formats the bridge actually decodes: raw PCM (headerless, LMS
+    // transcode profiles like flc-pcm), native MP3 (minimp3) and, when built
+    // in, native AAC (libxaac: ADTS radio/.aac and MP4/.m4a). pcm first: local
+    // FLAC etc. transcode losslessly on the LAN; mp3/aac next: those sources
+    // stream direct regardless. Do NOT advertise wav/aif/flc/alc: no decoder
+    // here, and direct-streamed wav/aif would ship their container headers.
+    std::string caps = "Model=squeezelite,ModelName=" + modelName +
+                       ",AccuratePlayPoints=1,HasDigitalOut=1,MaxSampleRate=96000,"
+                       "Firmware=squeeze2raop2 " SQUEEZE2RAOP2_VERSION ",pcm,mp3";
+#if defined(SQUEEZE2RAOP2_WITH_AAC)
+    caps += ",aac";
+#endif
+    client_ = std::make_unique<SlimProtoClient>(mac_, std::move(caps), std::move(events));
     client_->setPlayerName(name_);
     client_->setServerTimeout(serverTimeoutMs_);
     client_->setStatsProvider([this] { return currentStats(); });
@@ -225,12 +226,16 @@ void PlayerSession::startStream(const StrmStart& st) {
         return;
     }
     // Only formats the track pump actually consumes. LMS should honor the HELO
-    // caps (pcm,mp3); a stray direct format would otherwise be pushed into the
-    // ring as raw PCM = noise. '?' (unknown) is allowed only with autostart>=2,
-    // where LMS learns the codec from the response header and returns it in
-    // 'codc' (squeezelite parity).
+    // caps (pcm,mp3,aac); a stray direct format would otherwise be pushed into
+    // the ring as raw PCM = noise. '?' (unknown) is allowed only with
+    // autostart>=2, where LMS learns the codec from the response header and
+    // returns it in 'codc' (squeezelite parity).
     const bool unknown = st.format == StreamFormat::Unknown;
-    if (!unknown && st.format != StreamFormat::Pcm && st.format != StreamFormat::Mp3) {
+    bool supported = st.format == StreamFormat::Pcm || st.format == StreamFormat::Mp3;
+#if defined(SQUEEZE2RAOP2_WITH_AAC)
+    supported = supported || st.format == StreamFormat::Aac;
+#endif
+    if (!unknown && !supported) {
         log::error(log::Area::Ses, "strm s: unsupported stream format '{}'",
                    static_cast<char>(st.format));
         client_->sendStat("STMn", currentStats());

@@ -3,6 +3,9 @@
 #include "common/log.h"
 #include "playback/decoder/mp3_decoder.h"
 #include "playback/decoder/pcm_decoder.h"
+#if defined(SQUEEZE2RAOP2_WITH_AAC)
+#include "playback/decoder/aac_decoder.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -74,10 +77,13 @@ double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t win
 }
 
 std::unique_ptr<Decoder> Decoder::create(StreamFormat format, const PcmFormat& in,
-                                         uint32_t outputRate) {
+                                         uint32_t outputRate, uint8_t containerCode) {
     switch (format) {
     case StreamFormat::Mp3: return std::make_unique<Mp3Decoder>(in);
     case StreamFormat::Pcm: return std::make_unique<PcmDecoder>(in, outputRate);
+#if defined(SQUEEZE2RAOP2_WITH_AAC)
+    case StreamFormat::Aac: return std::make_unique<AacDecoder>(in, containerCode);
+#endif
     default: return nullptr;
     }
 }

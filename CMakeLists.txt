@@ -56,6 +56,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(SQUEEZE2RAOP2_BUILD_TESTS "build squeeze2raop2 unit tests" ON)
 option(SQUEEZE2RAOP2_WITH_SENDER "integrate the vendored raop_sender library" ON)
+option(SQUEEZE2RAOP2_WITH_AAC "integrate the vendored libxaac AAC decoder" ON)
 option(SQUEEZE2RAOP2_DIST "name the release binary <name>-<os>-<arch>" OFF)
 option(SQUEEZE2RAOP2_STATIC "link the executable fully static" OFF)
 
@@ -136,6 +137,17 @@ if(SQUEEZE2RAOP2_WITH_SENDER)
   add_subdirectory(third_party/airplay2-sender-cpp EXCLUDE_FROM_ALL)
 endif()
 
+# libxaac decoder: built through cmake/libxaac so its directory-scoped global
+# options stay isolated. Only the decoder is built (no encoder/testbench).
+if(SQUEEZE2RAOP2_WITH_AAC)
+  if(NOT EXISTS "${CMAKE_SOURCE_DIR}/third_party/libxaac/CMakeLists.txt")
+    message(FATAL_ERROR
+      "SQUEEZE2RAOP2_WITH_AAC is ON but third_party/libxaac is missing. "
+      "Run: git submodule update --init --recursive")
+  endif()
+  add_subdirectory(cmake/libxaac EXCLUDE_FROM_ALL)
+endif()
+
 add_library(squeeze2raop2_apple_mdns STATIC
   third_party/mDNSResponder/mDNSPosix/mDNSPosix.c
   third_party/mDNSResponder/mDNSPosix/mDNSUNP.c
@@ -162,6 +174,14 @@ target_include_directories(squeeze2raop2_apple_mdns PUBLIC
   third_party/mDNSResponder/mDNSShared/utilities
 )
 target_link_libraries(squeeze2raop2_apple_mdns PRIVATE Threads::Threads)
+
+# AAC decoder sources, added to the core only when libxaac is enabled.
+set(SQUEEZE2RAOP2_AAC_SOURCES "")
+if(SQUEEZE2RAOP2_WITH_AAC)
+  set(SQUEEZE2RAOP2_AAC_SOURCES
+    src/playback/decoder/aac_decoder.cpp
+    src/playback/decoder/mp4_aac_demux.cpp)
+endif()
 
 add_library(squeeze2raop2_core STATIC
   # common
@@ -194,6 +214,7 @@ add_library(squeeze2raop2_core STATIC
   src/playback/decoder/decoder.cpp
   src/playback/decoder/mp3_decoder.cpp
   src/playback/decoder/pcm_decoder.cpp
+  ${SQUEEZE2RAOP2_AAC_SOURCES}
 )
 target_include_directories(squeeze2raop2_core PUBLIC
   ${CMAKE_BINARY_DIR}/generated src third_party/minimp3)
@@ -202,6 +223,10 @@ squeeze2raop2_target_settings(squeeze2raop2_core)
 if(SQUEEZE2RAOP2_WITH_SENDER)
   target_link_libraries(squeeze2raop2_core PUBLIC raop_sender)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_SENDER=1)
+endif()
+if(SQUEEZE2RAOP2_WITH_AAC)
+  target_link_libraries(squeeze2raop2_core PUBLIC libxaacdec)
+  target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_AAC=1)
 endif()
 
 add_executable(squeeze2raop2 src/app/main.cpp src/app/bridge.cpp)
