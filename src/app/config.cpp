@@ -1,5 +1,6 @@
 #include "app/config.h"
 
+#include "app/version.h"
 #include "common/log.h"
 
 #include <cstdio>
@@ -11,7 +12,7 @@ namespace {
 void printHelp() {
     std::printf(
         "squeeze2raop2 - Squeezebox to AirPlay 2 bridge\n"
-        "usage: squeeze2raop2 [--config <file>]\n\n"
+        "usage: squeeze2raop2 [--config <file>] [-V|--version] [-h|--help]\n\n"
         "All settings live in an INI-style config/state file (default\n"
         "squeeze2raop2.conf in the current directory):\n\n"
         "  [global]\n"
@@ -37,7 +38,8 @@ void printHelp() {
         "    mac = xx:..:xx        virtual MAC override\n"
         "    target = <host[:port]>  fixed AirPlay receiver (static player)\n"
         "    plus any [default] key to override it\n\n"
-        "  -h --help               this text\n");
+        "  -h --help               this text\n"
+        "  -V --version            print version and exit\n");
 }
 
 }  // namespace
@@ -85,6 +87,10 @@ std::optional<Args> parseArgs(int argc, char** argv, int& exitCode) {
         std::string arg = argv[i];
         if (arg == "-h" || arg == "--help") {
             printHelp();
+            return std::nullopt;
+        }
+        if (arg == "-V" || arg == "--version") {
+            std::printf("squeeze2raop2 %s\n", SQUEEZE2RAOP2_VERSION);
             return std::nullopt;
         }
         if (arg == "--config") {

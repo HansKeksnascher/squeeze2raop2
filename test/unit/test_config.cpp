@@ -101,4 +101,11 @@ SQ2_TEST(config, parse_args) {
         expect(!args.has_value(), "unknown option rejected");
         expect(code == 1, "unknown option exit code");
     }
+    {
+        const char* argv[] = {"prog", "--version"};
+        int code = 7;
+        auto args = parseArgs(2, const_cast<char**>(argv), code);
+        expect(!args.has_value(), "--version exits without a config");
+        expect(code == 0, "--version exit code 0");
+    }
 }

@@ -48,7 +48,6 @@ Linux, CMake ≥ 3.16, C++20:
 git submodule update --init --recursive   # sender, mDNSResponder, minimp3, mbedtls
 cmake -B build
 cmake --build build -j
-ctest --test-dir build                 # all tiers
 ctest --test-dir build -L unit         # unit cases (one runner, --filter subsets)
 ctest --test-dir build -L integration  # bridge + fake-LMS scenarios
 # vendored sender's own tests (excluded from all):
@@ -60,9 +59,60 @@ Unit tests self-register with `SQ2_TEST(suite, name)` and run in one process
 select cases. Integration scenarios live in `test/integration/` and assert on
 the bridge's behaviour, exiting non-zero on failure.
 
+### Versioning
+
+The version is derived from git: a reachable `vX.Y.Z` tag wins, otherwise
+`1.0.0+g<sha>`; a dirty tree appends `-dirty`. It is compiled in and used for
+the startup log, the `Firmware=` string LMS shows in player settings, and the
+CLI:
+
+```sh
+./build/squeeze2raop2 --version        # squeeze2raop2 1.0.0+g1234abc
+```
+
+Tarball builds without `.git` can force it with `-DSQUEEZE2RAOP2_VERSION=...`.
+
+### Release and static builds
+
+`-DSQUEEZE2RAOP2_DIST=ON` names the binary `squeeze2raop2-<os>-<arch>` (so a
+cross build gets e.g. `squeeze2raop2-linux-aarch64`); `-DSQUEEZE2RAOP2_STATIC=ON`
+links it fully static and appends `-static`.
+
+The released `-static` artifact is built against **musl**, so it carries no
+runtime libraries and resolves names itself (no NSS/`nsswitch.conf`). A glibc
+`-static` build looks equivalent but still dlopens NSS modules at runtime — on
+systemd distros that can crash inside `libnss_resolve`/`libnss_myhostname` — so
+use the musl toolchain:
+
+```sh
+tools/fetch-musl-toolchain.sh ~/musl-toolchain
+MUSL_TOOLCHAIN_ROOT=~/musl-toolchain/x86-64--musl--stable-2026.08-1 \
+  cmake -B build-musl -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-musl-x86_64.cmake \
+        -DSQUEEZE2RAOP2_DIST=ON -DSQUEEZE2RAOP2_STATIC=ON
+cmake --build build-musl -j
+```
+
+CI and the release pipeline live in `.github/workflows/`.
+
+### Runtime requirements
+
+The dynamically linked release binary needs only the GNU C/C++ runtime. The
+vendored sender, mbedTLS, mDNSResponder and minimp3 are all linked in
+statically, so there is **no** Avahi/D-Bus, ALSA/PulseAudio or TLS dependency:
+
+| Artifact | Needs at runtime |
+|---|---|
+| `squeeze2raop2-linux-x86_64` | `libc6` (glibc), `libstdc++6`, `libgcc-s1`, `libm.so.6`, `/lib64/ld-linux-x86-64.so.2` |
+| `squeeze2raop2-linux-x86_64-static` | none (Linux kernel only) |
+
+Every release ships a `.requires.txt` with the exact `GLIBC_*`/`GLIBCXX_*`/
+`CXXABI_*` symbol floor the dynamic binary was built against; compare it with
+your distro if you run something older than the Ubuntu 24.04 build host.
+`tools/runtime-deps.sh <binary>` reproduces the report locally.
+
 Example: bridge a HomePod as an LMS player named `Kueche15`. All behavior lives
-in one INI-style config/state file (default `./squeeze2raop2.conf`); the only
-CLI flag is `--config <file>`.
+in one INI-style config/state file (default `./squeeze2raop2.conf`); the CLI
+flags are `--config <file>`, `-V/--version` and `-h/--help`.
 
 ```ini
 [global]

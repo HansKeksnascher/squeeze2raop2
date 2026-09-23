@@ -1,9 +1,9 @@
 #pragma once
 
+#include "airplay/raop_types.h"
 #include "raop_auth.h"
 #include "raop_loop.h"
 #include "raop_sender.h"
-#include "airplay/raop_types.h"
 #include "ring_buffer.h"
 
 #include <atomic>

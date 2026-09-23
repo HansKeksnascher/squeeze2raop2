@@ -1,5 +1,6 @@
 #include "app/config.h"
 #include "app/persistence.h"
+#include "app/version.h"
 #include "common/log.h"
 
 #include <signal.h>
@@ -25,7 +26,7 @@ int main(int argc, char** argv) {
     }
 
     log::setLevel(settings.global.logLevel);
-    log::info("squeeze2raop2 starting v0.1.0-m1 (config {})", persistence.path());
+    log::info("squeeze2raop2 starting {} (config {})", SQUEEZE2RAOP2_VERSION, persistence.path());
 
     // SA_RESTART matches glibc's signal() default; poll/select still return
     // EINTR (they are never restarted), which the read loops handle.

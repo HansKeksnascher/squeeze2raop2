@@ -53,8 +53,7 @@ class PlayerSession {
 public:
     PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig& global,
                   VolumeAnchors anchors, std::optional<std::string> sinkPath,
-                  std::optional<RaopTarget> raopTarget, CredentialSink credSink,
-                  NameSink nameSink);
+                  std::optional<RaopTarget> raopTarget, CredentialSink credSink, NameSink nameSink);
     ~PlayerSession();
     PlayerSession(const PlayerSession&) = delete;
     PlayerSession& operator=(const PlayerSession&) = delete;

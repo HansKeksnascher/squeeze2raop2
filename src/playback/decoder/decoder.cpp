@@ -1,8 +1,8 @@
 #include "playback/decoder/decoder.h"
 
+#include "common/log.h"
 #include "playback/decoder/mp3_decoder.h"
 #include "playback/decoder/pcm_decoder.h"
-#include "common/log.h"
 
 #include <algorithm>
 #include <cmath>

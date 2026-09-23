@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  glibc:
+    name: package (glibc dynamic)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Rewrite SSH submodule URLs to HTTPS
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSQUEEZE2RAOP2_DIST=ON \
+            -DSQUEEZE2RAOP2_BUILD_TESTS=OFF
+      - name: Build
+        run: cmake --build build --target squeeze2raop2
+      - name: Package
+        run: |
+          set -euo pipefail
+          bin=build/squeeze2raop2-linux-x86_64
+          version="$("${bin}" --version | awk '{print $2}')"
+          base="squeeze2raop2-${version}-linux-x86_64"
+          strip "${bin}"
+          mkdir -p dist
+          tools/runtime-deps.sh "${bin}" > "dist/${base}.requires.txt" 2>/dev/null || true
+          mkdir -p "dist/${base}"
+          install -m755 "${bin}" "dist/${base}/"
+          cp README.md LICENSE "dist/${base}/"
+          tar -C dist -czf "dist/${base}.tar.gz" "${base}"
+          ls -la dist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-glibc
+          path: |
+            dist/*.tar.gz
+            dist/*.requires.txt
+          if-no-files-found: error
+
+  musl:
+    name: package (musl static)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Rewrite SSH submodule URLs to HTTPS
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+      - name: Cache musl toolchain
+        id: musl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/musl-toolchain
+          key: bootlin-musl-x86_64-2026.08-1
+      - name: Fetch musl toolchain
+        if: steps.musl-cache.outputs.cache-hit != 'true'
+        run: tools/fetch-musl-toolchain.sh "${{ runner.temp }}/musl-toolchain"
+      - name: Configure (musl, static)
+        run: |
+          export MUSL_TOOLCHAIN_ROOT="${{ runner.temp }}/musl-toolchain/x86-64--musl--stable-2026.08-1"
+          cmake -B build-musl -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-musl-x86_64.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSQUEEZE2RAOP2_DIST=ON \
+            -DSQUEEZE2RAOP2_STATIC=ON \
+            -DSQUEEZE2RAOP2_BUILD_TESTS=OFF
+      - name: Build
+        run: cmake --build build-musl --target squeeze2raop2
+      - name: Smoke test static binary
+        run: build-musl/squeeze2raop2-linux-x86_64-static --version
+      - name: Package
+        run: |
+          set -euo pipefail
+          bin=build-musl/squeeze2raop2-linux-x86_64-static
+          version="$("${bin}" --version | awk '{print $2}')"
+          base="squeeze2raop2-${version}-linux-x86_64-static"
+          strip "${bin}"
+          mkdir -p dist
+          tools/runtime-deps.sh "${bin}" > "dist/${base}.requires.txt"
+          mkdir -p "dist/${base}"
+          install -m755 "${bin}" "dist/${base}/"
+          cp README.md LICENSE "dist/${base}/"
+          tar -C dist -czf "dist/${base}.tar.gz" "${base}"
+          ls -la dist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-musl
+          path: |
+            dist/*.tar.gz
+            dist/*.requires.txt
+          if-no-files-found: error
+
+  publish:
+    name: publish GitHub release
+    needs: [glibc, musl]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: List release assets
+        run: find artifacts -type f -printf '%p\n' | sort
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

@@ -99,7 +99,8 @@ struct Settings {
 // only; behavioral fields fall back to `defaults`.
 ResolvedPlayerConfig resolvePlayer(const PlayerConfig& defaults, const PlayerConfig& player);
 
-// Command-line surface: --config <path>, -h/--help. Behavior lives in the file.
+// Command-line surface: --config <path>, -h/--help, -V/--version. Behavior
+// lives in the config file.
 struct Args {
     std::string configPath = "squeeze2raop2.conf";
 };

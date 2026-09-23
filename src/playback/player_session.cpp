@@ -1,6 +1,7 @@
 #include "playback/player_session.h"
 
 #include "app/shutdown_flag.h"
+#include "app/version.h"
 #include "common/log.h"
 #include "common/net_util.h"
 #include "common/util.h"
@@ -155,7 +156,7 @@ void PlayerSession::start() {
             // mp3 second: MP3 sources (radio) stream direct regardless.
             // Do NOT advertise wav/aif/aac/flc/alc: no decoder here, and
             // direct-streamed wav/aif would ship their container headers.
-            "Firmware=squeeze2raop2 v0.1.0 (m1),pcm,mp3",
+            "Firmware=squeeze2raop2 " SQUEEZE2RAOP2_VERSION ",pcm,mp3",
         std::move(events));
     client_->setPlayerName(name_);
     client_->setServerTimeout(serverTimeoutMs_);

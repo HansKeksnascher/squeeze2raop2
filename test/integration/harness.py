@@ -8,6 +8,7 @@ On failure the working directory (logs, WAVs, config) is kept and its path is
 printed, so a red CTest run is debuggable.
 """
 
+import os
 import re
 import socket
 import shutil
@@ -35,6 +36,14 @@ def free_port():
 def bridge_binary(argv):
     if len(argv) > 1:
         return argv[1]
+    override = os.environ.get("SQ2_BINARY")
+    if override:
+        return override
+    # Dist builds rename the executable (squeeze2raop2-linux-x86_64[-static]);
+    # CTest already passes the real path, this is only for manual runs.
+    for candidate in sorted((REPO_ROOT / "build").glob("squeeze2raop2*")):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
     return str(REPO_ROOT / "build" / "squeeze2raop2")
 
 

@@ -48,8 +48,8 @@ StreamStats StreamCounters::stats() const {
     std::lock_guard<std::mutex> lock(mutex_);
     StreamStats st;
     st.streamBufferSize = 1 << 20;
-    st.streamBufferFullness =
-        static_cast<uint32_t>(std::max<int64_t>(0, static_cast<int64_t>(receivedBytes_ - fedBytes_)));
+    st.streamBufferFullness = static_cast<uint32_t>(
+        std::max<int64_t>(0, static_cast<int64_t>(receivedBytes_ - fedBytes_)));
     st.bytesReceived = receivedBytes_;
     st.outputBufferSize = 0;
     st.outputBufferFullness = 0;

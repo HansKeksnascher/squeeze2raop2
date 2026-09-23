@@ -26,8 +26,8 @@ uint64_t parseAirplayFeatures(std::string_view raw) {
     size_t pos = 0;
     for (int word = 0; word < 2 && pos <= raw.size(); ++word) {
         const size_t comma = raw.find(',', pos);
-        std::string_view part = raw.substr(
-            pos, comma == std::string_view::npos ? std::string_view::npos : comma - pos);
+        std::string_view part =
+            raw.substr(pos, comma == std::string_view::npos ? std::string_view::npos : comma - pos);
         while (!part.empty() && std::isspace(static_cast<unsigned char>(part.front())))
             part.remove_prefix(1);
         while (!part.empty() && std::isspace(static_cast<unsigned char>(part.back())))
@@ -38,8 +38,7 @@ uint64_t parseAirplayFeatures(std::string_view raw) {
         if (!part.empty()) {
             uint64_t parsed = 0;
             const auto res = std::from_chars(part.data(), part.data() + part.size(), parsed, 16);
-            if (res.ec == std::errc())
-                v = static_cast<uint32_t>(parsed & 0xFFFFFFFFu);
+            if (res.ec == std::errc()) v = static_cast<uint32_t>(parsed & 0xFFFFFFFFu);
         }
         features |= static_cast<uint64_t>(v) << (32 * word);
         if (comma == std::string_view::npos) break;

@@ -21,8 +21,8 @@ public:
     // Consumed prefix: `samples` interleaved s16 emitted, `pendingBytes` the
     // decoder's unemitted backlog (clamped so it cannot underflow).
     void onFed(size_t samples, size_t channels, uint64_t pendingBytes);
-    void setQueued(size_t samples);      // sender-ring occupancy
-    void setOutputRate(uint32_t rate);   // decoder format adoption
+    void setQueued(size_t samples);     // sender-ring occupancy
+    void setOutputRate(uint32_t rate);  // decoder format adoption
 
     // Played-time snapshot for the LMS STAT reply.
     StreamStats stats() const;

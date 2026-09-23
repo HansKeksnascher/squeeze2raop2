@@ -1,5 +1,53 @@
 cmake_minimum_required(VERSION 3.16)
-project(squeeze2raop2 LANGUAGES C CXX)
+
+# App version: derived from git so a release cannot drift from its tag. A
+# reachable vX.Y.Z tag wins; otherwise fall back to 1.0.0+g<sha>. Tarball builds
+# without .git can force it with -DSQUEEZE2RAOP2_VERSION=....
+set(SQUEEZE2RAOP2_VERSION "" CACHE STRING "full version string (default: derived from git)")
+set(SQUEEZE2RAOP2_VERSION_CORE "1.0.0")
+set(SQUEEZE2RAOP2_GIT_COMMIT "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE SQUEEZE2RAOP2_GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} describe --tags --long --dirty --match "v[0-9]*"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE SQUEEZE2RAOP2_GIT_DESCRIBE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE SQUEEZE2RAOP2_GIT_DESCRIBE_RC ERROR_QUIET)
+  if(SQUEEZE2RAOP2_GIT_DESCRIBE_RC EQUAL 0)
+    # vX.Y.Z-<commits>-g<sha>[-dirty]
+    string(REGEX MATCH
+      "^v([0-9]+\\.[0-9]+\\.[0-9]+)(-([0-9]+)-g([0-9a-f]+))?(-dirty)?$"
+      _sq2_desc_match "${SQUEEZE2RAOP2_GIT_DESCRIBE}")
+    if(_sq2_desc_match)
+      set(SQUEEZE2RAOP2_VERSION_CORE "${CMAKE_MATCH_1}")
+      if(CMAKE_MATCH_3 AND NOT CMAKE_MATCH_3 EQUAL 0)
+        set(_sq2_version "${CMAKE_MATCH_1}-${CMAKE_MATCH_3}-g${CMAKE_MATCH_4}")
+      else()
+        set(_sq2_version "${CMAKE_MATCH_1}")
+      endif()
+      if(SQUEEZE2RAOP2_GIT_DESCRIBE MATCHES "-dirty$")
+        set(_sq2_version "${_sq2_version}-dirty")
+      endif()
+      if(NOT SQUEEZE2RAOP2_VERSION)
+        set(SQUEEZE2RAOP2_VERSION "${_sq2_version}")
+      endif()
+    endif()
+  endif()
+endif()
+if(NOT SQUEEZE2RAOP2_VERSION)
+  set(SQUEEZE2RAOP2_VERSION
+      "${SQUEEZE2RAOP2_VERSION_CORE}+g${SQUEEZE2RAOP2_GIT_COMMIT}")
+endif()
+
+project(squeeze2raop2 VERSION ${SQUEEZE2RAOP2_VERSION_CORE} LANGUAGES C CXX)
+
+message(STATUS "squeeze2raop2 version: ${SQUEEZE2RAOP2_VERSION} (${SQUEEZE2RAOP2_GIT_COMMIT})")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,6 +56,34 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(SQUEEZE2RAOP2_BUILD_TESTS "build squeeze2raop2 unit tests" ON)
 option(SQUEEZE2RAOP2_WITH_SENDER "integrate the vendored raop_sender library" ON)
+option(SQUEEZE2RAOP2_DIST "name the release binary <name>-<os>-<arch>" OFF)
+option(SQUEEZE2RAOP2_STATIC "link the executable fully static" OFF)
+
+# Release artifact naming: squeeze2raop2-<os>-<arch>, e.g. linux-x86_64. The
+# same mapping is reused verbatim for cross builds (aarch64/armv7).
+if(SQUEEZE2RAOP2_DIST)
+  string(TOLOWER "${CMAKE_SYSTEM_NAME}" SQUEEZE2RAOP2_OS)
+  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" SQUEEZE2RAOP2_ARCH)
+  if(SQUEEZE2RAOP2_ARCH MATCHES "^(amd64|x86_64)$")
+    set(SQUEEZE2RAOP2_ARCH x86_64)
+  elseif(SQUEEZE2RAOP2_ARCH MATCHES "^(arm64|aarch64)$")
+    set(SQUEEZE2RAOP2_ARCH aarch64)
+  elseif(SQUEEZE2RAOP2_ARCH MATCHES "^armv7")
+    set(SQUEEZE2RAOP2_ARCH armv7)
+  endif()
+  set(SQUEEZE2RAOP2_BIN_NAME "squeeze2raop2-${SQUEEZE2RAOP2_OS}-${SQUEEZE2RAOP2_ARCH}")
+else()
+  set(SQUEEZE2RAOP2_BIN_NAME "squeeze2raop2")
+endif()
+# The packaged static build carries a -static suffix so it cannot be confused
+# with the dynamically linked release binary.
+if(SQUEEZE2RAOP2_DIST AND SQUEEZE2RAOP2_STATIC)
+  set(SQUEEZE2RAOP2_BIN_NAME "${SQUEEZE2RAOP2_BIN_NAME}-static")
+endif()
+
+# Generated version header; core and the executable both include app/version.h.
+configure_file(src/app/version.h.in
+               ${CMAKE_BINARY_DIR}/generated/app/version.h @ONLY)
 
 find_package(Threads REQUIRED)
 
@@ -22,6 +98,22 @@ set(SQUEEZE2RAOP2_CXX_WARNINGS
 # SQUEEZE2RAOP2_SANITIZERS="address,undefined" (ASan+UBSan) or "thread" (TSan).
 # Build in a separate directory; sanitizer builds must not mix.
 set(SQUEEZE2RAOP2_SANITIZERS "" CACHE STRING "runtime sanitizers for first-party targets")
+
+if(SQUEEZE2RAOP2_STATIC AND SQUEEZE2RAOP2_SANITIZERS)
+  message(FATAL_ERROR
+    "SQUEEZE2RAOP2_STATIC cannot be combined with SQUEEZE2RAOP2_SANITIZERS")
+endif()
+# A fully-static artifact also needs static test binaries: a musl-linked test
+# executable will not run on a glibc CI host otherwise. Apply to every
+# first-party executable via the global linker flags.
+if(SQUEEZE2RAOP2_STATIC)
+  set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -no-pie")
+  else()
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
+  endif()
+endif()
 
 function(squeeze2raop2_target_settings tgt)
   target_compile_options(${tgt} PRIVATE ${SQUEEZE2RAOP2_CXX_WARNINGS})
@@ -103,7 +195,8 @@ add_library(squeeze2raop2_core STATIC
   src/playback/decoder/mp3_decoder.cpp
   src/playback/decoder/pcm_decoder.cpp
 )
-target_include_directories(squeeze2raop2_core PUBLIC src third_party/minimp3)
+target_include_directories(squeeze2raop2_core PUBLIC
+  ${CMAKE_BINARY_DIR}/generated src third_party/minimp3)
 target_link_libraries(squeeze2raop2_core PUBLIC Threads::Threads squeeze2raop2_apple_mdns)
 squeeze2raop2_target_settings(squeeze2raop2_core)
 if(SQUEEZE2RAOP2_WITH_SENDER)
@@ -112,6 +205,7 @@ if(SQUEEZE2RAOP2_WITH_SENDER)
 endif()
 
 add_executable(squeeze2raop2 src/app/main.cpp src/app/bridge.cpp)
+set_target_properties(squeeze2raop2 PROPERTIES OUTPUT_NAME "${SQUEEZE2RAOP2_BIN_NAME}")
 target_link_libraries(squeeze2raop2 PRIVATE squeeze2raop2_core)
 squeeze2raop2_target_settings(squeeze2raop2)
 

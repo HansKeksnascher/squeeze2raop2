@@ -299,7 +299,8 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
         global_.autoRegister = b;
     } else if (key == "server-timeout-ms") {
         unsigned v = 0;
-        if (!parseNumber(value, v)) return fail(error, lineNo, "server-timeout-ms must be a number");
+        if (!parseNumber(value, v))
+            return fail(error, lineNo, "server-timeout-ms must be a number");
         if (v < 1000 || v > 600000)
             return fail(error, lineNo, "server-timeout-ms must be 1000-600000");
         global_.serverTimeoutMs = v;
@@ -326,8 +327,8 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
                                  PlayerConfig& pc, Section* section, bool isDefault,
                                  std::string& error) {
     // Identity/machine keys are meaningless in [default]; reject them up front.
-    if (isDefault && (key == "id" || key == "mac" || key == "name" || key == "target" ||
-                      key == "creds")) {
+    if (isDefault &&
+        (key == "id" || key == "mac" || key == "name" || key == "target" || key == "creds")) {
         log::warn("config {}:{}: '{}' is not valid in [default], ignoring", path_, lineNo, key);
         return true;
     }

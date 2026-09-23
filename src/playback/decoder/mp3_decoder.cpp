@@ -24,8 +24,8 @@
 #include <limits>
 #include <type_traits>
 
-#include "playback/decoder/mp3_decoder.h"
 #include "common/log.h"
+#include "playback/decoder/mp3_decoder.h"
 
 namespace squeeze2raop2 {
 

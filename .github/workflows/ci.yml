@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: "4"
+
+jobs:
+  build-test:
+    name: build + test (glibc)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Rewrite SSH submodule URLs to HTTPS
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build python3
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build
+      - name: Unit tests
+        run: ctest --test-dir build -L unit --output-on-failure -j"$(nproc)"
+      - name: Integration tests
+        run: ctest --test-dir build -L integration --output-on-failure -j"$(nproc)"
+
+  test-musl:
+    name: build + test (musl static)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Rewrite SSH submodule URLs to HTTPS
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build python3
+      - name: Cache musl toolchain
+        id: musl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/musl-toolchain
+          key: bootlin-musl-x86_64-2026.08-1
+      - name: Fetch musl toolchain
+        if: steps.musl-cache.outputs.cache-hit != 'true'
+        run: tools/fetch-musl-toolchain.sh "${{ runner.temp }}/musl-toolchain"
+      - name: Configure (musl, static)
+        run: |
+          export MUSL_TOOLCHAIN_ROOT="${{ runner.temp }}/musl-toolchain/x86-64--musl--stable-2026.08-1"
+          cmake -B build-musl -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-musl-x86_64.cmake \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSQUEEZE2RAOP2_DIST=ON \
+            -DSQUEEZE2RAOP2_STATIC=ON
+      - name: Build
+        run: cmake --build build-musl
+      - name: Unit tests (static musl, runs natively)
+        run: ctest --test-dir build-musl -L unit --output-on-failure -j"$(nproc)"
+      - name: Integration tests (static musl, runs natively)
+        run: ctest --test-dir build-musl -L integration --output-on-failure -j"$(nproc)"
+
+  sanitizers:
+    name: sanitizers (${{ matrix.sanitizers }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizers: ["address,undefined", "thread"]
+    steps:
+      - name: Rewrite SSH submodule URLs to HTTPS
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build python3
+      - name: Configure
+        run: |
+          cmake -B build-san -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DSQUEEZE2RAOP2_SANITIZERS="${{ matrix.sanitizers }}"
+      - name: Build
+        run: cmake --build build-san
+      - name: Unit tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-san -L unit --output-on-failure -j2
+      - name: Integration tests
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ctest --test-dir build-san -L integration --output-on-failure -j2
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install clang-format
+        run: pip install "clang-format==22.1.8"
+      - name: Check first-party formatting
+        run: |
+          mapfile -t files < <(find src test -type f \( -name '*.cpp' -o -name '*.h' \))
+          clang-format --dry-run --Werror "${files[@]}"

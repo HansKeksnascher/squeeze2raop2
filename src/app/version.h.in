@@ -1,0 +1,8 @@
+#pragma once
+
+// Generated from src/app/version.h.in by CMake. Do not edit.
+// The values are derived from git (see the version block in CMakeLists.txt).
+
+#define SQUEEZE2RAOP2_VERSION "@SQUEEZE2RAOP2_VERSION@"
+#define SQUEEZE2RAOP2_VERSION_CORE "@SQUEEZE2RAOP2_VERSION_CORE@"
+#define SQUEEZE2RAOP2_GIT_COMMIT "@SQUEEZE2RAOP2_GIT_COMMIT@"
