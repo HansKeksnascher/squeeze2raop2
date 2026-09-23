@@ -454,17 +454,9 @@ bool MdnsBrowser::start(const std::string& ifaceName, RecordCallback cb, std::st
         return false;
     }
 
-    ScopeExit rollback([&] {
-        for (size_t i = 0; i < kServiceTypes.size(); ++i) {
-            if (impl->browseActive[i]) {
-                impl->browseActive[i] = false;
-                mDNS_StopQuery(&gMdns, &impl->browseQ[i]);
-            }
-        }
-        mDNS_Close(&gMdns);
-        mDNS_LoggingEnabled = impl->savedLogging;
-        mDNS_DebugMode = impl->savedDebugMode;
-    });
+    // No loop thread exists yet, so teardown() runs inline here and unwinds the
+    // same state (browse questions, mDNS_Close, debug flags) on failure.
+    ScopeExit rollback([&] { impl->teardown(); });
 
     if (index != 0) {
         // Map the kernel ifindex to the core's interface ID. NULL means the

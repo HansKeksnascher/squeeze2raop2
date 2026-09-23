@@ -47,10 +47,10 @@ double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t win
     if (fps < 0.95 * kNominal || fps > 1.05 * kNominal) return pcmAppliedRate_;  // stall/burst
 
     const double off = std::abs(fps - kNominal);
+    // Gentle rebuild while below the prebuffer reserve.
+    const double overdrive = queued < 131072 ? 1.002 : 1.0;
     if (pcmAppliedRate_ == 0.0) {
         if (off > 44.0) {  // 0.1%
-            // Gentle rebuild while below the prebuffer reserve.
-            const double overdrive = queued < 131072 ? 1.002 : 1.0;
             pcmAppliedRate_ = fps / overdrive;
             setSourceRate(pcmAppliedRate_);
             log::warn("[ap] pcm source {} fps ({} ppm off): regulating", fps,
@@ -65,7 +65,6 @@ double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t win
         return pcmAppliedRate_;
     }
     // Keep regulating; refresh the overdrive decision.
-    const double overdrive = queued < 131072 ? 1.002 : 1.0;
     const double target = fps / overdrive;
     if (std::abs(target - pcmAppliedRate_) > 2.0) {
         pcmAppliedRate_ = target;

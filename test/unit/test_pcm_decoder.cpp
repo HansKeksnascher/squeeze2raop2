@@ -119,3 +119,24 @@ SQ2_TEST(pcm_decoder, aiff_header) {
     const PcmFormat fmt = dec.format();
     expect(fmt.sampleRate == 44100 && fmt.channels == 2 && fmt.bitsPerSample == 16, "aiff fmt");
 }
+
+// A COMM chunk whose body (the rate u32 at +18) runs past the probe buffer must
+// be rejected without reading past the end: run under ASan, the old +18 guard
+// read four bytes out of bounds here. A JUNK chunk jumps the walk to a COMM
+// whose +22 reaches past the buffer end.
+SQ2_TEST(pcm_decoder, aiff_truncated_comm_fails_closed) {
+    std::vector<std::byte> buf(kProbe, std::byte{0});
+    putTag(buf.data(), "FORM");
+    putTag(buf.data() + 8, "AIFF");
+    const size_t off = kProbe - 20;  // off + 18 <= size, off + 22 > size
+    putTag(buf.data() + 12, "JUNK");
+    putBe32(buf.data() + 16, static_cast<uint32_t>(off - 20));  // 12 + len + 8 = off
+    putTag(buf.data() + off, "COMM");
+
+    PcmDecoder dec(PcmFormat{}, 0);
+    dec.feed(std::as_bytes(std::span{buf}));
+    std::vector<int16_t> out(64, 0);
+    (void)dec.drain(out);
+
+    expect(dec.hasError(), "truncated AIFF COMM rejected without an OOB read");
+}

@@ -82,7 +82,10 @@ std::optional<size_t> PcmDecoder::checkHeader() {
         size_t off = 12;
         srcBigEndian_ = true;
         while (off + 8 <= have) {
-            if (tagIs(p + off, "COMM") && off + 18 <= have) {
+            // COMM body is read through the rate u32 at +18..+21, so the chunk
+            // needs 22 bytes, not 18 (the exponent pair at +16/+17 alone would
+            // only need 18).
+            if (tagIs(p + off, "COMM") && off + 22 <= have) {
                 srcChannels_ = static_cast<uint8_t>(readInt<Endian::Big, uint16_t>(p + off + 8));
                 srcBits_ = static_cast<uint8_t>(readInt<Endian::Big, uint16_t>(p + off + 14));
                 // IEEE 80-bit extended rate, same simplification as pcm.c:

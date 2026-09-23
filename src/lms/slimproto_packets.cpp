@@ -72,6 +72,13 @@ public:
     std::optional<uint16_t> u16() { return take<uint16_t>(); }
     std::optional<uint32_t> u32() { return take<uint32_t>(); }
 
+    // Read a big-endian u32 at an absolute packet offset without moving the
+    // cursor; nullopt when the field is truncated.
+    [[nodiscard]] std::optional<uint32_t> u32At(size_t offset) const {
+        if (offset + sizeof(uint32_t) > packet_.size()) return std::nullopt;
+        return readInt<Endian::Big, uint32_t>(packet_.data() + offset);
+    }
+
     bool skip(size_t n) {
         if (n > remaining()) return false;
         offset_ += n;
@@ -232,13 +239,12 @@ void SlimProtoClient::process(const std::string& pkt) {
         switch (command) {
         case 't': {
             // heartbeat timestamp sits at packet bytes 18..21
-            if (len < 22) return;
-            if (!r.skip(13)) return;
-            const uint32_t ts = *r.u32();
+            const auto ts = r.u32At(18);
+            if (!ts) return;
             // Reply with the real stats (squeezelite parity): a zeroed reply
             // makes LMS's progress display drop to 0 until the next heartbeat
             // and clobbers the cached lastStats() used by later replies.
-            sendStat("STMt", statsProvider_ ? statsProvider_() : StreamStats{}, ts);
+            sendStat("STMt", statsProvider_ ? statsProvider_() : StreamStats{}, *ts);
             lastHeartbeatMs_ = nowMs();
             break;
         }
@@ -252,28 +258,25 @@ void SlimProtoClient::process(const std::string& pkt) {
             sendStat("STMf", lastStats());
             break;
         case 'p': {
-            if (len < 22) return;
-            if (!r.skip(13)) return;
-            const uint32_t ms = *r.u32();
-            log::debug("strm p (pause, interval={})", ms);
-            if (events_.onPause) events_.onPause(ms);
-            if (!ms) sendStat("STMp", lastStats());
+            const auto ms = r.u32At(18);
+            if (!ms) return;
+            log::debug("strm p (pause, interval={})", *ms);
+            if (events_.onPause) events_.onPause(*ms);
+            if (!*ms) sendStat("STMp", lastStats());
             break;
         }
         case 'a': {
-            if (len < 22) return;
-            if (!r.skip(13)) return;
-            const uint32_t ms = *r.u32();
-            log::debug("strm a (skip ahead, interval={})", ms);
-            if (events_.onSkipAhead) events_.onSkipAhead(ms);
+            const auto ms = r.u32At(18);
+            if (!ms) return;
+            log::debug("strm a (skip ahead, interval={})", *ms);
+            if (events_.onSkipAhead) events_.onSkipAhead(*ms);
             break;
         }
         case 'u': {
-            if (len < 22) return;
-            if (!r.skip(13)) return;
-            const uint32_t jiffies = *r.u32();
-            log::debug("strm u (unpause, jiffies={})", jiffies);
-            if (events_.onUnpause) events_.onUnpause(jiffies);
+            const auto jiffies = r.u32At(18);
+            if (!jiffies) return;
+            log::debug("strm u (unpause, jiffies={})", *jiffies);
+            if (events_.onUnpause) events_.onUnpause(*jiffies);
             sendStat("STMr", lastStats());
             break;
         }
@@ -306,9 +309,9 @@ void SlimProtoClient::process(const std::string& pkt) {
         default: log::warn("unhandled strm command '{}'", command); break;
         }
     } else if (op == "cont") {
-        if (len < 8) return;
-        const uint32_t metaint = *r.u32();
-        if (events_.onCont) events_.onCont(metaint);
+        if (const auto metaint = r.u32()) {
+            if (events_.onCont) events_.onCont(*metaint);
+        }
     } else if (op == "codc") {
         if (len < 9) return;  // opcode(4) + format + 4 pcm bytes
         const StreamFormat f = static_cast<StreamFormat>(*r.u8());
