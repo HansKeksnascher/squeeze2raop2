@@ -256,6 +256,10 @@ std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& devi
     }
 
     assignMacLocked(*match);
+    // Display the receiver's friendly mDNS name (LMS shows it instead of the
+    // device id). A 'setd' rename persisted as the machine-managed 'name' key
+    // is an explicit override and wins.
+    if (!match->hasNameOverride && !deviceName.empty()) match->config.name = deviceName;
     if (dirty_) {
         saveLocked();
         dirty_ = false;

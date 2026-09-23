@@ -156,7 +156,7 @@ SQ2_TEST(persistence, auto_register_stable) {
     auto second = p.resolve("542A1B5CC9E2", "Renamed", true);
     expect(second.has_value(), "re-resolves by id");
     expect(second->mac == mac, "mac stable");
-    expect(second->name == "Kueche15", "keeps the original section name");
+    expect(second->name == "Renamed", "display name follows discovery");
 
     const std::string text = readFile(path);
     expect(text.find("id = 542a1b5cc9e2") != std::string::npos, "id persisted");
@@ -310,4 +310,32 @@ SQ2_TEST(persistence, rename_persisted) {
     const std::string text = readFile(path);
     expect(text.find("name = Kueche15") != std::string::npos, "name key written");
     expect(text.find("[player \"Kitchen\"]") != std::string::npos, "header left unchanged");
+}
+
+SQ2_TEST(persistence, discovered_name_displayed) {
+    ScratchDir dir("discover");
+    const std::string path = dir.file("discover.conf");
+    writeFile(path,
+              "[global]\nlog = info\n\n"
+              "[player \"6a329c251848\"]\n"
+              "id = 6a329c251848\n"
+              "mac = aa:8b:4f:c7:79:01\n"
+              "auto = true\n");
+    Persistence p;
+    Settings s;
+    std::string error;
+    expect(p.open(path, s, error), "open discover config");
+
+    // The friendly mDNS name is displayed, but the section key stays the id.
+    auto r = p.resolve("6a329c251848", "Küche", false);
+    expect(r.has_value() && r->name == "Küche", "discovered friendly name is used");
+    expect(r->key == "6a329c251848", "key stays the device id");
+    const std::array<uint8_t, 6> want{0xaa, 0x8b, 0x4f, 0xc7, 0x79, 0x01};
+    expect(r->mac == want, "explicit mac retained");
+
+    // A 'setd' rename is a persisted override and must not be clobbered.
+    p.savePlayerName(r->key, "HomePod");
+    auto r2 = p.resolve("6a329c251848", "Küche", false);
+    expect(r2.has_value() && r2->name == "HomePod", "explicit rename wins over discovery");
+    expect(r2->key == "6a329c251848", "key still the id after rename");
 }
