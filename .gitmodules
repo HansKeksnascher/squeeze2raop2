@@ -8,3 +8,6 @@
 [submodule "third_party/minimp3"]
 	path = third_party/minimp3
 	url = https://github.com/lieff/minimp3
+[submodule "third_party/mbedtls"]
+	path = third_party/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls

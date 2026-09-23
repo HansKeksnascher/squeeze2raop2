@@ -45,6 +45,7 @@ pair-verify, encrypted RTSP/RTP) from scratch — and it was written using
 Linux, CMake ≥ 3.16, C++20:
 
 ```sh
+git submodule update --init --recursive   # sender, mDNSResponder, minimp3, mbedtls
 cmake -B build
 cmake --build build -j
 ctest --test-dir build                 # all tiers
@@ -119,7 +120,7 @@ The anchor design mirrors philippe44's squeeze2raop `VolumeMapping`.
 
 ## Third-party dependencies used
 
-Vendored under `third_party/`; each keeps its own license.
+Vendored as git submodules under `third_party/`; each keeps its own license.
 
 | Dependency | Role | License |
 |---|---|---|

@@ -36,6 +36,11 @@ if(SQUEEZE2RAOP2_WITH_SENDER)
   set(AIRPLAY_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
   set(AIRPLAY_BUILD_TESTS ON CACHE BOOL "" FORCE)
   set(AIRPLAY_BUILD_QT_HOST OFF CACHE BOOL "" FORCE)
+  # mbedtls is vendored as a submodule; hand it to the sender's FetchContent so
+  # configure never downloads anything. The sender's declaration still applies
+  # when it is built standalone.
+  set(FETCHCONTENT_SOURCE_DIR_MBEDTLS
+      ${CMAKE_SOURCE_DIR}/third_party/mbedtls CACHE PATH "" FORCE)
   add_subdirectory(third_party/airplay2-sender-cpp EXCLUDE_FROM_ALL)
 endif()
 
