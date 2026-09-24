@@ -114,3 +114,43 @@ SQ2_TEST(decoder, rate_regulation) {
     expect(dec->regulateRate(7044000, 200000, 10000) == 0.0, "regulator released");
     expect(!dec->regulating(), "regulator released state");
 }
+
+SQ2_TEST(decoder, supported_codec_table_matches_factory) {
+    // The HELO caps, the strm guard and the factory all read this one list, so
+    // pin that every advertised entry actually builds a decoder and that
+    // formats outside it do not.
+    using squeeze2raop2::CodecInfo;
+    using squeeze2raop2::supportedCodecs;
+    using squeeze2raop2::supportsFormat;
+
+    expect(supportsFormat(StreamFormat::Pcm), "pcm always supported");
+    expect(supportsFormat(StreamFormat::Mp3), "mp3 always supported");
+    for (const CodecInfo& codec : supportedCodecs()) {
+        expect(codec.capToken != nullptr && codec.capToken[0] != '\0',
+               "every codec has a caps token");
+        expect(supportsFormat(codec.format), "table and predicate agree");
+        const auto dec = Decoder::create(codec.format, PcmFormat{44100, 16, 2, false}, 0);
+        expect(dec != nullptr, "every supported format has a factory");
+    }
+    // A format LMS can name but this bridge never decodes: no factory, not
+    // advertised, so the strm guard rejects it.
+    expect(!supportsFormat(StreamFormat::Flac), "flac not advertised");
+    expect(Decoder::create(StreamFormat::Flac, PcmFormat{44100, 16, 2, false}, 0) == nullptr,
+           "flac has no factory");
+
+#if defined(SQUEEZE2RAOP2_WITH_AAC)
+    expect(supportsFormat(StreamFormat::Aac), "aac built in");
+#else
+    expect(!supportsFormat(StreamFormat::Aac), "aac not built in");
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_OGG)
+    expect(supportsFormat(StreamFormat::Ogg), "ogg built in");
+#else
+    expect(!supportsFormat(StreamFormat::Ogg), "ogg not built in");
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_OPUS)
+    expect(supportsFormat(StreamFormat::Opus), "opus built in");
+#else
+    expect(!supportsFormat(StreamFormat::Opus), "opus not built in");
+#endif
+}

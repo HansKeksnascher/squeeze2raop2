@@ -110,4 +110,23 @@ private:
     double pcmAppliedRate_ = 0.0;
 };
 
+// One decodable stream format: its LMS HELO capability token and the factory
+// that builds its decoder for Decoder::create(). The list in decoder.cpp is
+// the single place a codec is enabled/disabled (build-gated): the factory, the
+// advertised HELO caps and the strm-format guard all read it, so they cannot
+// drift apart. `containerCode` is only meaningful to AAC (see create()).
+struct CodecInfo {
+    StreamFormat format;
+    const char* capToken;
+    std::unique_ptr<Decoder> (*create)(const PcmFormat& in, uint32_t outputRate,
+                                       uint8_t containerCode);
+};
+
+// Formats this build can decode, in advertised order: pcm, mp3, then any
+// enabled AAC/Ogg/Opus. Always contains at least Pcm and Mp3.
+std::span<const CodecInfo> supportedCodecs();
+
+// True when supportedCodecs() contains `format`.
+bool supportsFormat(StreamFormat format);
+
 }  // namespace squeeze2raop2

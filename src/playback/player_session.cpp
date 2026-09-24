@@ -147,24 +147,17 @@ void PlayerSession::start() {
     const std::string modelName =
         output_->hasTarget() ? (output_->airplay2() ? "squeeze2raop2@ap2" : "squeeze2raop2@raop")
                              : "squeeze2raop2";
-    // Only formats the bridge actually decodes: raw PCM (headerless, LMS
-    // transcode profiles like flc-pcm), native MP3 (minimp3) and, when built
-    // in, native AAC (libxaac: ADTS radio/.aac and MP4/.m4a). pcm first: local
-    // FLAC etc. transcode losslessly on the LAN; mp3/aac next: those sources
-    // stream direct regardless. Do NOT advertise wav/aif/flc/alc: no decoder
-    // here, and direct-streamed wav/aif would ship their container headers.
+    // Advertise exactly the codecs this build decodes. Pcm/mp3 are always
+    // present (raw PCM from LMS transcode profiles like flc-pcm, native MP3 via
+    // minimp3); AAC/Ogg/Opus appear only when built in. The list comes from
+    // Decoder::supportedCodecs(), the same source the factory and the strm
+    // guard use, so the caps cannot drift from what is actually decodable. Do
+    // NOT advertise wav/aif/flc/alc: no decoder here, and direct-streamed
+    // wav/aif would ship their container headers.
     std::string caps = "Model=squeezelite,ModelName=" + modelName +
                        ",AccuratePlayPoints=1,HasDigitalOut=1,MaxSampleRate=96000,"
-                       "Firmware=squeeze2raop2 " SQUEEZE2RAOP2_VERSION ",pcm,mp3";
-#if defined(SQUEEZE2RAOP2_WITH_AAC)
-    caps += ",aac";
-#endif
-#if defined(SQUEEZE2RAOP2_WITH_OGG)
-    caps += ",ogg";
-#endif
-#if defined(SQUEEZE2RAOP2_WITH_OPUS)
-    caps += ",ops";
-#endif
+                       "Firmware=squeeze2raop2 " SQUEEZE2RAOP2_VERSION;
+    for (const CodecInfo& codec : supportedCodecs()) caps += std::string(",") + codec.capToken;
     client_ = std::make_unique<SlimProtoClient>(mac_, std::move(caps), std::move(events));
     client_->setPlayerName(name_);
     client_->setServerTimeout(serverTimeoutMs_);
@@ -231,23 +224,14 @@ void PlayerSession::startStream(const StrmStart& st) {
         client_->sendStat("STMn", currentStats());
         return;
     }
-    // Only formats the track pump actually consumes. LMS should honor the HELO
-    // caps (pcm,mp3,aac,ogg,ops); a stray direct format would otherwise be
-    // pushed into the ring as raw PCM = noise. '?' (unknown) is allowed only with
-    // autostart>=2, where LMS learns the codec from the response header and
-    // returns it in 'codc' (squeezelite parity).
+    // Only formats the track pump actually consumes, per Decoder::supportedCodecs()
+    // (the same list the HELO caps advertise). LMS should honor those caps; a
+    // stray direct format would otherwise be pushed into the ring as raw PCM =
+    // noise. '?' (unknown) is allowed only with autostart>=2, where LMS learns
+    // the codec from the response header and returns it in 'codc' (squeezelite
+    // parity).
     const bool unknown = st.format == StreamFormat::Unknown;
-    bool supported = st.format == StreamFormat::Pcm || st.format == StreamFormat::Mp3;
-#if defined(SQUEEZE2RAOP2_WITH_AAC)
-    supported = supported || st.format == StreamFormat::Aac;
-#endif
-#if defined(SQUEEZE2RAOP2_WITH_OGG)
-    supported = supported || st.format == StreamFormat::Ogg;
-#endif
-#if defined(SQUEEZE2RAOP2_WITH_OPUS)
-    supported = supported || st.format == StreamFormat::Opus;
-#endif
-    if (!unknown && !supported) {
+    if (!unknown && !supportsFormat(st.format)) {
         log::error(log::Area::Ses, "strm s: unsupported stream format '{}'",
                    static_cast<char>(st.format));
         client_->sendStat("STMn", currentStats());

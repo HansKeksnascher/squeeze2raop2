@@ -45,7 +45,18 @@ if(Python3_Interpreter_FOUND)
   set(SQUEEZE2RAOP2_INTEGRATION_TESTS
     single_player_stream two_player_registration queue_advance
     skip_ahead replay_gain power_off codc_stream codc_unsupported
-    watchdog fade fade_out pause_resume aac_adts_stream aac_mp4_stream ogg_vorbis_stream opus_stream)
+    watchdog fade fade_out pause_resume)
+  # Codec-specific scenarios only when that decoder is built: they assert the
+  # matching HELO cap and decode path, which do not exist in a feature-off build.
+  if(SQUEEZE2RAOP2_WITH_AAC)
+    list(APPEND SQUEEZE2RAOP2_INTEGRATION_TESTS aac_adts_stream aac_mp4_stream)
+  endif()
+  if(SQUEEZE2RAOP2_WITH_OGG)
+    list(APPEND SQUEEZE2RAOP2_INTEGRATION_TESTS ogg_vorbis_stream)
+  endif()
+  if(SQUEEZE2RAOP2_WITH_OPUS)
+    list(APPEND SQUEEZE2RAOP2_INTEGRATION_TESTS opus_stream)
+  endif()
   foreach(scenario ${SQUEEZE2RAOP2_INTEGRATION_TESTS})
     add_test(NAME ${scenario}
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/${scenario}.py
