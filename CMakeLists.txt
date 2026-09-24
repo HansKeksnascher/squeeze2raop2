@@ -55,7 +55,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(SQUEEZE2RAOP2_BUILD_TESTS "build squeeze2raop2 unit tests" ON)
-option(SQUEEZE2RAOP2_WITH_SENDER "integrate the vendored raop_sender library" ON)
 option(SQUEEZE2RAOP2_WITH_AAC "integrate the vendored libxaac AAC decoder" ON)
 option(SQUEEZE2RAOP2_WITH_OGG "integrate the vendored stb_vorbis Ogg decoder" ON)
 option(SQUEEZE2RAOP2_WITH_OPUS "integrate the vendored libogg/libopus Ogg Opus decoder" ON)
@@ -127,17 +126,18 @@ function(squeeze2raop2_target_settings tgt)
   endif()
 endfunction()
 
-if(SQUEEZE2RAOP2_WITH_SENDER)
-  set(AIRPLAY_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
-  set(AIRPLAY_BUILD_TESTS ON CACHE BOOL "" FORCE)
-  set(AIRPLAY_BUILD_QT_HOST OFF CACHE BOOL "" FORCE)
-  # mbedtls is vendored as a submodule; hand it to the sender's FetchContent so
-  # configure never downloads anything. The sender's declaration still applies
-  # when it is built standalone.
-  set(FETCHCONTENT_SOURCE_DIR_MBEDTLS
-      ${CMAKE_SOURCE_DIR}/third_party/mbedtls CACHE PATH "" FORCE)
-  add_subdirectory(third_party/airplay2-sender-cpp EXCLUDE_FROM_ALL)
-endif()
+# The AirPlay transport is not optional: raop_player.cpp/airplay_output.cpp
+# include the sender's headers unconditionally, so the vendored sender is always
+# built and linked.
+set(AIRPLAY_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(AIRPLAY_BUILD_TESTS ON CACHE BOOL "" FORCE)
+set(AIRPLAY_BUILD_QT_HOST OFF CACHE BOOL "" FORCE)
+# mbedtls is vendored as a submodule; hand it to the sender's FetchContent so
+# configure never downloads anything. The sender's declaration still applies
+# when it is built standalone.
+set(FETCHCONTENT_SOURCE_DIR_MBEDTLS
+    ${CMAKE_SOURCE_DIR}/third_party/mbedtls CACHE PATH "" FORCE)
+add_subdirectory(third_party/airplay2-sender-cpp EXCLUDE_FROM_ALL)
 
 # libxaac decoder: built through cmake/libxaac so its directory-scoped global
 # options stay isolated. Only the decoder is built (no encoder/testbench).
@@ -256,10 +256,7 @@ target_include_directories(squeeze2raop2_core PUBLIC
   ${CMAKE_BINARY_DIR}/generated src third_party/minimp3)
 target_link_libraries(squeeze2raop2_core PUBLIC Threads::Threads squeeze2raop2_apple_mdns)
 squeeze2raop2_target_settings(squeeze2raop2_core)
-if(SQUEEZE2RAOP2_WITH_SENDER)
-  target_link_libraries(squeeze2raop2_core PUBLIC raop_sender)
-  target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_SENDER=1)
-endif()
+target_link_libraries(squeeze2raop2_core PUBLIC raop_sender)
 if(SQUEEZE2RAOP2_WITH_AAC)
   target_link_libraries(squeeze2raop2_core PUBLIC libxaacdec)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_AAC=1)
