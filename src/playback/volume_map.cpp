@@ -3,7 +3,6 @@
 #include "common/util.h"
 
 #include <algorithm>
-#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <optional>
@@ -27,6 +26,8 @@ constexpr double kLmsSlopeLow =
 
 }  // namespace
 
+double dbFromAirplayPct(double pct) { return kAirplayFloorDb + kAirplayDbPerPct * pct; }
+
 double lmsSliderPctFromGain(uint32_t newGain) {
     if (newGain == 0) return 0.0;  // LMS mute
     const double db = 20.0 * std::log10(static_cast<double>(newGain) / 65536.0);
@@ -45,10 +46,7 @@ std::optional<VolumeAnchors> VolumeAnchors::parse(std::string_view spec) {
         std::string_view item = spec.substr(pos, end - pos);
         pos = end + 1;
 
-        while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front())))
-            item.remove_prefix(1);
-        while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back())))
-            item.remove_suffix(1);
+        item = trimView(item);
         if (item.empty()) continue;
 
         size_t colon = item.find(':');
@@ -92,9 +90,10 @@ double VolumeAnchors::dbAt(double pct) const {
 double VolumeAnchors::airplayPctFromLms(double lmsPct) const {
     if (lmsPct <= 0.0) return 0.0;  // LMS mute -> -144 mute sentinel
     double db = dbAt(std::clamp(lmsPct, 0.0, 100.0));
-    // AirPlay pct for a dBFS level: pct = (db + 30) / 0.3. The -30 dB anchor
-    // lands at pct 0 = mute, so non-mute levels floor at the quietest step.
-    double pct = (db + 30.0) / 0.3;
+    // AirPlay pct for a dBFS level: pct = (db - floor) / slope. The floor
+    // anchor lands at pct 0 = mute, so non-mute levels floor at the quietest
+    // step.
+    double pct = (db - kAirplayFloorDb) / kAirplayDbPerPct;
     return clampAirVolumePct(std::max(pct, 0.05));
 }
 

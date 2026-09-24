@@ -12,7 +12,6 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <stop_token>
 #include <string>
@@ -20,6 +19,8 @@
 #include <thread>
 
 namespace squeeze2raop2 {
+
+class RemoteVolumeChaser;
 
 // Why the stream loop ended, and what the exit path should do about it.
 enum class ExitAction : std::uint8_t {
@@ -75,33 +76,24 @@ private:
     void onPrebufferReady();
     void streamLoop(std::stop_token st);
     void launchAirplaySession();
-    // Receiver-initiated volume (AP2 event channel, sender thread): convert the
-    // receiver's unit volume to the LMS slider it corresponds to and start
-    // nudging LMS toward it. No-op in fixed mode or when feedback is disabled.
+    // Receiver-initiated volume (AP2 event channel, sender thread): gated by
+    // volume-feedback/volume mode, then delegated to the chaser. No-op in fixed
+    // mode or when feedback is disabled.
     void onRemoteVolume(double unit);
-    // Paced stepper thread: sends at most one volume-button nudge every
-    // kRemoteVolStepMs so LMS sees each as a fresh press (a repeat within its
-    // 140 ms IR window would compute an increment of 0), and drives the loop
-    // from a timer rather than the AUDG echo (which repeats even when LMS's
-    // volume does not move).
-    void volumeLoop(std::stop_token st);
-    // Send one volume-button nudge toward remoteVolTarget_ if the pacing window
-    // has elapsed. Serialized by remoteVolMutex_.
-    void pumpRemoteVolume();
     // Blocks (bounded) until the sender ring has played out, so the receiver
     // finishes the track tail before we report the end of playback.
     void waitForOutputDrain(std::stop_token st);
     void stopPlayback();
 
     std::string name_;
-    std::array<uint8_t, 6> mac_{};
-    std::optional<std::string> lmsHost_;
-    uint16_t lmsPort_;
-    bool paceRealtime_;
-    std::optional<std::string> sinkPath_;
-    uint32_t serverTimeoutMs_;
-    uint32_t sourceTimeoutMs_;
-    NameSink nameSink_;
+    const std::array<uint8_t, 6> mac_{};
+    const std::optional<std::string> lmsHost_;
+    const uint16_t lmsPort_;
+    const bool paceRealtime_;
+    const std::optional<std::string> sinkPath_;
+    const uint32_t serverTimeoutMs_;
+    const uint32_t sourceTimeoutMs_;
+    const NameSink nameSink_;
 
     std::unique_ptr<SlimProtoClient> client_;
 
@@ -117,7 +109,7 @@ private:
     std::jthread streamThread_;
     // Drives the receiver-volume nudge chain (idle unless a receiver volume
     // event is pending).
-    std::jthread volumeThread_;
+    std::unique_ptr<RemoteVolumeChaser> volumeChaser_;
     // True while streamLoop is on the stack (onStop uses it to decide whether a
     // stop-path fade can be delegated to the pump).
     std::atomic<bool> streamActive_{false};
@@ -138,9 +130,9 @@ private:
     // --vol-pct: fixed-mode level, and in lms mode the pre-AUDG fallback
     // applied to every new session before RECORD (so audio never starts at
     // the receiver's hardware default).
-    VolumeAnchors anchors_;  // --vol-map dB anchors over the LMS slider
-    VolumeMode volumeMode_;
-    float fixedVolumePct_;
+    const VolumeAnchors anchors_;  // --vol-map dB anchors over the LMS slider
+    const VolumeMode volumeMode_;
+    const float fixedVolumePct_;
     // Last AirPlay sender percent applied from the LMS slider (lms mode); 0 =
     // none. Re-applied by launchAirplaySession() on session recreation, and
     // used to recognise the receiver echoing our own SET_PARAMETER volume back
@@ -148,19 +140,11 @@ private:
     // end-of-fade zero gain can't mute the next session.
     std::atomic<double> lastLmsPct_{0.0};
 
-    // Receiver-initiated volume feedback. `volumeFeedback_` gates it; the
-    // rest is the stepper state, all atomic because the receiver callback runs
-    // on the sender thread while AUDG arrives on the slimproto reader thread.
-    bool volumeFeedback_ = true;
-    std::atomic<double> lmsSliderPct_{0.0};  // LMS's own slider view (AUDG)
-    std::atomic<bool> remoteVolPending_{false};
-    std::atomic<double> remoteVolTarget_{0.0};
-    std::atomic<int> remoteVolDir_{0};  // -1 down, +1 up, 0 unset
-    std::atomic<int> remoteVolBudget_{0};
-    std::atomic<uint64_t> remoteVolLastStepMs_{0};  // pacing
-    std::atomic<double> remoteVolLastLms_{0.0};     // stall detection
-    std::atomic<int> remoteVolStall_{0};
-    std::mutex remoteVolMutex_;  // serializes pumpRemoteVolume()
+    // Receiver-initiated volume feedback: `volumeFeedback_` gates it and the
+    // chaser (declared above) owns the stepper state. `lmsSliderPct_` is LMS's
+    // own slider view (AUDG), shared with the chaser.
+    const bool volumeFeedback_ = true;
+    std::atomic<double> lmsSliderPct_{0.0};
 };
 
 }  // namespace squeeze2raop2

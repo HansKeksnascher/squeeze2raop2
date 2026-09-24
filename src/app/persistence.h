@@ -71,7 +71,6 @@ private:
                         std::string& error);
     bool parsePlayerKey(std::string_view key, std::string_view value, int lineNo, PlayerConfig& pc,
                         Section* section, bool isDefault, std::string& error);
-    bool fail(std::string& error, int lineNo, std::string_view msg) const;
 
     bool importLegacy(const std::string& path, std::string& error);
     void writeTemplate();

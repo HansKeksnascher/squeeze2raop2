@@ -1,12 +1,11 @@
 #pragma once
 
-#include "playback/decoder/decoder.h"
+#include "playback/decoder/buffered_decoder.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <vector>
 
 namespace squeeze2raop2 {
 
@@ -21,7 +20,7 @@ namespace squeeze2raop2 {
 // matching the Ogg Vorbis stereo guard. The OpusHead pre-skip is trimmed and
 // the stream is end-trimmed to the final granule position (only meaningful for
 // finite .opus files); the OpusHead output gain is applied via OPUS_SET_GAIN.
-class OggOpusDecoder final : public Decoder {
+class OggOpusDecoder final : public BufferedDecoder {
 public:
     explicit OggOpusDecoder(const PcmFormat& in);
     ~OggOpusDecoder() override;
@@ -33,13 +32,11 @@ public:
     // decodable, so there is no decoder tail; this only catches a stream that
     // ended before its OpusHead.
     void finish() override;
-    size_t drain(std::span<int16_t> out) override;
 
     uint32_t sampleRate() const override { return sampleRate_; }
     int channels() const override { return channels_; }
     size_t pendingBytes() const override;
     bool valid() const override { return headerSeen_; }
-    bool hasError() const override { return failed_; }
     std::string_view name() const override { return "opus"; }
 
 protected:
@@ -59,15 +56,12 @@ private:
     // Append `count` decoded frames to pcm_, applying the pre-skip and, once
     // the final granule is known, the end trim.
     void appendFrames(int count);
-    void fail(std::string_view why);
 
     std::unique_ptr<Impl> impl_;
-    std::vector<int16_t> pcm_;  // decoded samples awaiting drain
     // 0 until the OpusHead is parsed so format() falls back to the input.
     uint32_t sampleRate_ = 0;
     int channels_ = 2;
     bool headerSeen_ = false;
-    bool failed_ = false;
 };
 
 }  // namespace squeeze2raop2

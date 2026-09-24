@@ -6,6 +6,9 @@
 #include <cstdint>
 
 using namespace squeeze2raop2::test;
+using squeeze2raop2::dbFromAirplayPct;
+using squeeze2raop2::kAirplayDbPerPct;
+using squeeze2raop2::kAirplayFloorDb;
 using squeeze2raop2::kDefaultVolumeMap;
 using squeeze2raop2::lmsSliderPctFromGain;
 using squeeze2raop2::VolumeAnchors;
@@ -85,6 +88,19 @@ SQ2_TEST(volume, inverse) {
     for (int s = 1; s <= 100; ++s) {
         const double pct = v->lmsPctFromDb(v->dbAt(s));
         expect(near(pct, s, 1e-6), "inverse round-trips the anchor curve");
+    }
+}
+
+SQ2_TEST(volume, airplay_db) {
+    // The wire domain shared by the forward and inverse receiver-volume paths.
+    expect(near(dbFromAirplayPct(0.0), -30.0, 1e-9), "pct 0 -> floor");
+    expect(near(dbFromAirplayPct(100.0), 0.0, 1e-9), "pct 100 -> 0 dB");
+    expect(near(dbFromAirplayPct(23.333), -23.0, 0.01), "pct 23.333 -> -23 dB");
+
+    // dB -> pct -> dB round-trips the shared constants.
+    for (int p = 0; p <= 100; ++p) {
+        const double back = (dbFromAirplayPct(p) - kAirplayFloorDb) / kAirplayDbPerPct;
+        expect(near(back, p, 1e-9), "wire constants are mutually consistent");
     }
 }
 

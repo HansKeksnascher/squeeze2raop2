@@ -1,6 +1,7 @@
 #include "discovery/device_registry.h"
 
 #include "common/log.h"
+#include "common/util.h"
 
 #include <algorithm>
 #include <cctype>
@@ -28,10 +29,7 @@ uint64_t parseAirplayFeatures(std::string_view raw) {
         const size_t comma = raw.find(',', pos);
         std::string_view part =
             raw.substr(pos, comma == std::string_view::npos ? std::string_view::npos : comma - pos);
-        while (!part.empty() && std::isspace(static_cast<unsigned char>(part.front())))
-            part.remove_prefix(1);
-        while (!part.empty() && std::isspace(static_cast<unsigned char>(part.back())))
-            part.remove_suffix(1);
+        part = trimView(part);
         if (part.size() > 2 && part[0] == '0' && (part[1] == 'x' || part[1] == 'X'))
             part.remove_prefix(2);
         uint32_t v = 0;
@@ -52,11 +50,8 @@ uint64_t parseAirplayFeatures(std::string_view raw) {
 std::string DeviceRegistry::normalizeHexKey(const std::string& raw) {
     std::string hex;
     hex.reserve(raw.size());
-    for (char c : raw) {
-        unsigned char u = static_cast<unsigned char>(c);
-        if (!std::isxdigit(u)) continue;
-        hex.push_back(static_cast<char>(std::tolower(u)));
-    }
+    for (char c : toLower(raw))
+        if (std::isxdigit(static_cast<unsigned char>(c))) hex.push_back(c);
     if (hex.size() < 12) return std::string();
     return hex.substr(0, 12);
 }
@@ -73,7 +68,7 @@ std::string DeviceRegistry::keyFor(const std::string& instance) {
     return instance;
 }
 
-void DeviceRegistry::notify(Event ev, const AirplayDevice& d) {
+void DeviceRegistry::notify(Event ev, const AirplayDevice& d) const {
     if (cb_) cb_(ev, d);
 }
 
@@ -111,8 +106,8 @@ std::optional<std::pair<DeviceRegistry::Event, AirplayDevice>> DeviceRegistry::m
     return out;
 }
 
-void DeviceRegistry::onRaopV4(const std::string& instance, const std::string& host, uint16_t port,
-                              const std::map<std::string, std::string>& txt) {
+void DeviceRegistry::onRaopAdded(const std::string& instance, const std::string& host,
+                                 uint16_t port, const std::map<std::string, std::string>& txt) {
     auto [snapshot, added] = upsertAndNotifyKey(keyFor(instance), [&](State& st) {
         AirplayDevice& d = st.device;
         d.raopInstance = instance;
@@ -142,8 +137,8 @@ void DeviceRegistry::onRaopV4(const std::string& instance, const std::string& ho
     notify(added ? Event::Added : Event::Updated, snapshot);
 }
 
-void DeviceRegistry::onAirplayV4(const std::string& instance, const std::string& host,
-                                 uint16_t port, const std::map<std::string, std::string>& txt) {
+void DeviceRegistry::onAirplayAdded(const std::string& instance, const std::string& host,
+                                    uint16_t port, const std::map<std::string, std::string>& txt) {
     // the 12-hex deviceid in the TXT record is the shared identity that
     // matches the raop instance prefix; use it so both records merge
     std::string key;
@@ -165,7 +160,7 @@ void DeviceRegistry::onAirplayV4(const std::string& instance, const std::string&
         if (auto it = txt.find("pw"); it != txt.end() && !d.pw)
             d.pw = (it->second == "true" || it->second == "1");
     });
-    // Notify without holding mutex_ (see onRaopV4).
+    // Notify without holding mutex_ (see onRaopAdded).
     log::info(log::Area::Mdns,
               "airplay record {}: {} name='{}' port={} features=0x{:x} pk={} pw={}",
               added ? "added" : "updated", snapshot.id, snapshot.name, port, snapshot.features,

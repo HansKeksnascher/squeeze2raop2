@@ -29,13 +29,13 @@ struct AirplayDevice {
     // device_registry.cpp.
     static constexpr uint64_t kAirPlay2Features = (1ULL << 38) | (1ULL << 48);
 
-    bool hasRaop() const { return raopPort != 0; }
-    bool hasAirplay() const { return airplayPort != 0; }
+    bool hasRaopPort() const { return raopPort != 0; }
+    bool hasAirplayPort() const { return airplayPort != 0; }
     bool airplay2() const { return (features & kAirPlay2Features) != 0; }
     // Native AirPlay 2 only when the `_airplay._tcp` record is present AND
     // advertises the HK bits; otherwise classic RAOP (squeeze2raop2 prefers
     // AirPlay 2 and falls back).
-    bool useAirplay2() const { return hasAirplay() && airplay2(); }
+    bool useAirplay2() const { return hasAirplayPort() && airplay2(); }
     // Port to reach the receiver over the chosen transport. Falls back to the
     // other service if the preferred one is missing.
     uint16_t preferredPort() const {
@@ -51,10 +51,10 @@ public:
 
     void setCallback(Callback cb) { cb_ = std::move(cb); }
 
-    void onRaopV4(const std::string& instance, const std::string& host, uint16_t port,
-                  const std::map<std::string, std::string>& txt);
-    void onAirplayV4(const std::string& instance, const std::string& host, uint16_t port,
+    void onRaopAdded(const std::string& instance, const std::string& host, uint16_t port,
                      const std::map<std::string, std::string>& txt);
+    void onAirplayAdded(const std::string& instance, const std::string& host, uint16_t port,
+                        const std::map<std::string, std::string>& txt);
     void onRaopGone(const std::string& instance);
     void onAirplayGone(const std::string& instance);
 
@@ -65,7 +65,7 @@ private:
         bool lastSeenAirplay = false;
     };
 
-    void notify(Event ev, const AirplayDevice& d);
+    void notify(Event ev, const AirplayDevice& d) const;
     // Common upsert scaffold: creates/updates State for `key` via `mutate`
     // under the registry mutex, snapshots the device and reports whether it
     // was newly added. Notification is the caller's job so its log line

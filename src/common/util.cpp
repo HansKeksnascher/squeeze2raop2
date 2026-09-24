@@ -18,6 +18,19 @@ uint32_t hash32(std::string_view s) {
     return h;
 }
 
+std::string_view trimView(std::string_view s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
+    return s;
+}
+
+std::string toLower(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    return out;
+}
+
 std::map<std::string, std::string> parseTxtKeyValues(std::string_view raw) {
     // raw is TXT wire format: a sequence of (len byte, len-1 bytes of data)
     std::map<std::string, std::string> out;

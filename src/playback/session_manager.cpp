@@ -63,7 +63,7 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
         auto it = sessions_.find(resolved->key);
         if (it == sessions_.end()) return;
         if (resolved->target) return;  // a user-pinned target wins
-        if (dev.host.empty() || (!dev.hasRaop() && !dev.hasAirplay())) return;
+        if (dev.host.empty() || (!dev.hasRaopPort() && !dev.hasAirplayPort())) return;
         if (it->second->airplay2() == ap2) {
             RaopTarget t = makeTarget(dev.host, port, ap2, *resolved);
             it->second->updateTarget(t);
@@ -101,7 +101,7 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
     if (resolved->target)
         raopTarget = makeTarget(resolved->target->first, resolved->target->second,
                                 resolved->airplay2, *resolved);
-    else if (!dev.host.empty() && (dev.hasRaop() || dev.hasAirplay()))
+    else if (!dev.host.empty() && (dev.hasRaopPort() || dev.hasAirplayPort()))
         raopTarget = makeTarget(dev.host, port, ap2, *resolved);
 
     log::info(log::Area::Ses, "session created: {} mac={} ({} {}:{}{})", resolved->name,

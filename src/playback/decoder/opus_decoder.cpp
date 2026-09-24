@@ -57,17 +57,12 @@ struct OggOpusDecoder::Impl {
     }
 };
 
-OggOpusDecoder::OggOpusDecoder(const PcmFormat& in) : Decoder(in), impl_(std::make_unique<Impl>()) {
+OggOpusDecoder::OggOpusDecoder(const PcmFormat& in)
+    : BufferedDecoder(in), impl_(std::make_unique<Impl>()) {
     ogg_sync_init(&impl_->sync);
 }
 
 OggOpusDecoder::~OggOpusDecoder() = default;
-
-void OggOpusDecoder::fail(std::string_view why) {
-    if (failed_) return;
-    failed_ = true;
-    log::error(log::Area::Dec, "opus decode failed: {}", why);
-}
 
 bool OggOpusDecoder::pushBytes(std::span<const std::byte> data) {
     // ogg_sync takes and owns a copy; request the whole span in one go.
@@ -227,8 +222,6 @@ void OggOpusDecoder::finish() {
     // complete packet has already been decoded by feed().
     if (!headerSeen_) fail("truncated header");
 }
-
-size_t OggOpusDecoder::drain(std::span<int16_t> out) { return takeSamples(out, pcm_); }
 
 size_t OggOpusDecoder::pendingBytes() const {
     const long pending = impl_->sync.fill - impl_->sync.returned;

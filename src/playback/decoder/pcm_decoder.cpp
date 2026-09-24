@@ -268,8 +268,7 @@ size_t PcmDecoder::drain(std::span<int16_t> out) {
 
     if (!headerDone_) {
         auto skip = checkHeader();
-        if (!skip) return 0;  // still probing
-        headerBytes_ = *skip;
+        if (!skip) return 0;        // still probing
         if (*skip > buf_.size()) {  // AIFF sound data starts beyond what we
             // have buffered (possible with a large SSND offset); fail closed.
             log::error(log::Area::Dec, "SSND offset {} beyond header buffer", *skip);

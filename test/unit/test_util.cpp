@@ -25,6 +25,15 @@ SQ2_TEST(util, pcm_codes) {
            "unknown codes fall back to the input format");
 }
 
+SQ2_TEST(util, string_helpers) {
+    expect(trimView("  a b\t") == "a b", "trim both ends");
+    expect(trimView("") == "", "empty stays empty");
+    expect(trimView("x") == "x", "no whitespace untouched");
+    expect(trimView(" \r\n ") == "", "all-whitespace trims to empty");
+    expect(toLower("AbC-12") == "abc-12", "ascii lowercased");
+    expect(toLower("") == "", "empty lowercases to empty");
+}
+
 SQ2_TEST(util, mac) {
     const auto m = fakeMacFor("kitchen");
     expect(m[0] == 0xaa, "virtual mac has the aa prefix");

@@ -252,11 +252,13 @@ add_library(squeeze2raop2_core STATIC
   src/playback/wav_sink.cpp
   src/playback/ring_telemetry.cpp
   src/playback/stream_counters.cpp
+  src/playback/remote_volume_chaser.cpp
   src/playback/playback_stream.cpp
   src/playback/player_session.cpp
   src/playback/session_manager.cpp
   # decoder
   src/playback/decoder/decoder.cpp
+  src/playback/decoder/buffered_decoder.cpp
   src/playback/decoder/mp3_decoder.cpp
   src/playback/decoder/pcm_decoder.cpp
   ${SQUEEZE2RAOP2_AAC_SOURCES}

@@ -20,19 +20,8 @@ namespace squeeze2raop2 {
 
 namespace {
 
-std::string_view trimView(std::string_view s) {
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
-    return s;
-}
-
-std::string lower(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
-
 bool parseBool(std::string_view v, bool& out) {
-    const std::string s = lower(std::string(trimView(v)));
+    const std::string s = toLower(trimView(v));
     if (s == "on" || s == "true" || s == "yes" || s == "1") {
         out = true;
         return true;
@@ -56,6 +45,41 @@ std::optional<uint16_t> parsePort(std::string_view s) {
     if (!parseNumber(s, p) || p == 0) return std::nullopt;  // from_chars rejects > 65535
     return p;
 }
+
+// One key=value parse: validates and stores, or records the uniform
+// "config <path>:<line>: <key> must be ..." error. Centralizes the
+// parse+range+message shape the global/player readers used to repeat.
+struct KeySetter {
+    const std::string& path;
+    int lineNo;
+    std::string& error;
+
+    bool fail(std::string_view msg) const {
+        error = "config " + path + ":" + std::to_string(lineNo) + ": " + std::string(msg);
+        return false;
+    }
+
+    bool boolKey(std::string_view value, bool& out, std::string_view key) const {
+        if (!parseBool(value, out)) return fail(std::string(key) + " must be on|off");
+        return true;
+    }
+
+    template <typename T>
+    bool numberKey(std::string_view value, T& out, T lo, T hi, std::string_view key,
+                   std::string_view expect) const {
+        T parsed{};
+        if (!parseNumber(value, parsed)) return fail(std::string(key) + " must be a number");
+        if (parsed < lo || parsed > hi)
+            return fail(std::string(key) + " must be " + std::string(expect));
+        out = parsed;
+        return true;
+    }
+
+    bool macKey(std::string_view value, std::array<uint8_t, 6>& out) const {
+        if (!macFromString(value, out)) return fail("invalid mac '" + std::string(value) + "'");
+        return true;
+    }
+};
 
 std::string unquote(std::string_view s) {
     if (s.size() >= 2 && s.front() == '"' && s.back() == '"') {
@@ -100,7 +124,7 @@ bool parseSectionHeader(std::string_view raw, std::string& canonical, bool& isPl
         isPlayer = false;
         return true;
     }
-    if (inner.size() >= 6 && lower(std::string(inner.substr(0, 6))) == "player") {
+    if (inner.size() >= 6 && toLower(inner.substr(0, 6)) == "player") {
         const std::string_view rest = trimView(inner.substr(6));
         if (rest.empty()) return false;
         canonical = unquote(rest);
@@ -124,11 +148,11 @@ std::string legacyStatePath(const std::string& configPath) {
 // --- matching / state -------------------------------------------------------
 
 const Persistence::Section* Persistence::findSection(const std::string& key) const {
-    const std::string lk = lower(key);
+    const std::string lk = toLower(key);
     for (const auto& s : sections_)
-        if (!s.config.id.value_or("").empty() && lower(*s.config.id) == lk) return &s;
+        if (!s.config.id.value_or("").empty() && toLower(*s.config.id) == lk) return &s;
     for (const auto& s : sections_)
-        if (lower(s.name) == lk) return &s;
+        if (toLower(s.name) == lk) return &s;
     return nullptr;
 }
 
@@ -172,7 +196,7 @@ ResolvedPlayerConfig Persistence::finalizeSection(Section& s) const {
     ResolvedPlayerConfig r = resolvePlayer(defaults_, s.config);
     r.mac = s.mac;
     r.explicitMac = s.config.mac.has_value();
-    r.key = !s.config.id.value_or("").empty() ? lower(*s.config.id) : s.name;
+    r.key = !s.config.id.value_or("").empty() ? toLower(*s.config.id) : s.name;
     r.autoRegistered = s.autoRegistered;
     return r;
 }
@@ -220,10 +244,10 @@ std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& devi
     Section* match = nullptr;
 
     // 1. explicit id match (case-insensitive 12-hex).
-    const std::string id = lower(deviceId);
+    const std::string id = toLower(deviceId);
     if (!deviceId.empty()) {
         for (auto& s : sections_)
-            if (s.config.id && lower(*s.config.id) == id) {
+            if (s.config.id && toLower(*s.config.id) == id) {
                 match = &s;
                 break;
             }
@@ -240,7 +264,7 @@ std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& devi
     // 3. name match.
     if (!match && !deviceName.empty()) {
         for (auto& s : sections_)
-            if (lower(s.name) == lower(deviceName)) {
+            if (toLower(s.name) == toLower(deviceName)) {
                 match = &s;
                 break;
             }
@@ -269,54 +293,46 @@ std::optional<ResolvedPlayerConfig> Persistence::resolve(const std::string& devi
 
 // --- parsing ----------------------------------------------------------------
 
-bool Persistence::fail(std::string& error, int lineNo, std::string_view msg) const {
-    error = "config " + path_ + ":" + std::to_string(lineNo) + ": " + std::string(msg);
-    return false;
-}
-
 bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, int lineNo,
                                  std::string& error) {
+    const KeySetter set{path_, lineNo, error};
     bool b = false;
     if (key == "lms") {
         const auto colon = value.find(':');
         if (colon != std::string_view::npos) {
             const auto port = parsePort(value.substr(colon + 1));
-            if (!port) return fail(error, lineNo, "lms port must be 1-65535");
+            if (!port) return set.fail("lms port must be 1-65535");
             global_.lmsHost = std::string(value.substr(0, colon));
             global_.lmsPort = *port;
         } else {
             global_.lmsHost = std::string(value);
         }
     } else if (key == "discovery") {
-        if (!parseBool(value, b)) return fail(error, lineNo, "discovery must be on|off");
+        if (!set.boolKey(value, b, "discovery")) return false;
         global_.discovery = b;
     } else if (key == "iface") {
         global_.mdnsIface = std::string(value);
     } else if (key == "mdns-debug") {
-        if (!parseBool(value, b)) return fail(error, lineNo, "mdns-debug must be on|off");
+        if (!set.boolKey(value, b, "mdns-debug")) return false;
         global_.mdnsDebug = b;
     } else if (key == "auto-register") {
-        if (!parseBool(value, b)) return fail(error, lineNo, "auto-register must be on|off");
+        if (!set.boolKey(value, b, "auto-register")) return false;
         global_.autoRegister = b;
     } else if (key == "volume-feedback") {
-        if (!parseBool(value, b)) return fail(error, lineNo, "volume-feedback must be on|off");
+        if (!set.boolKey(value, b, "volume-feedback")) return false;
         global_.volumeFeedback = b;
     } else if (key == "server-timeout-ms") {
-        unsigned v = 0;
-        if (!parseNumber(value, v))
-            return fail(error, lineNo, "server-timeout-ms must be a number");
-        if (v < 1000 || v > 600000)
-            return fail(error, lineNo, "server-timeout-ms must be 1000-600000");
-        global_.serverTimeoutMs = v;
+        if (!set.numberKey(value, global_.serverTimeoutMs, 1000u, 600000u, "server-timeout-ms",
+                           "1000-600000"))
+            return false;
     } else if (key == "source-timeout-ms") {
         unsigned v = 0;
-        if (!parseNumber(value, v))
-            return fail(error, lineNo, "source-timeout-ms must be a number");
+        if (!parseNumber(value, v)) return set.fail("source-timeout-ms must be a number");
         if (v != 0 && (v < 1000 || v > 600000))
-            return fail(error, lineNo, "source-timeout-ms must be 0 (off) or 1000-600000");
+            return set.fail("source-timeout-ms must be 0 (off) or 1000-600000");
         global_.sourceTimeoutMs = v;
     } else if (key == "tls-verify") {
-        if (!parseBool(value, b)) return fail(error, lineNo, "tls-verify must be on|off");
+        if (!set.boolKey(value, b, "tls-verify")) return false;
         global_.tlsVerify = b;
     } else if (key == "tls-ca") {
         global_.tlsCaPath = std::string(value);
@@ -332,7 +348,7 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
         else if (value == "debug")
             global_.logLevel = log::Level::Debug;
         else
-            return fail(error, lineNo, "log must be off|error|warn|info|debug");
+            return set.fail("log must be off|error|warn|info|debug");
     } else {
         log::warn(log::Area::App, "config {}:{}: unknown [global] key '{}'", path_, lineNo, key);
     }
@@ -350,12 +366,12 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
         return true;
     }
 
+    const KeySetter set{path_, lineNo, error};
     if (key == "id") {
         pc.id = std::string(value);
     } else if (key == "mac") {
         std::array<uint8_t, 6> mac{};
-        if (!macFromString(value, mac))
-            return fail(error, lineNo, "invalid mac '" + std::string(value) + "'");
+        if (!set.macKey(value, mac)) return false;
         pc.mac = mac;
         section->mac = mac;
         section->hasMac = true;
@@ -366,7 +382,7 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
         const auto colon = value.find(':');
         if (colon != std::string_view::npos) {
             const auto port = parsePort(value.substr(colon + 1));
-            if (!port) return fail(error, lineNo, "target port must be 1-65535");
+            if (!port) return set.fail("target port must be 1-65535");
             pc.targetHost = std::string(value.substr(0, colon));
             pc.targetPort = *port;
         } else {
@@ -378,12 +394,12 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
         else if (value == "ap2")
             pc.airplay2 = true;
         else
-            return fail(error, lineNo, "protocol must be ap1|ap2");
+            return set.fail("protocol must be ap1|ap2");
     } else if (key == "password") {
         pc.password = std::string(value);
     } else if (key == "enabled") {
         bool b = false;
-        if (!parseBool(value, b)) return fail(error, lineNo, "enabled must be on|off");
+        if (!set.boolKey(value, b, "enabled")) return false;
         pc.enabled = b;
     } else if (key == "volume") {
         if (value == "lms")
@@ -391,23 +407,21 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
         else if (value == "fixed")
             pc.volumeMode = VolumeMode::Fixed;
         else
-            return fail(error, lineNo, "volume must be lms|fixed");
+            return set.fail("volume must be lms|fixed");
     } else if (key == "volume-map") {
         if (!VolumeAnchors::parse(value))
-            return fail(error, lineNo,
-                        "volume-map needs \"db:pct, ...\" pairs, ascending pct 1-100, db <= 0");
+            return set.fail("volume-map needs \"db:pct, ...\" pairs, ascending pct 1-100, db <= 0");
         pc.volumeMap = std::string(value);
     } else if (key == "volume-pct") {
         float parsed = 0.0f;
-        if (!parseNumber(value, parsed)) return fail(error, lineNo, "volume-pct must be a number");
-        if (parsed < 0.5f || parsed > 100.f)
-            return fail(error, lineNo, "volume-pct must be 0.5-100 (0 would be mute)");
+        if (!set.numberKey(value, parsed, 0.5f, 100.f, "volume-pct", "0.5-100 (0 would be mute)"))
+            return false;
         pc.volPct = parsed;
     } else if (key == "latency-ms") {
         int parsed = 0;
-        if (!parseNumber(value, parsed)) return fail(error, lineNo, "latency-ms must be a number");
-        if (parsed < 250 || parsed > 2000)
-            return fail(error, lineNo, "latency-ms must be 250-2000 (receiver latencyMin..Max)");
+        if (!set.numberKey(value, parsed, 250, 2000, "latency-ms",
+                           "250-2000 (receiver latencyMin..Max)"))
+            return false;
         pc.latencyMs = parsed;
     } else if (key == "sink") {
         pc.sinkPath = std::string(value);
@@ -417,12 +431,12 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
         else if (value == "realtime")
             pc.paceRealtime = true;
         else
-            return fail(error, lineNo, "pace must be realtime|fast");
+            return set.fail("pace must be realtime|fast");
     } else if (key == "creds") {
         section->creds = std::string(value);
     } else if (key == "auto") {
         bool b = false;
-        if (!parseBool(value, b)) return fail(error, lineNo, "auto must be on|off");
+        if (!set.boolKey(value, b, "auto")) return false;
         pc.autoSection = b;
         if (!isDefault && b) section->autoRegistered = true;
     } else {
@@ -500,8 +514,7 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
             lines_.push_back(std::move(line));
             continue;
         }
-        const std::string keyRaw =
-            lower(std::string(trimView(std::string_view(raw).substr(0, eq))));
+        const std::string keyRaw = toLower(trimView(std::string_view(raw).substr(0, eq)));
         const std::string valueText = unquote(trimView(std::string_view(raw).substr(eq + 1)));
         line.kind = Line::Kind::Key;
         line.section = currentName;
@@ -560,7 +573,7 @@ bool Persistence::importLegacy(const std::string& legacyPath, std::string& error
         if (!(iss >> tag >> id)) continue;
         const std::string key = urlDecode(id);
         const bool hex = isHex12(key);
-        const std::string canonical = hex ? lower(key) : key;
+        const std::string canonical = hex ? toLower(key) : key;
         if (tag == "mac") {
             std::string macText;
             iss >> macText;

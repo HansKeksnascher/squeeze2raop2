@@ -3,10 +3,10 @@
 #include "common/log.h"
 #include "common/transport.h"
 #include "common/util.h"
+#include "lms/icy_meta.h"
 
 #include <algorithm>
 #include <cctype>
-#include <charconv>
 #include <cstdint>
 #include <memory>
 
@@ -45,27 +45,6 @@ void HttpStreamReader::close() {
     std::lock_guard<std::mutex> lock(lifecycleMutex_);
     resetLocked();
 }
-
-namespace {
-
-// Case-insensitive header scan for "icy-metaint: N" (squeezelite stream.c).
-uint32_t parseIcyMetaint(const std::string& headers) {
-    std::string lower;
-    lower.reserve(headers.size());
-    for (char c : headers)
-        lower.push_back(static_cast<char>(tolower(static_cast<unsigned char>(c))));
-    size_t p = lower.find("icy-metaint:");
-    if (p == std::string::npos) return 0;
-    p += sizeof("icy-metaint:") - 1;
-    while (p < lower.size() && (lower[p] == ' ' || lower[p] == '\t')) ++p;
-    uint64_t v = 0;
-    auto [ptr, ec] = std::from_chars(lower.data() + p, lower.data() + lower.size(), v);
-    // Absurd interval (or unparseable): treat as absent.
-    if (ec != std::errc{} || v == 0 || v > (1u << 20)) return 0;
-    return static_cast<uint32_t>(v);
-}
-
-}  // namespace
 
 // The host (without port) from a request's Host header, for TLS SNI and
 // certificate verification, and for naming the source in logs. Empty when the

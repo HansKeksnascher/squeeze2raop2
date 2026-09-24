@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lms/wire_types.h"
+#include "lms/slimproto_types.h"
 
 #include <array>
 #include <cstddef>

@@ -55,6 +55,16 @@ double lmsSliderPctFromGain(uint32_t newGain);
 // (quiet-listening knee), 50 = -15 dB, 100 = 0 dB (full scale).
 inline constexpr const char* kDefaultVolumeMap = "-30:1, -23:16, -15:50, 0:100";
 
+// AirPlay wire domain: percent 0..100 maps to -30..0 dBFS at 0.3 dB per pct,
+// with percent 0 reserved as the -144 dB mute sentinel. Shared by the forward
+// (slider -> AirPlay pct) and inverse (receiver dB -> slider) mappings so the
+// floor/slope cannot drift between them.
+inline constexpr double kAirplayFloorDb = -30.0;
+inline constexpr double kAirplayDbPerPct = 0.3;
+
+// AirPlay attenuation in dB for an AirPlay percent (0..100).
+double dbFromAirplayPct(double pct);
+
 class VolumeAnchors {
 public:
     // Parses "db:pct, db:pct, ..." with ascending pct in 1..100 and

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,6 +13,11 @@ namespace squeeze2raop2 {
 // (Protocols/HTTP.pm). A request that already carries the header is returned
 // unchanged.
 std::string withIcyRequestHeader(std::string request);
+
+// The icy-metaint interval parsed from an HTTP response's header block, or 0
+// when the header is absent or the value is unusable (zero, absurdly large, or
+// malformed). 0 means "no in-band metadata".
+uint32_t parseIcyMetaint(std::string_view headers);
 
 // Extract StreamTitle='...' from an ICY metadata block; nullopt when the key
 // is absent, unterminated or the title is empty.

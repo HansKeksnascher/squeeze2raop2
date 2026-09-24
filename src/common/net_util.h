@@ -70,6 +70,11 @@ private:
 // socket with SO_KEEPALIVE. Returns -1 with errorOut set on failure.
 int connectTcp(const std::string& host, uint16_t port, std::string& errorOut);
 
+// connectTcp plus the standard streaming-socket tuning: a bounded SO_LINGER
+// (3 s) so an abandoned connection cannot hang close(), and tightened
+// keepalive (enableTcpKeepalive). Shared by the plain-TCP and TLS transports.
+int connectSocketTuned(const std::string& host, uint16_t port, std::string& errorOut);
+
 // Best-effort keepalive tuning for a connected stream socket: SO_KEEPALIVE plus
 // tightened idle/interval/count, so a peer that has vanished without an RST is
 // detected instead of leaving a read parked forever. No-op on fd < 0; safe to

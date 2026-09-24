@@ -1,13 +1,12 @@
 #pragma once
 
-#include "playback/decoder/decoder.h"
+#include "playback/decoder/buffered_decoder.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <string_view>
-#include <vector>
 
 namespace squeeze2raop2 {
 
@@ -19,7 +18,7 @@ class Mp4AacDemuxer;
 //   - MP4  ('5'): the MP4/M4A container is demuxed (Mp4AacDemuxer) into
 //     synthesized ADTS frames, then decoded through the same path.
 // Output is always interleaved s16 stereo at the stream's decoded rate.
-class AacDecoder final : public Decoder {
+class AacDecoder final : public BufferedDecoder {
 public:
     // `containerCode` is the LMS pcm_sample_size byte: '2' = ADTS, '5' = MP4.
     AacDecoder(const PcmFormat& in, uint8_t containerCode);
@@ -30,13 +29,11 @@ public:
     void feed(std::span<const std::byte> data) override;
     // Signal end of input so tail frames flush.
     void finish() override;
-    size_t drain(std::span<int16_t> out) override;
 
     uint32_t sampleRate() const override { return sampleRate_; }
     int channels() const override { return channels_; }
     size_t pendingBytes() const override;
     bool valid() const override { return sampleRate_ != 0; }
-    bool hasError() const override { return failed_; }
     std::string_view name() const override { return "aac"; }
 
 protected:
@@ -63,17 +60,11 @@ private:
     size_t frameEnd(size_t limit) const;
     // Append `bytes` of s16 from the library output buffer to pcm_.
     void appendPcm(size_t bytes);
-    void fail(std::string_view why);
 
     std::unique_ptr<Xaac> xaac_;
     std::unique_ptr<Mp4AacDemuxer> mp4_;
-    std::vector<std::byte> buffer_;  // compressed window (ADTS or demuxed)
-    size_t consumed_ = 0;            // decoded prefix of buffer_
-    std::vector<int16_t> pcm_;       // decoded samples awaiting drain
     uint32_t sampleRate_ = 0;
     int channels_ = 2;
-    bool eof_ = false;
-    bool failed_ = false;
     bool initDone_ = false;
     bool inputOver_ = false;
 };

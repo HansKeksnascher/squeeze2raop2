@@ -102,8 +102,9 @@ void PlaybackStream::unpause() { pauseUntilMs_.store(0, std::memory_order_relaxe
 
 void PlaybackStream::skipAhead(uint32_t ms) {
     const uint32_t rate = format().sampleRate ? format().sampleRate : 44100;
-    skipFrames_.fetch_add(skipFramesFor(ms, rate), std::memory_order_relaxed);
-    log::info(log::Area::Pb, "skip ahead {} ms ({} frames)", ms, skipFramesFor(ms, rate));
+    const uint64_t frames = skipFramesFor(ms, rate);
+    skipFrames_.fetch_add(frames, std::memory_order_relaxed);
+    log::info(log::Area::Pb, "skip ahead {} ms ({} frames)", ms, frames);
 }
 
 bool PlaybackStream::requestFadeOut() {

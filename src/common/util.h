@@ -12,6 +12,12 @@ namespace squeeze2raop2 {
 
 uint32_t hash32(std::string_view s);
 
+// Trim ASCII whitespace from both ends of `s` (view, no allocation).
+std::string_view trimView(std::string_view s);
+
+// ASCII-lowercased copy of `s`.
+std::string toLower(std::string_view s);
+
 // Parses mDNS TXT wire format: a sequence of (len byte, len-1 data bytes),
 // each data chunk split at its first '=' into key/value. First occurrence
 // of a key wins.

@@ -127,7 +127,7 @@ bool AacDecoder::initXaac(Xaac& x) {
     return x.in != nullptr && x.out != nullptr && x.inSize != 0 && x.outSize != 0;
 }
 
-AacDecoder::AacDecoder(const PcmFormat& in, uint8_t containerCode) : Decoder(in) {
+AacDecoder::AacDecoder(const PcmFormat& in, uint8_t containerCode) : BufferedDecoder(in) {
     if (containerCode == '5') {
         mp4_ = std::make_unique<Mp4AacDemuxer>();
     } else if (containerCode != '2' && containerCode != 0) {
@@ -139,12 +139,6 @@ AacDecoder::AacDecoder(const PcmFormat& in, uint8_t containerCode) : Decoder(in)
 }
 
 AacDecoder::~AacDecoder() = default;
-
-void AacDecoder::fail(std::string_view why) {
-    if (failed_) return;
-    failed_ = true;
-    log::error(log::Area::Dec, "aac decode failed: {}", why);
-}
 
 size_t AacDecoder::fillInput() {
     // libxaac consumes whatever it is handed and drops a trailing partial
@@ -310,7 +304,7 @@ void AacDecoder::feed(std::span<const std::byte> data) {
         drainDemuxed();
         if (failed_) return;
     } else {
-        buffer_.insert(buffer_.end(), data.begin(), data.end());
+        appendInput(data);
     }
     decodeMore();
 }
@@ -326,12 +320,7 @@ void AacDecoder::finish() {
     decodeMore();
 }
 
-size_t AacDecoder::drain(std::span<int16_t> out) { return takeSamples(out, pcm_); }
-
-size_t AacDecoder::pendingBytes() const {
-    const size_t buffered = buffer_.size() - consumed_;
-    return buffered + (mp4_ ? mp4_->pending() : 0);
-}
+size_t AacDecoder::pendingBytes() const { return bufferedBytes() + (mp4_ ? mp4_->pending() : 0); }
 
 PcmFormat AacDecoder::decodedFormat() const { return s16StereoFormat(); }
 

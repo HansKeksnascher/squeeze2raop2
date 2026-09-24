@@ -7,7 +7,7 @@
 #include "aac_fixture.h"
 #include "check.h"
 #include "decoder_util.h"
-#include "lms/wire_types.h"
+#include "lms/slimproto_types.h"
 #include "m4a_fixture.h"
 
 #include <algorithm>

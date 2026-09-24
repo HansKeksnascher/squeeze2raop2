@@ -16,47 +16,31 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
 
 ## Features
 
-- **LMS player** — registers as a squeezelite-class player (slimproto HELO
-  caps, STAT semantics, pause/stop/unpause, autostart) with squeezelite-parity
-  extensions: `aude` power on/off, `codc` codec negotiation, `setd` rename
-  (persisted), `strm a` skip-ahead, replay gain, `STMl`/`STMo`/`DSCO` STAT
-  events, and fade in/out (`strm` transition types 2/3/4).
-- **Discovery and targeting** — browses AirPlay receivers via mDNS, prefers
-  AirPlay 2 and falls back to classic RAOP (`protocol = ap1`), or targets a
-  fixed receiver (`target`) for a static player.
-- **AirPlay 2 streaming** — streams through the vendored sender (HAP
-  pair-verify, encrypted control and timing channels, retransmit).
-- **Volume control** — LMS `audg` slider → configurable dB anchors
-  (`volume-map`) → receiver `SET_PARAMETER volume`, including mute; applied
-  mid-stream, remembered across session restarts, and pinnable
-  (`volume = fixed`, `volume-pct`).
-- **Reverse volume sync (AirPlay 2)** — volume changes made on the receiver
-  itself (HomePod/Sonos buttons) arrive on the AP2 event channel and are
-  chased back to LMS with `BUTN` volume nudges, so the LMS slider follows the
-  speaker. On by default; disable with `volume-feedback = off`. slimproto has
-  no absolute player→server volume, so a large jump is walked in steps.
-- **Now-playing metadata** — ICY in-band metadata from streams → DMAP on the
-  receiver, passed through as `META` to LMS.
-- **Clean transport** — stop/pause sends FLUSH and drains the ring so the
-  receiver doesn't play out its jitter-buffer tail; `latency-ms` tunes the
-  scheduled AirPlay latency (default 500 ms).
-- **Resilient control link** — an LMS-silence watchdog (`server-timeout-ms`)
-  reconnects a dead control connection instead of waiting on TCP keepalive.
-- **Source-stall watchdog** — a stream whose HTTP source delivers nothing for
-  `source-timeout-ms` is ended (`DSCO` + `STMn`) so LMS re-issues it, instead
-  of hanging on a half-open socket forever.
-- **Honest codec caps** — advertises `pcm,mp3,aac,ogg,ops`, so LMS transcodes
-  FLAC and everything else losslessly on the LAN; AAC radio and `.m4a` files
-  stream natively (ADTS + MP4 demux, AAC-LC/HE-AAC), Ogg Vorbis (`.ogg`,
-  Vorbis radio) and Ogg Opus (`ops`, Opus radio) stream natively too — all
-  decoded in-process. A codec announced via `codc` that the bridge can't decode
-  is rejected with `STMn`.
-- **Direct HTTPS radio** — advertises `CanHTTPS=1`, so LMS hands over a
-  `strm s` with the direct `https://` URL and the `0x20` TLS flag instead of
-  proxying the stream through the server. The bridge fetches it over TLS
-  (vendored mbedTLS), verifying the station certificate against the system
-  trust store by default; `tls-verify = off` or `tls-ca = <path>` override it.
-  When TLS setup fails the cap is withheld, so LMS keeps proxying.
+- **Works as a Squeezebox player** — shows up in Logitech Media Server like
+  any other player: play/pause/stop, skip-ahead, replay gain, smooth fade
+  in/out, rename and power on/off.
+- **Finds your speakers** — discovers AirPlay receivers automatically and
+  prefers AirPlay 2, falling back to classic AirPlay; or point it at one fixed
+  receiver for a static player.
+- **AirPlay 2 streaming** — native, encrypted AirPlay 2 with pairing,
+  retransmission and timing.
+- **Volume stays in sync** — the LMS volume slider drives the speaker, and
+  volume changes made on the speaker itself (HomePod/Sonos buttons) are
+  mirrored back to LMS. On by default; disable with `volume-feedback = off`.
+- **Now-playing info** — the current track or stream title is shown on the
+  receiver and in LMS.
+- **Clean start and stop** — pausing or stopping flushes the speaker's buffer
+  so no stale audio survives; the scheduling latency is configurable
+  (`latency-ms`).
+- **Recovers from trouble** — a dead LMS connection (`server-timeout-ms`) or a
+  stalled stream (`source-timeout-ms`) is detected and retried instead of
+  hanging.
+- **Plays common formats directly** — PCM, MP3, AAC, Ogg Vorbis and Ogg Opus
+  stream natively; LMS transcodes anything else losslessly on the LAN.
+- **Direct HTTPS radio** — fetches internet radio over HTTPS itself, verifying
+  the station certificate against the system trust store by default, instead of
+  routing it through the LMS server. `tls-verify = off` or `tls-ca = <path>`
+  override that; when TLS setup fails LMS keeps proxying.
 
 ## Build and run
 

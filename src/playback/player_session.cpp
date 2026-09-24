@@ -7,7 +7,7 @@
 #include "common/transport.h"
 #include "common/util.h"
 #include "lms/lms_stream.h"
-#include "playback/remote_volume.h"
+#include "playback/remote_volume_chaser.h"
 
 #include <algorithm>
 #include <cctype>
@@ -25,21 +25,6 @@ namespace {
 // volume is chased with a closed loop driven by the AUDG echo.
 constexpr uint32_t kVolUpButton = 0x7689807fu;
 constexpr uint32_t kVolDownButton = 0x768900ffu;
-// Stop nudging once LMS is within this many slider points of the target, and
-// cap the steps per receiver change so a bogus/looping event can't spin.
-constexpr double kRemoteVolTolerancePct = 1.0;
-constexpr int kRemoteVolMaxSteps = 60;
-// LMS treats presses within its 140 ms IR window as repeats of a held button,
-// where the increment computes to 0 (so the volume never moves while an AUDG
-// is still emitted). Pace nudges so each lands as a fresh press.
-constexpr int kRemoteVolStepMs = 250;
-// Give up after this many paced steps with no measurable LMS movement.
-constexpr int kRemoteVolMaxStall = 6;
-constexpr double kRemoteVolProgressPct = 0.5;
-// A receiver may echo the volume we push via SET_PARAMETER back as an event.
-// Anything within this many AirPlay percent of the last applied value is our
-// own echo, not a user change.
-constexpr double kRemoteVolEchoTolerancePct = 2.0;
 
 }  // namespace
 
@@ -71,6 +56,13 @@ PlayerSession::PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig
     // Receiver-initiated volume (HomePod/Sonos buttons) flows back through the
     // sender's AP2 event channel into this session.
     output_->setRemoteVolumeCallback([this](double unit) { onRemoteVolume(unit); });
+
+    // The chaser copies the anchors and reads the live LMS slider; its button
+    // presses go out on the slimproto client (started in start()).
+    volumeChaser_ = std::make_unique<RemoteVolumeChaser>(
+        anchors_, [this] { return client_ != nullptr; },
+        [this](bool up) { client_->sendButton(up ? kVolUpButton : kVolDownButton); },
+        [this] { return lmsSliderPct_.load(std::memory_order_relaxed); });
 }
 
 PlayerSession::~PlayerSession() { stop(); }
@@ -202,7 +194,7 @@ void PlayerSession::start() {
     // the AirPlay session is prepared lazily when the first audio arrives;
     // connecting eagerly hits receivers that immediately drop idle sessions
     // (HomePod/Sonos)
-    volumeThread_ = std::jthread([this](std::stop_token st) { volumeLoop(st); });
+    volumeChaser_->start();
 }
 
 // Start the AirPlay sender (fresh session) or leave a live one running.
@@ -232,109 +224,8 @@ void PlayerSession::updateTarget(RaopTarget t) { output_->updateTarget(std::move
 // button nudges (slimproto has no absolute player->server volume).
 void PlayerSession::onRemoteVolume(double unit) {
     if (!volumeFeedback_ || volumeMode_ != VolumeMode::Lms) return;
-
-    unit = std::clamp(unit, 0.0, 1.0);
-    const double airplayPct = unit * 100.0;
-    // Ignore an echo of the volume we last pushed to the receiver (some
-    // receivers report it back on the event channel); only a real user change
-    // should move LMS.
-    const double applied = lastLmsPct_.load(std::memory_order_relaxed);
-    if (applied > 0.0 && std::abs(airplayPct - applied) <= kRemoteVolEchoTolerancePct) return;
-    // Unit 0 is the receiver's mute/floor: LMS 0 is its mute, so map it there.
-    const double target =
-        (airplayPct <= 0.0) ? 0.0 : anchors_.lmsPctFromDb(-30.0 + 0.3 * airplayPct);
-    const double lms = lmsSliderPct_.load(std::memory_order_relaxed);
-    if (std::abs(target - lms) < kRemoteVolTolerancePct) {
-        log::info(log::Area::Ses, "receiver volume {:.3f} -> LMS {:.1f} (already there)", unit,
-                  target);
-        remoteVolPending_.store(false, std::memory_order_relaxed);
-        return;
-    }
-    log::info(log::Area::Ses, "receiver volume {:.3f} -> LMS {:.1f} (from {:.1f})", unit, target,
-              lms);
-    remoteVolTarget_.store(target, std::memory_order_relaxed);
-    remoteVolDir_.store(0, std::memory_order_relaxed);
-    remoteVolBudget_.store(kRemoteVolMaxSteps, std::memory_order_relaxed);
-    remoteVolStall_.store(0, std::memory_order_relaxed);
-    remoteVolLastStepMs_.store(0, std::memory_order_relaxed);  // first step may fire at once
-    remoteVolPending_.store(true, std::memory_order_relaxed);
-    // The paced volumeLoop() thread sends the nudges.
-}
-
-void PlayerSession::volumeLoop(std::stop_token st) {
-    while (!st.stop_requested()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
-        if (st.stop_requested()) break;
-        if (remoteVolPending_.load(std::memory_order_relaxed)) pumpRemoteVolume();
-    }
-}
-
-void PlayerSession::pumpRemoteVolume() {
-    if (!remoteVolPending_.load(std::memory_order_relaxed)) return;
-    std::lock_guard<std::mutex> lock(remoteVolMutex_);
-    if (!remoteVolPending_.load(std::memory_order_relaxed)) return;
-    if (!client_) {
-        remoteVolPending_.store(false, std::memory_order_relaxed);
-        log::warn(log::Area::Ses, "receiver volume dropped, LMS link is gone");
-        return;
-    }
-
-    // Fresh-press pacing: each nudge must be at least kRemoteVolStepMs after
-    // the previous one or LMS folds it into a held-button repeat.
-    const uint64_t now = nowMs();
-    const uint64_t lastStep = remoteVolLastStepMs_.load(std::memory_order_relaxed);
-    if (lastStep != 0 && now - lastStep < static_cast<uint64_t>(kRemoteVolStepMs)) return;
-
-    const double target = remoteVolTarget_.load(std::memory_order_relaxed);
-    const double lms = lmsSliderPct_.load(std::memory_order_relaxed);
-    const int dir = remoteVolDir_.load(std::memory_order_relaxed);
-    const int budget = remoteVolBudget_.load(std::memory_order_relaxed);
-
-    const VolumeNudge nudge = decideVolumeNudge(target, lms, dir, budget, kRemoteVolTolerancePct);
-    switch (nudge) {
-    case VolumeNudge::Reached:
-        remoteVolPending_.store(false, std::memory_order_relaxed);
-        log::info(log::Area::Ses, "receiver volume converged at LMS {:.1f}", lms);
-        return;
-    case VolumeNudge::Overshoot:
-        remoteVolPending_.store(false, std::memory_order_relaxed);
-        log::info(log::Area::Ses, "receiver volume overshoot guard at LMS {:.1f} (target {:.1f})",
-                  lms, target);
-        return;
-    case VolumeNudge::Exhausted:
-        remoteVolPending_.store(false, std::memory_order_relaxed);
-        log::warn(log::Area::Ses, "receiver volume gave up at LMS {:.1f} (target {:.1f})", lms,
-                  target);
-        return;
-    case VolumeNudge::Up:
-    case VolumeNudge::Down: break;
-    }
-
-    // Stall guard: if several paced presses produced no LMS movement, the
-    // button path is not working for this player; stop instead of spinning.
-    if (lastStep != 0 &&
-        std::abs(lms - remoteVolLastLms_.load(std::memory_order_relaxed)) < kRemoteVolProgressPct) {
-        const int stall = remoteVolStall_.load(std::memory_order_relaxed) + 1;
-        remoteVolStall_.store(stall, std::memory_order_relaxed);
-        if (stall >= kRemoteVolMaxStall) {
-            remoteVolPending_.store(false, std::memory_order_relaxed);
-            log::warn(log::Area::Ses,
-                      "receiver volume gave up at LMS {:.1f} (target {:.1f}): no movement", lms,
-                      target);
-            return;
-        }
-    } else {
-        remoteVolStall_.store(0, std::memory_order_relaxed);
-    }
-
-    const int need = nudge == VolumeNudge::Up ? 1 : -1;
-    log::info(log::Area::Ses, "receiver volume nudge {} (LMS {:.1f} -> target {:.1f})",
-              need > 0 ? "up" : "down", lms, target);
-    remoteVolBudget_.store(budget - 1, std::memory_order_relaxed);
-    remoteVolDir_.store(need, std::memory_order_relaxed);
-    remoteVolLastStepMs_.store(now, std::memory_order_relaxed);
-    remoteVolLastLms_.store(lms, std::memory_order_relaxed);
-    client_->sendButton(need > 0 ? kVolUpButton : kVolDownButton);
+    if (volumeChaser_)
+        volumeChaser_->onReceiverVolume(unit, lastLmsPct_.load(std::memory_order_relaxed));
 }
 
 void PlayerSession::stop() {
@@ -344,11 +235,10 @@ void PlayerSession::stop() {
     // Drop any in-flight receiver volume chase; the target is stale once the
     // session's LMS connection goes away. Then join the nudger before the
     // client goes away.
-    remoteVolPending_.store(false, std::memory_order_relaxed);
-    if (volumeThread_.joinable()) {
-        volumeThread_.request_stop();
-        volumeThread_.join();
-    }
+    // Drop any in-flight receiver volume chase; the target is stale once the
+    // session's LMS connection goes away. Then join the nudger before the
+    // client goes away.
+    if (volumeChaser_) volumeChaser_->stop();
     output_->stop(false);
     if (client_) client_->stop();
 }

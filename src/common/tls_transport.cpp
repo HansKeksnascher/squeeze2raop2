@@ -117,12 +117,16 @@ void initGlobal(const tls::Options& options) {
     }
     // TLS 1.3 performs its ECDH key share through PSA, which mbedTLS does not
     // initialize for us; without this the first handshake dies with
-    // "internal error" from psa_generate_key().
+    // "internal error" from psa_generate_key(). PSA_SUCCESS is a macro that
+    // expands to an old-style cast at this use site, hence the local
+    // suppression.
+    SQUEEZE2RAOP2_TP_WARNINGS_PUSH
     const psa_status_t psa = psa_crypto_init();
     if (psa != PSA_SUCCESS) {
         g.error = "psa_crypto_init failed: " + std::to_string(static_cast<int>(psa));
         return;
     }
+    SQUEEZE2RAOP2_TP_WARNINGS_POP
     rc = mbedtls_ctr_drbg_seed(&g.drbg, mbedtls_entropy_func, &g.entropy, nullptr, 0);
     if (rc != 0) {
         g.error = "tls rng seed: " + tlsErrorText(rc);
@@ -260,18 +264,12 @@ bool TlsTransport::handshake(std::string& error) {
 
 bool TlsTransport::connect(const std::string& host, uint16_t port, std::string& error) {
     close();
-    const int raw = connectTcp(host, port, error);
+    const int raw = connectSocketTuned(host, port, error);
     if (raw < 0) return false;
     {
         std::lock_guard<std::mutex> lock(impl_->fdMutex);
         impl_->fd.reset(raw);
     }
-    // Bounded close: an abandoned connection must not hang close() forever.
-    linger lg{};
-    lg.l_onoff = 1;
-    lg.l_linger = 3;
-    (void)setsockopt(raw, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
-    enableTcpKeepalive(raw);
     const int fl = ::fcntl(raw, F_GETFL, 0);
     if (fl >= 0) (void)::fcntl(raw, F_SETFL, fl | O_NONBLOCK);
     impl_->bioFd = raw;

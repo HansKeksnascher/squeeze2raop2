@@ -81,7 +81,6 @@ private:
     double stagePhase_ = 0.0;     // fractional read position into stage_
     double rateStep_ = 1.0;       // source frames consumed per output frame
     bool rateEngaged_ = false;
-    size_t headerBytes_ = 0;  // container bytes skipped so far
     bool headerDone_ = false;
     bool failed_ = false;
 };

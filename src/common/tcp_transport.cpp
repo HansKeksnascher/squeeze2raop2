@@ -22,18 +22,12 @@ void TcpTransport::setError(std::string message) { error_ = std::move(message); 
 
 bool TcpTransport::connect(const std::string& host, uint16_t port, std::string& error) {
     close();
-    const int raw = connectTcp(host, port, error);
+    const int raw = connectSocketTuned(host, port, error);
     if (raw < 0) return false;
     {
         std::lock_guard<std::mutex> lock(fdMutex_);
         fd_.reset(raw);
     }
-    // Bounded close: an abandoned connection must not hang close() forever.
-    linger lg{};
-    lg.l_onoff = 1;
-    lg.l_linger = 3;
-    (void)setsockopt(raw, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
-    enableTcpKeepalive(raw);
     error_.clear();
     return true;
 }

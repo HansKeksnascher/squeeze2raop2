@@ -24,7 +24,7 @@ AirplayDevice registerAirplay(const std::map<std::string, std::string>& txt) {
     registry.setCallback([&](DeviceRegistry::Event ev, const AirplayDevice& d) {
         if (ev == DeviceRegistry::Event::Added) seen = d;
     });
-    registry.onAirplayV4("Instance", "10.0.0.1", 7000, txt);
+    registry.onAirplayAdded("Instance", "10.0.0.1", 7000, txt);
     return seen;
 }
 
@@ -76,16 +76,16 @@ SQ2_TEST(registry, raop_then_airplay_updates_transport) {
     registry.setCallback(
         [&](DeviceRegistry::Event ev, const AirplayDevice& d) { events.push_back({ev, d}); });
 
-    registry.onRaopV4("6A329C251848@Küche", "10.0.0.9", 7000, {{"am", "AudioAccessory5,1"}});
-    registry.onAirplayV4("6A329C251848@Küche", "10.0.0.9", 7000,
-                         {{"features", "0x4A7FCA00,0x3C354BD0"}, {"pk", "present"}});
+    registry.onRaopAdded("6A329C251848@Küche", "10.0.0.9", 7000, {{"am", "AudioAccessory5,1"}});
+    registry.onAirplayAdded("6A329C251848@Küche", "10.0.0.9", 7000,
+                            {{"features", "0x4A7FCA00,0x3C354BD0"}, {"pk", "present"}});
 
     require(events.size() == 2, "added then updated");
     expect(events[0].first == DeviceRegistry::Event::Added, "raop record first is Added");
     expect(!events[0].second.airplay2(), "raop-only is not AP2 yet");
     expect(events[1].first == DeviceRegistry::Event::Updated, "airplay record is Updated");
     expect(events[1].second.airplay2(), "airplay record flips it to AP2");
-    expect(events[1].second.hasAirplay() && events[1].second.hasRaop(),
+    expect(events[1].second.hasAirplayPort() && events[1].second.hasRaopPort(),
            "both services merged under one device");
 }
 

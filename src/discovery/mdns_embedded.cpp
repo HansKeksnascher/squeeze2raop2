@@ -2,28 +2,20 @@
 
 #include "common/log.h"
 #include "common/net_util.h"
+#include "common/third_party_warnings.h"
 #include "common/util.h"
 #include "discovery/mdns_names.h"
 
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
+SQUEEZE2RAOP2_TP_WARNINGS_PUSH
+// mDNSResponder's C headers trip extra warnings beyond the shared third-party
+// set (shadowed names, unused locals); -Wchanges-meaning is new-GCC-only.
 #pragma GCC diagnostic ignored "-Wshadow"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
 #pragma GCC diagnostic ignored "-Wunused-variable"
-#pragma GCC diagnostic ignored "-Wold-style-cast"
-#pragma GCC diagnostic ignored "-Wcast-align"
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wuseless-cast"
 #pragma GCC diagnostic ignored "-Wnull-dereference"
 #pragma GCC diagnostic ignored "-Wchanges-meaning"
-#endif
-
 #include "mDNSEmbeddedAPI.h"
 #include "mDNSPosix.h"
-
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+SQUEEZE2RAOP2_TP_WARNINGS_POP
 
 #include <fcntl.h>
 #include <net/if.h>

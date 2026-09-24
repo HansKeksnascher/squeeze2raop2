@@ -79,6 +79,18 @@ int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
     return fd.release();
 }
 
+int connectSocketTuned(const std::string& host, uint16_t port, std::string& errorOut) {
+    const int fd = connectTcp(host, port, errorOut);
+    if (fd < 0) return -1;
+    // Bounded close: an abandoned connection must not hang close() forever.
+    linger lg{};
+    lg.l_onoff = 1;
+    lg.l_linger = 3;
+    (void)setsockopt(fd, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
+    enableTcpKeepalive(fd);
+    return fd;
+}
+
 void enableTcpKeepalive(int fd) {
     if (fd < 0) return;
     // connectTcp already enables SO_KEEPALIVE but leaves the kernel's default

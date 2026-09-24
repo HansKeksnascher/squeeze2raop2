@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "common/net_util.h"  // UniqueFd
-#include "lms/wire_types.h"
+#include "lms/slimproto_types.h"
 
 namespace squeeze2raop2 {
 
@@ -65,8 +65,6 @@ public:
     // LMS volume from receiver-initiated volume changes: LMS maps the
     // volup/voldown codes to its own volume mixer and answers with AUDG.
     void sendButton(uint32_t code);
-
-    const std::array<uint8_t, 6>& mac() const { return mac_; }
 
     // Exposed for the packet-bounds unit test: parses one framed LMS packet.
     void process(const std::string& packet);

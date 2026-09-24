@@ -24,21 +24,15 @@ namespace {
 constexpr size_t kMaxWindow = static_cast<size_t>(std::numeric_limits<int>::max());
 }  // namespace
 
-OggDecoder::OggDecoder(const PcmFormat& in) : Decoder(in) {}
+OggDecoder::OggDecoder(const PcmFormat& in) : BufferedDecoder(in) {}
 
 OggDecoder::~OggDecoder() {
     if (vorbis_) stb_vorbis_close(vorbis_);
 }
 
-void OggDecoder::fail(std::string_view why) {
-    if (failed_) return;
-    failed_ = true;
-    log::error(log::Area::Dec, "ogg decode failed: {}", why);
-}
-
 void OggDecoder::feed(std::span<const std::byte> data) {
     if (failed_ || data.empty()) return;
-    buffer_.insert(buffer_.end(), data.begin(), data.end());
+    appendInput(data);
     decodeMore();
 }
 
@@ -125,7 +119,5 @@ void OggDecoder::decodeMore() {
         compactConsumed(buffer_, consumed_);
     }
 }
-
-size_t OggDecoder::drain(std::span<int16_t> out) { return takeSamples(out, pcm_); }
 
 }  // namespace squeeze2raop2

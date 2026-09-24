@@ -1,5 +1,9 @@
 #include "lms/icy_meta.h"
 
+#include "common/util.h"
+
+#include <charconv>
+
 namespace squeeze2raop2 {
 
 std::string withIcyRequestHeader(std::string request) {
@@ -17,6 +21,20 @@ std::string withIcyRequestHeader(std::string request) {
         request += hdr;
     }
     return request;
+}
+
+// Case-insensitive header scan for "icy-metaint: N" (squeezelite stream.c).
+uint32_t parseIcyMetaint(std::string_view headers) {
+    const std::string lower = toLower(headers);
+    size_t p = lower.find("icy-metaint:");
+    if (p == std::string::npos) return 0;
+    p += sizeof("icy-metaint:") - 1;
+    while (p < lower.size() && (lower[p] == ' ' || lower[p] == '\t')) ++p;
+    uint64_t v = 0;
+    auto [ptr, ec] = std::from_chars(lower.data() + p, lower.data() + lower.size(), v);
+    // Absurd interval (or unparseable): treat as absent.
+    if (ec != std::errc{} || v == 0 || v > (1u << 20)) return 0;
+    return static_cast<uint32_t>(v);
 }
 
 std::optional<std::string> parseStreamTitle(std::string_view block) {
