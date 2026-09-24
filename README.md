@@ -37,10 +37,11 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
   scheduled AirPlay latency (default 500 ms).
 - **Resilient control link** — an LMS-silence watchdog (`server-timeout-ms`)
   reconnects a dead control connection instead of waiting on TCP keepalive.
-- **Honest codec caps** — advertises `pcm,mp3,aac`, so LMS transcodes FLAC and
-  everything else losslessly on the LAN; AAC radio and `.m4a` files stream
-  natively (ADTS + MP4 demux, AAC-LC/HE-AAC) and are decoded in-process. A codec
-  announced via `codc` that the bridge can't decode is rejected with `STMn`.
+- **Honest codec caps** — advertises `pcm,mp3,aac,ogg`, so LMS transcodes FLAC
+  and everything else losslessly on the LAN; AAC radio and `.m4a` files stream
+  natively (ADTS + MP4 demux, AAC-LC/HE-AAC), and Ogg Vorbis (`.ogg`, Vorbis
+  radio) streams natively, all decoded in-process. A codec announced via `codc`
+  that the bridge can't decode is rejected with `STMn`.
 
 ## Build and run
 
@@ -133,6 +134,7 @@ Vendored as git submodules under `third_party/`; each keeps its own license.
 | [airplay2-sender-cpp](https://github.com/HansKeksnascher/airplay2-sender-cpp) (fork) | AirPlay 2 sender core: HAP pair-verify, encrypted RTSP/RTP, retransmit | Apache-2.0 |
 | [apple-oss-distributions/mDNSResponder](https://github.com/apple-oss-distributions/mDNSResponder) (mDNSPosix) | embedded mDNS browse/announce | Apache-2.0 |
 | [minimp3](https://github.com/lieff/minimp3) | single-header MP3 decoder | CC0 1.0 |
+| [stb](https://github.com/nothings/stb) (stb_vorbis) | Ogg Vorbis decoder (push-data) | MIT / public domain |
 | [libxaac](https://github.com/ittiam-systems/libxaac) | AAC-LC/HE-AAC decoder (ADTS + MP4 demux) | Apache-2.0 |
 | [Mbed-TLS/mbedtls](https://github.com/Mbed-TLS/mbedtls) | TLS/crypto underneath the sender | Apache-2.0 |
 

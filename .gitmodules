@@ -15,3 +15,6 @@
 	path = third_party/libxaac
 	url = git@github.com:HansKeksnascher/libxaac.git
 	branch = main
+[submodule "third_party/stb"]
+	path = third_party/stb
+	url = https://github.com/nothings/stb

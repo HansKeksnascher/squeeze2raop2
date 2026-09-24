@@ -6,6 +6,9 @@
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
 #include "playback/decoder/aac_decoder.h"
 #endif
+#if defined(SQUEEZE2RAOP2_WITH_OGG)
+#include "playback/decoder/ogg_decoder.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -97,6 +100,9 @@ std::unique_ptr<Decoder> Decoder::create(StreamFormat format, const PcmFormat& i
     case StreamFormat::Pcm: return std::make_unique<PcmDecoder>(in, outputRate);
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
     case StreamFormat::Aac: return std::make_unique<AacDecoder>(in, containerCode);
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_OGG)
+    case StreamFormat::Ogg: return std::make_unique<OggDecoder>(in);
 #endif
     default: return nullptr;
     }

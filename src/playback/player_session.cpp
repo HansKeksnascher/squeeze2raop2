@@ -159,6 +159,9 @@ void PlayerSession::start() {
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
     caps += ",aac";
 #endif
+#if defined(SQUEEZE2RAOP2_WITH_OGG)
+    caps += ",ogg";
+#endif
     client_ = std::make_unique<SlimProtoClient>(mac_, std::move(caps), std::move(events));
     client_->setPlayerName(name_);
     client_->setServerTimeout(serverTimeoutMs_);
@@ -226,14 +229,17 @@ void PlayerSession::startStream(const StrmStart& st) {
         return;
     }
     // Only formats the track pump actually consumes. LMS should honor the HELO
-    // caps (pcm,mp3,aac); a stray direct format would otherwise be pushed into
-    // the ring as raw PCM = noise. '?' (unknown) is allowed only with
+    // caps (pcm,mp3,aac,ogg); a stray direct format would otherwise be pushed
+    // into the ring as raw PCM = noise. '?' (unknown) is allowed only with
     // autostart>=2, where LMS learns the codec from the response header and
     // returns it in 'codc' (squeezelite parity).
     const bool unknown = st.format == StreamFormat::Unknown;
     bool supported = st.format == StreamFormat::Pcm || st.format == StreamFormat::Mp3;
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
     supported = supported || st.format == StreamFormat::Aac;
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_OGG)
+    supported = supported || st.format == StreamFormat::Ogg;
 #endif
     if (!unknown && !supported) {
         log::error(log::Area::Ses, "strm s: unsupported stream format '{}'",

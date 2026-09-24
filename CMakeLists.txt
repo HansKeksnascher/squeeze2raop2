@@ -57,6 +57,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(SQUEEZE2RAOP2_BUILD_TESTS "build squeeze2raop2 unit tests" ON)
 option(SQUEEZE2RAOP2_WITH_SENDER "integrate the vendored raop_sender library" ON)
 option(SQUEEZE2RAOP2_WITH_AAC "integrate the vendored libxaac AAC decoder" ON)
+option(SQUEEZE2RAOP2_WITH_OGG "integrate the vendored stb_vorbis Ogg decoder" ON)
 option(SQUEEZE2RAOP2_DIST "name the release binary <name>-<os>-<arch>" OFF)
 option(SQUEEZE2RAOP2_STATIC "link the executable fully static" OFF)
 
@@ -175,12 +176,31 @@ target_include_directories(squeeze2raop2_apple_mdns PUBLIC
 )
 target_link_libraries(squeeze2raop2_apple_mdns PRIVATE Threads::Threads)
 
+# Ogg Vorbis decoder: stb_vorbis is C, so build it as its own static library
+# with -w, keeping the C++-only warning flags (and its warnings) off it.
+if(SQUEEZE2RAOP2_WITH_OGG)
+  if(NOT EXISTS "${CMAKE_SOURCE_DIR}/third_party/stb/stb_vorbis.c")
+    message(FATAL_ERROR
+      "SQUEEZE2RAOP2_WITH_OGG is ON but third_party/stb is missing. "
+      "Run: git submodule update --init --recursive")
+  endif()
+  add_library(squeeze2raop2_stb_vorbis STATIC third_party/stb/stb_vorbis.c)
+  target_compile_options(squeeze2raop2_stb_vorbis PRIVATE -w)
+  target_include_directories(squeeze2raop2_stb_vorbis PUBLIC third_party/stb)
+endif()
+
 # AAC decoder sources, added to the core only when libxaac is enabled.
 set(SQUEEZE2RAOP2_AAC_SOURCES "")
 if(SQUEEZE2RAOP2_WITH_AAC)
   set(SQUEEZE2RAOP2_AAC_SOURCES
     src/playback/decoder/aac_decoder.cpp
     src/playback/decoder/mp4_aac_demux.cpp)
+endif()
+
+# Ogg Vorbis decoder sources, added to the core only when stb_vorbis is enabled.
+set(SQUEEZE2RAOP2_OGG_SOURCES "")
+if(SQUEEZE2RAOP2_WITH_OGG)
+  set(SQUEEZE2RAOP2_OGG_SOURCES src/playback/decoder/ogg_decoder.cpp)
 endif()
 
 add_library(squeeze2raop2_core STATIC
@@ -215,6 +235,7 @@ add_library(squeeze2raop2_core STATIC
   src/playback/decoder/mp3_decoder.cpp
   src/playback/decoder/pcm_decoder.cpp
   ${SQUEEZE2RAOP2_AAC_SOURCES}
+  ${SQUEEZE2RAOP2_OGG_SOURCES}
 )
 target_include_directories(squeeze2raop2_core PUBLIC
   ${CMAKE_BINARY_DIR}/generated src third_party/minimp3)
@@ -227,6 +248,10 @@ endif()
 if(SQUEEZE2RAOP2_WITH_AAC)
   target_link_libraries(squeeze2raop2_core PUBLIC libxaacdec)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_AAC=1)
+endif()
+if(SQUEEZE2RAOP2_WITH_OGG)
+  target_link_libraries(squeeze2raop2_core PUBLIC squeeze2raop2_stb_vorbis)
+  target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_OGG=1)
 endif()
 
 add_executable(squeeze2raop2 src/app/main.cpp src/app/bridge.cpp)
