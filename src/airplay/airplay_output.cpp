@@ -92,6 +92,32 @@ void AirplayOutput::setInputRate(uint32_t rate) {
     if (player) player->setInputRate(rate);
 }
 
+void AirplayOutput::pump(std::chrono::milliseconds maxWait) {
+    auto player = snapshot();
+    if (player) player->pump(maxWait);
+}
+
+void AirplayOutput::pumpUntil(std::chrono::steady_clock::time_point deadline) {
+    auto player = snapshot();
+    // With no sender there is nothing to service, but the caller asked to be
+    // held until the deadline (the realtime pacer), so preserve the block.
+    if (!player) {
+        std::this_thread::sleep_until(deadline);
+        return;
+    }
+    player->pumpUntil(deadline);
+}
+
+void AirplayOutput::park() {
+    auto player = snapshot();
+    if (player) player->startKeepAlive();
+}
+
+void AirplayOutput::unpark() {
+    auto player = snapshot();
+    if (player) player->stopKeepAlive();
+}
+
 bool AirplayOutput::setVolume(double pct) {
     auto player = snapshot();
     if (player && player->active()) {
@@ -133,12 +159,14 @@ bool AirplayOutput::push(std::span<const int16_t> samples, size_t channels, cons
     while (offset < samples.size() && !abort()) {
         const size_t freeSpace = player->availableWrite();
         if (freeSpace == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+            // Drain the ring: the sender is driven from this (the stream) thread
+            // now, so a full ring is unblocked by pumping, not by sleeping.
+            player->pump(std::chrono::milliseconds(4));
             continue;
         }
         const size_t take = std::min(freeSpace, samples.size() - offset);
         if (!player->push(samples.subspan(offset, take))) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+            player->pump(std::chrono::milliseconds(4));
             continue;
         }
         offset += take;

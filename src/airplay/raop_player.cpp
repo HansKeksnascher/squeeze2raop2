@@ -3,7 +3,9 @@
 #include "common/log.h"
 #include "common/util.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 
 namespace squeeze2raop2 {
 
@@ -80,26 +82,69 @@ RaopPlayer::~RaopPlayer() { stop(); }
 void RaopPlayer::start() {
     launched_.store(true);
     loop_.clearStopRequest();
+    // No pump thread: the caller (the track's stream thread) drives the sender
+    // through pump()/pumpUntil() from here on.
+    std::lock_guard<std::mutex> lock(senderMutex_);
     sender_->start(target_.host, target_.port, name_);
-    pumpThread_ = std::jthread([this] { loop_.run(*sender_); });
 }
 
 void RaopPlayer::stop() {
     launched_.store(false);
+    // Join the between-tracks driver before tearing the sender down. It blocks
+    // in pump() without holding senderMutex_ across the join, so no deadlock.
+    stopKeepAlive();
+    std::lock_guard<std::mutex> lock(senderMutex_);
     if (sender_) sender_->stop();
     loop_.requestStop();
-    if (pumpThread_.joinable()) pumpThread_.join();
+}
+
+// One non-blocking pass: deliver due socket events + tick the sender's timers.
+void RaopPlayer::pump(std::chrono::milliseconds maxWait) {
+    std::lock_guard<std::mutex> lock(senderMutex_);
+    if (sender_) loop_.pump(*sender_, maxWait);
+}
+
+// Service the sender until `deadline`, returning early on a stop request. Each
+// pass is capped so a reader-thread setter never waits long for the lock.
+void RaopPlayer::pumpUntil(std::chrono::steady_clock::time_point deadline) {
+    using namespace std::chrono;
+    while (!loop_.stopRequested() && steady_clock::now() < deadline) {
+        const auto left = duration_cast<milliseconds>(deadline - steady_clock::now());
+        pump(std::min(left, milliseconds(20)));
+    }
+}
+
+void RaopPlayer::startKeepAlive() {
+    bool expected = false;
+    if (!keepAlive_.compare_exchange_strong(expected, true)) return;  // already running
+    keepAliveThread_ = std::jthread([this] { keepAliveLoop(); });
+}
+
+void RaopPlayer::stopKeepAlive() {
+    keepAlive_.store(false, std::memory_order_relaxed);
+    if (keepAliveThread_.joinable()) keepAliveThread_.join();
+}
+
+// Coarse cadence: no audio is owed between tracks, the session only needs the
+// 1 Hz sync / AP2 feedback keep-alives and a running RTP timeline.
+void RaopPlayer::keepAliveLoop() {
+    while (keepAlive_.load(std::memory_order_relaxed)) pump(std::chrono::milliseconds(100));
 }
 
 void RaopPlayer::setVolume(double pct) {
+    std::lock_guard<std::mutex> lock(senderMutex_);
     if (sender_) sender_->setVolume(pct);
 }
 
 void RaopPlayer::setNowPlaying(const std::string& title, const std::string& artist,
                                const std::string& album) {
+    std::lock_guard<std::mutex> lock(senderMutex_);
     if (sender_) sender_->setNowPlaying(title, artist, album);
 }
 
-bool RaopPlayer::active() const { return sender_ && sender_->active(); }
+bool RaopPlayer::active() const {
+    std::lock_guard<std::mutex> lock(senderMutex_);
+    return sender_ && sender_->active();
+}
 
 }  // namespace squeeze2raop2

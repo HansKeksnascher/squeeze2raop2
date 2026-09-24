@@ -3,6 +3,7 @@
 #include "airplay/raop_types.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -22,8 +23,9 @@ class RaopPlayer;
 // The bridge's live connection to one AirPlay receiver: owns the sender
 // (RaopPlayer) and its ring, the target/credentials, and the volume/metadata
 // application. This is the only place the session's cross-thread state lives
-// (the sender is touched by the stream thread, the volume path and the
-// sender's io thread), so the synchronization is behind this one mutex.
+// (the sender is polled from the stream thread and parked on a coarse keep-alive
+// driver between tracks, while the volume/metadata path comes from the
+// slimproto reader thread), so the synchronization is behind this one mutex.
 class AirplayOutput {
 public:
     // Sender lifecycle, derived from the live sender (never cached): a
@@ -58,6 +60,13 @@ public:
     void updateTarget(RaopTarget target);
 
     void setInputRate(uint32_t rate);
+    // Drive the sender's non-blocking host from the caller's thread. pump()
+    // services sockets + one timer pass; pumpUntil() also blocks (paced) until
+    // the deadline; park()/unpark() start/stop the between-tracks keep-alive.
+    void pump(std::chrono::milliseconds maxWait = std::chrono::milliseconds(0));
+    void pumpUntil(std::chrono::steady_clock::time_point deadline);
+    void park();
+    void unpark();
     // Returns true when applied to a live session, false when there is none
     // (the caller then remembers the level for the next session).
     bool setVolume(double pct);

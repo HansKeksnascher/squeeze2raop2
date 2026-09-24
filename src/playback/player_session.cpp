@@ -379,6 +379,11 @@ void PlayerSession::streamLoop(std::stop_token st) {
     PlaybackStream* track = track_.get();
     std::stop_callback wakeOnStop(st, [track] { track->interrupt(); });
 
+    // A previous track may have left the session parked (keepSession) with the
+    // coarse keep-alive driver running; stop it before this stream thread
+    // takes over the sender pump.
+    output_->unpark();
+
     const PcmFormat fmt = track_->format();
     const bool haveTarget = output_->hasTarget();
     if (haveTarget) {
@@ -410,7 +415,10 @@ void PlayerSession::streamLoop(std::stop_token st) {
         // A stop-path fade already reached zero: the 'q' handler sent STMf.
         if (end == PlaybackStream::End::FadedOut) {
             log::debug(log::Area::Ses, "stream exit: fade-out complete");
-            if (!keepSession) output_->stop(false);
+            if (keepSession)
+                output_->park();
+            else
+                output_->stop(false);
             break;
         }
 
@@ -469,9 +477,13 @@ void PlayerSession::streamLoop(std::stop_token st) {
             break;
         }
 
-        // Tear down and leave. A flush transition (keepSession) leaves the
-        // AirPlay session running for the next track.
-        if (!keepSession) output_->stop(false);
+        // Tear down and leave. A flush transition (keepSession) leaves the AirPlay
+        // session running for the next track, now driven by the keep-alive
+        // driver until a new stream thread takes over.
+        if (keepSession)
+            output_->park();
+        else
+            output_->stop(false);
         break;
     }
 
@@ -492,7 +504,8 @@ void PlayerSession::waitForOutputDrain(std::stop_token st) {
         counters_.setQueued(avail);
         if (avail == 0) return;
         if (nowMs() >= deadline) return;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Keep the sender running so the buffered tail actually leaves the ring.
+        output_->pump(std::chrono::milliseconds(20));
     }
 }
 

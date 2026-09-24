@@ -7,8 +7,10 @@
 #include "ring_buffer.h"
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <thread>
@@ -28,6 +30,17 @@ public:
     void start();
     void stop();
 
+    // The sender is a sans-i/o state machine and its poll host is non-blocking,
+    // so there is no dedicated pump thread: whoever owns the audio lifecycle
+    // drives it from its own thread. pump() services sockets + one tick pass;
+    // pumpUntil() loops it until a deadline (also used as the pace wait).
+    void pump(std::chrono::milliseconds maxWait = std::chrono::milliseconds(0));
+    void pumpUntil(std::chrono::steady_clock::time_point deadline);
+    // Coarse keep-alive driver for the between-tracks window, when the session
+    // is left running but no stream thread is alive to pump it.
+    void startKeepAlive();
+    void stopKeepAlive();
+
     // Ring telemetry for the host: occupancy and capacity in interleaved
     // samples, plus whether start() has ever run (a prepared-but-unlaunched
     // player must not be recreated just because the receiver looks idle).
@@ -41,9 +54,11 @@ public:
     }
     void setVolume(double pct);
     void setLatencyMs(int ms) {
+        std::lock_guard<std::mutex> lock(senderMutex_);
         if (sender_) sender_->setLatency(uint32_t(int64_t(ms) * 44100 / 1000));
     }
     void flush() {
+        std::lock_guard<std::mutex> lock(senderMutex_);
         if (sender_) sender_->flush();
     }
     void setNowPlaying(const std::string& title, const std::string& artist,
@@ -59,12 +74,15 @@ public:
     void discardAudio() { ringStorage_->reset(); }
 
     void setInputRate(uint32_t rate) {
+        std::lock_guard<std::mutex> lock(senderMutex_);
         if (sender_) sender_->setInputFormat(rate);
     }
 
     bool active() const;
 
 private:
+    void keepAliveLoop();
+
     std::string name_;
     std::string identity_;
     RaopTarget target_;
@@ -74,10 +92,14 @@ private:
     std::unique_ptr<fxchain::RingBuffer<int16_t>> ringStorage_;
     fxchain::RaopLoop loop_;
     std::unique_ptr<fxchain::RaopSender> sender_;
-    // The pump's exit condition lives inside fxchain::RaopLoop::run() (its
-    // own atomic), so no stop_token can drive it — jthread is used for its
-    // auto-join safety net only.
-    std::jthread pumpThread_;
+    // Every call into sender_/loop_ is serialized: RaopLoop is single-threaded
+    // and RaopSender is strictly so, while audio/metadata/volume arrive from
+    // different threads (stream vs slimproto reader). mutable: active() is const.
+    mutable std::mutex senderMutex_;
+    // Between-tracks keep-alive: a coarse pump loop, started at a flush exit
+    // and joined before a new stream thread takes over the pump (or on stop()).
+    std::atomic<bool> keepAlive_{false};
+    std::jthread keepAliveThread_;
     CredentialSink onCredentials_;
     std::function<void()> onClosed_;
     std::function<void(double)> onRemoteVolume_;

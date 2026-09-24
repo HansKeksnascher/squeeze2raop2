@@ -173,8 +173,8 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
     bool decodeFailed = false;
     lastDataMs_ = nowMs();  // fresh deadline for a (re-entered) pass
 
-    // output_.lost() doubles as the "receiver died" exit signal set from the
-    // sender's io thread (stop requests arrive via st).
+    // output_.lost() doubles as the "receiver died" exit signal, set from a
+    // sender pump callback (stop requests arrive via st).
     while (!st.stop_requested() && g_run.load() && !output_.lost()) {
         // A stop-path fade request arrives from the reader thread; adopt it.
         if (fadeOutRequested_.exchange(false, std::memory_order_relaxed)) {
@@ -203,9 +203,10 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             // the same way: it stops reading and lets the socket backpressure
             // keep the connection open until the resume.
             lastDataMs_ = nowMs();  // a pause is not a source stall
-            // Block until unpause(), the timed deadline, or a stop request,
-            // instead of polling: resume and teardown are immediate. The value
-            // is re-read each wake so a later pause()/unpause() is honoured.
+            // Block until unpause(), the timed deadline, or a stop request, in
+            // short slices: resume and teardown stay prompt, and each slice is
+            // also the sender's service window, so it keeps padding silence on
+            // the RTP timeline while no audio is being pushed.
             std::unique_lock<std::mutex> lock(pauseMutex_);
             for (;;) {
                 const uint64_t until = pauseUntilMs_.load(std::memory_order_relaxed);
@@ -214,15 +215,19 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
                     const uint64_t now = nowMs();
                     if (until <= now) break;  // timed pause elapsed
                     pauseCv_.wait_for(
-                        lock, st, std::chrono::milliseconds(until - now), [this, until] {
+                        lock, st, std::chrono::milliseconds(std::min<uint64_t>(until - now, 25)),
+                        [this, until] {
                             return pauseUntilMs_.load(std::memory_order_relaxed) != until;
                         });
                 } else {
-                    pauseCv_.wait(lock, st, [this, until] {
+                    pauseCv_.wait_for(lock, st, std::chrono::milliseconds(25), [this, until] {
                         return pauseUntilMs_.load(std::memory_order_relaxed) != until;
                     });
                 }
                 if (st.stop_requested()) break;
+                lock.unlock();
+                output_.pump(std::chrono::milliseconds(0));
+                lock.lock();
             }
             continue;
         }
@@ -321,8 +326,12 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             // RTP packets = crackle. Skipped while prebuffering: the gate wants
             // the ring filled as fast as the source allows.
             if (timeline > activeMs_ + 60) {
-                uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs_ + 60), 120);
-                std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+                const uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs_ + 60), 120);
+                // The pace wait doubles as the sender's service window: pump
+                // until the deadline instead of sleeping, so RTP/sync/retransmit
+                // stay on time even though there is no dedicated pump thread.
+                output_.pumpUntil(std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(sleepMs));
                 activeMs_ += sleepMs;
             }
         }
