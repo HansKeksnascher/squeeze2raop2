@@ -116,8 +116,7 @@ void SlimProtoClient::start(const std::string& host, uint16_t port) {
 }
 
 std::shared_ptr<UniqueFd> SlimProtoClient::currentSock() const {
-    std::lock_guard<std::mutex> lock(sockMutex_);
-    return sock_;
+    return sock_.load(std::memory_order_acquire);
 }
 
 void SlimProtoClient::stop() {
@@ -134,14 +133,13 @@ void SlimProtoClient::stop() {
     }
     if (thread_.joinable()) thread_.join();
     // Drop our reference; a send still in flight closes the fd when it finishes.
-    std::lock_guard<std::mutex> lock(sockMutex_);
-    sock_.reset();
+    sock_.store(nullptr, std::memory_order_release);
 }
 
 bool SlimProtoClient::sendRaw(std::span<const std::byte> data) {
-    // Copy the socket reference under sockMutex_, then release the lock before
-    // the (possibly blocking) send. Holding the shared_ptr, not the lock, keeps
-    // the fd alive for the whole send even if a reconnect replaces sock_.
+    // Copy the socket reference (atomic snapshot), then do the (possibly
+    // blocking) send outside any lock. Holding the shared_ptr, not a lock,
+    // keeps the fd alive for the whole send even if a reconnect replaces sock_.
     std::shared_ptr<UniqueFd> sock = currentSock();
     if (!sock || sock->get() < 0) return false;
     std::lock_guard<std::mutex> lock(sendMutex_);
@@ -180,10 +178,7 @@ bool SlimProtoClient::connectOnce(bool reconnect) {
 
     // Replace (do not reset) the old socket: the previous connection closes
     // once every thread that still holds its shared_ptr drops it.
-    {
-        std::lock_guard<std::mutex> lock(sockMutex_);
-        sock_ = std::make_shared<UniqueFd>(fd);
-    }
+    sock_.store(std::make_shared<UniqueFd>(fd), std::memory_order_release);
     sendHelo(reconnect);
     return true;
 }

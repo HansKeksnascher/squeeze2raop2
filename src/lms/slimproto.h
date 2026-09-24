@@ -81,9 +81,9 @@ private:
     // Snapshot of the last stats passed to sendStat(); guarded by sendMutex_
     // because sendStat() also runs on stream threads (STMn/STMu/STMd paths).
     StreamStats lastStats();
-    // Copy of the current socket, taken under sockMutex_. Callers hold the
-    // shared_ptr for as long as they touch the fd, so a concurrent reconnect
-    // or stop() can replace the socket without closing the fd under them.
+    // Atomic snapshot of the current socket. Callers hold the shared_ptr for as
+    // long as they touch the fd, so a concurrent reconnect or stop() can replace
+    // it without closing the fd under them.
     [[nodiscard]] std::shared_ptr<UniqueFd> currentSock() const;
 
     std::array<uint8_t, 6> mac_;
@@ -92,12 +92,12 @@ private:
     std::string host_;
     uint16_t port_ = 3483;
 
-    // Socket lifetime: guarded by sockMutex_, kept alive across sends by shared
-    // ownership. Replaced (never reset() in place) on reconnect. A socket is
-    // closed when its last shared_ptr owner drops it, so a send in flight on
-    // the old connection is never cut short by connectOnce().
-    std::shared_ptr<UniqueFd> sock_;
-    mutable std::mutex sockMutex_;
+    // Socket lifetime: kept alive across sends by shared ownership, published
+    // atomically so a reader/sender can snapshot it without a mutex. Replaced
+    // (never reset() in place) on reconnect. A socket is closed when its last
+    // shared_ptr owner drops it, so a send in flight on the old connection is
+    // never cut short by connectOnce().
+    std::atomic<std::shared_ptr<UniqueFd>> sock_;
 
     std::jthread thread_;
     StreamStats stats_{};

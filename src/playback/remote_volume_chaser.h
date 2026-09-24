@@ -3,6 +3,7 @@
 #include "playback/volume_map.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -37,8 +38,8 @@ public:
     void onReceiverVolume(double unit, double echoPct);
 
 private:
-    // One paced step toward target_, serialized by mutex_.
-    void pump();
+    // One paced step toward target_. Caller holds mutex_.
+    void pumpLocked();
 
     const VolumeAnchors anchors_;
     std::function<bool()> linkAlive_;
@@ -53,6 +54,9 @@ private:
     std::atomic<double> lastLms_{0.0};     // stall detection
     std::atomic<int> stall_{0};
     std::mutex mutex_;
+    // Signalled by onReceiverVolume(); the stepper blocks here instead of
+    // polling, and the stop_token overload wakes it on cancellation.
+    std::condition_variable_any cv_;
     std::jthread thread_;
 };
 

@@ -371,6 +371,14 @@ void PlayerSession::streamLoop(std::stop_token st) {
         streamActive_.store(false);
         return;
     }
+    // A stop request now wakes a read() parked in poll()/recv() by itself;
+    // before, every teardown path had to remember to call track_->interrupt()
+    // before joining. The callback lives for this stream thread only and
+    // captures the track directly (track_ may be replaced by startStream after
+    // this thread is joined).
+    PlaybackStream* track = track_.get();
+    std::stop_callback wakeOnStop(st, [track] { track->interrupt(); });
+
     const PcmFormat fmt = track_->format();
     const bool haveTarget = output_->hasTarget();
     if (haveTarget) {
@@ -490,15 +498,12 @@ void PlayerSession::waitForOutputDrain(std::stop_token st) {
 
 void PlayerSession::stopPlayback() {
     if (streamThread_.joinable()) {
+        // request_stop() fires streamLoop's stop_callback, which interrupts a
+        // read() parked in poll()/recv(), so a stalled source cannot hold the
+        // join (and thus shutdown) for the read timeout.
         streamThread_.request_stop();
-        if (track_) {
-            track_->unpause();
-            // Unblock a read() parked in poll()/recv() before joining, so a
-            // stalled source cannot hold the join (and thus shutdown) for the
-            // read timeout. The descriptor stays valid: close() runs after the
-            // join below.
-            track_->interrupt();
-        }
+        // Wake the pump out of a pause so it reaches the loop guard promptly.
+        if (track_) track_->unpause();
         streamThread_.join();
     }
     if (track_) track_->close();

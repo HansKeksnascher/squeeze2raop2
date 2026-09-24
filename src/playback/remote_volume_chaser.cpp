@@ -49,10 +49,30 @@ RemoteVolumeChaser::~RemoteVolumeChaser() { stop(); }
 void RemoteVolumeChaser::start() {
     if (thread_.joinable()) return;
     thread_ = std::jthread([this](std::stop_token st) {
+        std::unique_lock lock(mutex_);
         while (!st.stop_requested()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            // Block until there is a target to chase; the stop token wakes it.
+            cv_.wait(lock, st, [this] { return pending_.load(std::memory_order_relaxed); });
             if (st.stop_requested()) break;
-            if (pending_.load(std::memory_order_relaxed)) pump();
+            if (!pending_.load(std::memory_order_relaxed)) continue;
+
+            // Fresh-press pacing: honour kStepMs between presses, but wake
+            // early when a new receiver event resets the schedule.
+            const uint64_t now = nowMs();
+            const uint64_t lastStep = lastStepMs_.load(std::memory_order_relaxed);
+            if (lastStep != 0 && now - lastStep < static_cast<uint64_t>(kStepMs)) {
+                const auto remaining = static_cast<int64_t>(kStepMs - (now - lastStep));
+                cv_.wait_until(
+                    lock, st,
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(remaining),
+                    [this] {
+                        return !pending_.load(std::memory_order_relaxed) ||
+                               lastStepMs_.load(std::memory_order_relaxed) == 0;
+                    });
+                if (st.stop_requested()) break;
+                continue;
+            }
+            pumpLocked();
         }
     });
 }
@@ -80,6 +100,7 @@ void RemoteVolumeChaser::onReceiverVolume(double unit, double echoPct) {
         log::info(log::Area::Ses, "receiver volume {:.3f} -> LMS {:.1f} (already there)", unit,
                   target);
         pending_.store(false, std::memory_order_relaxed);
+        cv_.notify_one();
         return;
     }
     log::info(log::Area::Ses, "receiver volume {:.3f} -> LMS {:.1f} (from {:.1f})", unit, target,
@@ -90,12 +111,11 @@ void RemoteVolumeChaser::onReceiverVolume(double unit, double echoPct) {
     stall_.store(0, std::memory_order_relaxed);
     lastStepMs_.store(0, std::memory_order_relaxed);  // first step may fire at once
     pending_.store(true, std::memory_order_relaxed);
+    cv_.notify_one();
     // The paced stepper thread sends the nudges.
 }
 
-void RemoteVolumeChaser::pump() {
-    if (!pending_.load(std::memory_order_relaxed)) return;
-    std::lock_guard<std::mutex> lock(mutex_);
+void RemoteVolumeChaser::pumpLocked() {
     if (!pending_.load(std::memory_order_relaxed)) return;
     if (!linkAlive_ || !linkAlive_()) {
         pending_.store(false, std::memory_order_relaxed);

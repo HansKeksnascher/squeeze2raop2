@@ -94,11 +94,21 @@ void PlaybackStream::pause(uint32_t ms) {
     // squeezelite parity: 'p 0' pauses indefinitely, 'p N' is a timed pause
     // (transition gaps). LMS's stop for a remote stream is a fade-down
     // followed by 'p 0'.
-    pauseUntilMs_.store(ms ? nowMs() + ms : std::numeric_limits<uint64_t>::max(),
-                        std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        pauseUntilMs_.store(ms ? nowMs() + ms : std::numeric_limits<uint64_t>::max(),
+                            std::memory_order_relaxed);
+    }
+    pauseCv_.notify_all();
 }
 
-void PlaybackStream::unpause() { pauseUntilMs_.store(0, std::memory_order_relaxed); }
+void PlaybackStream::unpause() {
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        pauseUntilMs_.store(0, std::memory_order_relaxed);
+    }
+    pauseCv_.notify_all();
+}
 
 void PlaybackStream::skipAhead(uint32_t ms) {
     const uint32_t rate = format().sampleRate ? format().sampleRate : 44100;
@@ -193,7 +203,27 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             // the same way: it stops reading and lets the socket backpressure
             // keep the connection open until the resume.
             lastDataMs_ = nowMs();  // a pause is not a source stall
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            // Block until unpause(), the timed deadline, or a stop request,
+            // instead of polling: resume and teardown are immediate. The value
+            // is re-read each wake so a later pause()/unpause() is honoured.
+            std::unique_lock<std::mutex> lock(pauseMutex_);
+            for (;;) {
+                const uint64_t until = pauseUntilMs_.load(std::memory_order_relaxed);
+                if (until == 0) break;  // unpaused
+                if (until != std::numeric_limits<uint64_t>::max()) {
+                    const uint64_t now = nowMs();
+                    if (until <= now) break;  // timed pause elapsed
+                    pauseCv_.wait_for(
+                        lock, st, std::chrono::milliseconds(until - now), [this, until] {
+                            return pauseUntilMs_.load(std::memory_order_relaxed) != until;
+                        });
+                } else {
+                    pauseCv_.wait(lock, st, [this, until] {
+                        return pauseUntilMs_.load(std::memory_order_relaxed) != until;
+                    });
+                }
+                if (st.stop_requested()) break;
+            }
             continue;
         }
 

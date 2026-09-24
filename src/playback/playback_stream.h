@@ -9,9 +9,11 @@
 #include "playback/stream_counters.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <stop_token>
@@ -127,6 +129,10 @@ private:
     RingTelemetry ringTelemetry_;
     std::atomic<uint64_t> pauseUntilMs_{0};
     std::atomic<uint64_t> skipFrames_{0};
+    // Pause wait: the pump blocks here instead of polling; pause()/unpause()
+    // (reader thread) wake it and the stop token cancels it.
+    std::mutex pauseMutex_;
+    std::condition_variable_any pauseCv_;
     // Fade request from the reader thread; the pump owns the ramp position.
     std::atomic<bool> fadeOutRequested_{false};
     // Pacing clock: active (non-sleeping, non-retry) ms, continuous across a
