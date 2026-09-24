@@ -305,6 +305,13 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
         if (v < 1000 || v > 600000)
             return fail(error, lineNo, "server-timeout-ms must be 1000-600000");
         global_.serverTimeoutMs = v;
+    } else if (key == "source-timeout-ms") {
+        unsigned v = 0;
+        if (!parseNumber(value, v))
+            return fail(error, lineNo, "source-timeout-ms must be a number");
+        if (v != 0 && (v < 1000 || v > 600000))
+            return fail(error, lineNo, "source-timeout-ms must be 0 (off) or 1000-600000");
+        global_.sourceTimeoutMs = v;
     } else if (key == "tls-verify") {
         if (!parseBool(value, b)) return fail(error, lineNo, "tls-verify must be on|off");
         global_.tlsVerify = b;
@@ -597,6 +604,7 @@ void Persistence::writeTemplate() {
            "# iface = eth0\n"
            "# mdns-debug = off\n"
            "# server-timeout-ms = 35000\n"
+           "# source-timeout-ms = 15000\n"
            "# tls-verify = on\n"
            "# tls-ca = /etc/ssl/certs/ca-certificates.crt\n"
            "log = info\n"

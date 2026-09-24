@@ -45,7 +45,7 @@ if(Python3_Interpreter_FOUND)
   set(SQUEEZE2RAOP2_INTEGRATION_TESTS
     single_player_stream two_player_registration queue_advance
     skip_ahead replay_gain power_off codc_stream codc_unsupported
-    watchdog fade fade_out pause_resume)
+    watchdog fade fade_out pause_resume stream_stall)
   # Codec-specific scenarios only when that decoder is built: they assert the
   # matching HELO cap and decode path, which do not exist in a feature-off build.
   if(SQUEEZE2RAOP2_WITH_AAC)

@@ -70,6 +70,12 @@ private:
 // socket with SO_KEEPALIVE. Returns -1 with errorOut set on failure.
 int connectTcp(const std::string& host, uint16_t port, std::string& errorOut);
 
+// Best-effort keepalive tuning for a connected stream socket: SO_KEEPALIVE plus
+// tightened idle/interval/count, so a peer that has vanished without an RST is
+// detected instead of leaving a read parked forever. No-op on fd < 0; safe to
+// call after connectTcp (which already sets SO_KEEPALIVE).
+void enableTcpKeepalive(int fd);
+
 // Writes all bytes, retrying transient shortfalls (EAGAIN/EINTR/ENOBUFS);
 // returns false on a real send error. MSG_NOSIGNAL so a dead peer cannot
 // kill the process with SIGPIPE.

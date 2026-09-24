@@ -30,6 +30,9 @@ struct GlobalConfig {
     log::Level logLevel = log::Level::Info;
     // reconnect when the LMS control connection is silent for this long.
     uint32_t serverTimeoutMs = 35000;
+    // end a stream whose HTTP source delivers nothing for this long (0 = off);
+    // catches a stalled/half-open stream that never yields EOF or a socket error.
+    uint32_t sourceTimeoutMs = 15000;
     // Direct HTTPS streams: verify the station certificate against the system
     // trust store (or tlsCaPath) and fail closed. tlsVerify=off skips it.
     bool tlsVerify = true;

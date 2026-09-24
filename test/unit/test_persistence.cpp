@@ -275,6 +275,37 @@ SQ2_TEST(persistence, server_timeout_global) {
     expect(!error.empty(), "rejection carries an error message");
 }
 
+SQ2_TEST(persistence, source_timeout_global) {
+    ScratchDir dir("src_timeout");
+    Persistence p;
+    Settings s;
+    std::string error;
+    expect(p.open(dir.file("default.conf"), s, error), "fresh open");
+    expect(s.global.sourceTimeoutMs == 15000, "source-timeout-ms defaults to 15000");
+
+    const std::string path = dir.file("src_timeout.conf");
+    writeFile(path, "[global]\nsource-timeout-ms = 2000\nlog = info\n");
+    Persistence p2;
+    Settings s2;
+    expect(p2.open(path, s2, error), "open source-timeout config");
+    expect(s2.global.sourceTimeoutMs == 2000, "source-timeout-ms parsed");
+
+    // 0 explicitly disables the watchdog.
+    const std::string off = dir.file("off.conf");
+    writeFile(off, "[global]\nsource-timeout-ms = 0\n");
+    Persistence pOff;
+    Settings sOff;
+    expect(pOff.open(off, sOff, error), "source-timeout-ms = 0 accepted");
+    expect(sOff.global.sourceTimeoutMs == 0, "0 disables the watchdog");
+
+    const std::string bad = dir.file("bad.conf");
+    writeFile(bad, "[global]\nsource-timeout-ms = 5\n");
+    Persistence p3;
+    Settings s3;
+    expect(!p3.open(bad, s3, error), "out-of-range source-timeout-ms rejected");
+    expect(!error.empty(), "rejection carries an error message");
+}
+
 SQ2_TEST(persistence, rename_persisted) {
     ScratchDir dir("rename");
     const std::string path = dir.file("rename.conf");

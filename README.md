@@ -37,6 +37,9 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
   scheduled AirPlay latency (default 500 ms).
 - **Resilient control link** — an LMS-silence watchdog (`server-timeout-ms`)
   reconnects a dead control connection instead of waiting on TCP keepalive.
+- **Source-stall watchdog** — a stream whose HTTP source delivers nothing for
+  `source-timeout-ms` is ended (`DSCO` + `STMu`) so LMS re-issues it, instead
+  of hanging on a half-open socket forever.
 - **Honest codec caps** — advertises `pcm,mp3,aac,ogg,ops`, so LMS transcodes
   FLAC and everything else losslessly on the LAN; AAC radio and `.m4a` files
   stream natively (ADTS + MP4 demux, AAC-LC/HE-AAC), Ogg Vorbis (`.ogg`,
@@ -88,6 +91,7 @@ lms       = 192.168.1.10:3483   # omit for UDP discovery on 3483
 discovery = on
 log       = debug
 # server-timeout-ms = 35000     # reconnect after this much LMS silence
+# source-timeout-ms = 15000     # end a stream silent for this long (0 = off)
 # tls-verify = on               # verify direct https stream certificates
 # tls-ca = /etc/ssl/certs/ca-certificates.crt   # override the trust store
 

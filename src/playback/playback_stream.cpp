@@ -27,11 +27,12 @@ DisconnectCode mapOpenError(const std::string& error) {
 }  // namespace
 
 PlaybackStream::PlaybackStream(AirplayOutput& output, StreamCounters& counters, bool paceRealtime,
-                               std::optional<std::string> sinkPath)
+                               std::optional<std::string> sinkPath, uint32_t sourceTimeoutMs)
     : output_(output),
       counters_(counters),
       paceRealtime_(paceRealtime),
-      sinkPath_(std::move(sinkPath)) {}
+      sinkPath_(std::move(sinkPath)),
+      sourceTimeoutMs_(sourceTimeoutMs) {}
 
 PlaybackStream::~PlaybackStream() { close(); }
 
@@ -159,6 +160,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
     char buf[4096];
     bool reachedEof = false;
     bool decodeFailed = false;
+    lastDataMs_ = nowMs();  // fresh deadline for a (re-entered) pass
 
     // output_.lost() doubles as the "receiver died" exit signal set from the
     // sender's io thread (stop requests arrive via st).
@@ -189,6 +191,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             // streams are realtime so they never hit this. Squeezelite behaves
             // the same way: it stops reading and lets the socket backpressure
             // keep the connection open until the resume.
+            lastDataMs_ = nowMs();  // a pause is not a source stall
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
@@ -200,6 +203,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             const auto audio = std::as_bytes(std::span{buf}).first(rr.bytes);
             counters_.onReceived(rr.bytes);
             ringEmptySinceMs_ = 0;  // data flowing: not an underrun window
+            lastDataMs_ = nowMs();  // source is alive
             if (!feed(st, audio, fmt, sink_.get())) {
                 decodeFailed = true;
                 break;
@@ -221,6 +225,19 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             activeMs_ += nowMs() - iterStart;
         } else if (rr.result == HttpStreamReader::ReadResult::Timeout) {
             activeMs_ += nowMs() - iterStart;  // ~= the read timeout
+            // A source that has delivered nothing for longer than the watchdog
+            // is dead, not merely quiet: a half-open socket (peer gone, or a
+            // live peer that stopped sending) never yields Eof/Error, so
+            // without this the pump would read timeouts forever with the ring
+            // drained. End the track so the session reports DSCO(Timeout) and
+            // LMS re-issues the stream.
+            const uint64_t now = nowMs();
+            if (sourceTimeoutMs_ != 0 && now - lastDataMs_ >= sourceTimeoutMs_) {
+                log::warn(log::Area::Pb, "source silent for {} ms; ending stream",
+                          now - lastDataMs_);
+                disconnect_ = DisconnectCode::Timeout;
+                break;
+            }
             // Output starved while the source is still active: STMo, but only
             // after the ring has stayed empty for ~1 s. A brief refill gap
             // (e.g. right after a pause/resume dropped the ring) must not make

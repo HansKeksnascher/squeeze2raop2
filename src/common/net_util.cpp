@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -76,6 +77,28 @@ int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
         return -1;  // fd closes via RAII
     }
     return fd.release();
+}
+
+void enableTcpKeepalive(int fd) {
+    if (fd < 0) return;
+    // connectTcp already enables SO_KEEPALIVE but leaves the kernel's default
+    // idle (2 h); tighten it so a peer that has silently vanished is turned
+    // into a socket error instead of an eternally parked read. The pump's own
+    // source watchdog (source-timeout-ms) covers a live-but-silent source.
+    int one = 1;
+    (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+#if defined(TCP_KEEPIDLE)
+    int idle = 60;  // idle seconds before the first probe
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+#endif
+#if defined(TCP_KEEPINTVL)
+    int intvl = 15;  // seconds between probes
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+#endif
+#if defined(TCP_KEEPCNT)
+    int cnt = 4;  // failed probes before the connection is dropped
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
 }
 
 bool sendAll(int fd, const void* data, size_t len) {

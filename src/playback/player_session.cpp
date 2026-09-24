@@ -26,6 +26,7 @@ PlayerSession::PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig
       paceRealtime_(cfg.paceRealtime),
       sinkPath_(std::move(sinkPath)),
       serverTimeoutMs_(global.serverTimeoutMs),
+      sourceTimeoutMs_(global.sourceTimeoutMs),
       nameSink_(std::move(nameSink)),
       anchors_(std::move(anchors)),
       volumeMode_(cfg.volumeMode),
@@ -254,7 +255,8 @@ void PlayerSession::startStream(const StrmStart& st) {
         log::info(log::Area::Ses, "stream GET {}:{} icy={}", host, port, icy);
     else
         log::info(log::Area::Ses, "stream GET {}:{} host={} icy={}", host, port, hostName, icy);
-    track_ = std::make_unique<PlaybackStream>(*output_, counters_, paceRealtime_, sinkPath_);
+    track_ = std::make_unique<PlaybackStream>(*output_, counters_, paceRealtime_, sinkPath_,
+                                              sourceTimeoutMs_);
     track_->setMetaForward([this](std::string_view block) { client_->sendMeta(block); });
     track_->setDecoderReady([this] { onDecoderReady(); });
     track_->setUnderrun([this] { client_->sendStat("STMo", currentStats()); });

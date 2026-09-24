@@ -30,7 +30,7 @@ enum class DisconnectCode : std::uint8_t {
     Local = 1,        // LOCAL_DISCONNECT: send/header failure
     Remote = 2,       // REMOTE_DISCONNECT: peer closed / read error
     Unreachable = 3,  // connect failed
-    Timeout = 4,      // header phase deadline
+    Timeout = 4,      // source silence watchdog / header deadline
     None = 0xFF,      // no disconnect (still streaming / silent stop)
 };
 
@@ -53,7 +53,7 @@ public:
     };
 
     PlaybackStream(AirplayOutput& output, StreamCounters& counters, bool paceRealtime,
-                   std::optional<std::string> sinkPath);
+                   std::optional<std::string> sinkPath, uint32_t sourceTimeoutMs = 0);
     ~PlaybackStream();
     PlaybackStream(const PlaybackStream&) = delete;
     PlaybackStream& operator=(const PlaybackStream&) = delete;
@@ -161,6 +161,11 @@ private:
     // 0 = not empty. A sustained (~1 s) empty ring reports STMo, a brief
     // post-pause/resume refill gap does not.
     uint64_t ringEmptySinceMs_ = 0;
+    // End the track when the source delivers nothing for this long (0 = off);
+    // lastDataMs_ is the wall-clock of the most recent byte (kept fresh while
+    // paused, which is not a stall).
+    uint32_t sourceTimeoutMs_ = 0;
+    uint64_t lastDataMs_ = 0;
 };
 
 }  // namespace squeeze2raop2

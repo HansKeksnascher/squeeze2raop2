@@ -21,6 +21,7 @@ void printHelp() {
         "    iface = <name>        mdns network interface (default: all)\n"
         "    mdns-debug = on|off   browse-only mDNS debug mode\n"
         "    server-timeout-ms = N  reconnect after N ms of LMS silence (1000-600000)\n"
+        "    source-timeout-ms = N  end a stream silent for N ms (0 = off)\n"
         "    tls-verify = on|off  verify direct https stream certificates (default on)\n"
         "    tls-ca = <path>       CA bundle/dir for tls-verify (default: system store)\n"
         "    log = off|error|warn|info|debug\n"

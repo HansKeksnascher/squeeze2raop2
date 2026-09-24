@@ -33,6 +33,7 @@ bool TcpTransport::connect(const std::string& host, uint16_t port, std::string& 
     lg.l_onoff = 1;
     lg.l_linger = 3;
     (void)setsockopt(raw, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
+    enableTcpKeepalive(raw);
     error_.clear();
     return true;
 }

@@ -271,6 +271,7 @@ bool TlsTransport::connect(const std::string& host, uint16_t port, std::string& 
     lg.l_onoff = 1;
     lg.l_linger = 3;
     (void)setsockopt(raw, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
+    enableTcpKeepalive(raw);
     const int fl = ::fcntl(raw, F_GETFL, 0);
     if (fl >= 0) (void)::fcntl(raw, F_SETFL, fl | O_NONBLOCK);
     impl_->bioFd = raw;

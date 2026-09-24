@@ -86,6 +86,7 @@ private:
     bool paceRealtime_;
     std::optional<std::string> sinkPath_;
     uint32_t serverTimeoutMs_;
+    uint32_t sourceTimeoutMs_;
     NameSink nameSink_;
 
     std::unique_ptr<SlimProtoClient> client_;
