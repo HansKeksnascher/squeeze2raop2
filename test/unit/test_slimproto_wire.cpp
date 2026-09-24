@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -60,36 +61,46 @@ public:
         require(conn_ >= 0, "accept");
     }
 
-    // Framed server-side receive with a hard deadline (keeps failures
-    // graceful instead of hanging the test).
-    std::vector<unsigned char> readPacket() {
-        require(conn_ >= 0, "connection open for reads");
+    // Framed server-side receive bounded by timeoutMs; nullopt on timeout,
+    // closed connection or a malformed frame. Non-fatal, so a test can assert
+    // that no further packet arrives.
+    std::optional<std::vector<unsigned char>> readPacketFor(int timeoutMs) {
+        if (conn_ < 0) return std::nullopt;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
         auto readExact = [&](unsigned char* dst, size_t n) {
             size_t got = 0;
-            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             while (got < n) {
                 pollfd pfd{conn_, POLLIN, 0};
-                int remaining =
+                const int remaining =
                     static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                          deadline - std::chrono::steady_clock::now())
                                          .count());
-                if (remaining <= 0) require(false, "timed out waiting for packet bytes");
-                if (::poll(&pfd, 1, remaining) != 1) require(false, "poll for packet bytes");
-                ssize_t r = ::recv(conn_, dst + got, n - got, 0);
-                require(r > 0, "recv packet bytes");
+                if (remaining <= 0 || ::poll(&pfd, 1, remaining) != 1) return false;
+                const ssize_t r = ::recv(conn_, dst + got, n - got, 0);
+                if (r <= 0) return false;
                 got += static_cast<size_t>(r);
             }
+            return true;
         };
-        unsigned char hdr[8] = {};
-        readExact(hdr, sizeof(hdr));
-        const uint32_t len = (static_cast<uint32_t>(hdr[4]) << 24) |
-                             (static_cast<uint32_t>(hdr[5]) << 16) |
-                             (static_cast<uint32_t>(hdr[6]) << 8) | hdr[7];
-        expect(len <= 4096, "sane packet length");
-        std::vector<unsigned char> pkt(hdr, hdr + sizeof(hdr));
-        pkt.resize(sizeof(hdr) + len);
-        readExact(pkt.data() + sizeof(hdr), len);
+        constexpr size_t kHeaderBytes = 8;
+        std::vector<unsigned char> pkt(kHeaderBytes);
+        if (!readExact(pkt.data(), kHeaderBytes)) return std::nullopt;
+        const uint32_t len = (static_cast<uint32_t>(pkt[4]) << 24) |
+                             (static_cast<uint32_t>(pkt[5]) << 16) |
+                             (static_cast<uint32_t>(pkt[6]) << 8) | pkt[7];
+        if (len > 4096) return std::nullopt;
+        pkt.resize(kHeaderBytes + len);
+        if (!readExact(pkt.data() + kHeaderBytes, len)) return std::nullopt;
         return pkt;
+    }
+
+    // Framed server-side receive with a hard deadline (keeps failures
+    // graceful instead of hanging the test).
+    std::vector<unsigned char> readPacket() {
+        auto pkt = readPacketFor(5000);
+        require(pkt.has_value(), "timed out waiting for packet bytes");
+        return *pkt;
     }
 
     // LMS -> client framing: [2b BE length = opcode+payload][opcode][payload]
@@ -414,6 +425,45 @@ SQ2_TEST(wire, dsco_framing) {
 
     client.stop();
     server.expectClosedByClient();
+}
+
+SQ2_TEST(wire, flush_is_acknowledged_once) {
+    LoopbackServer server;
+    std::atomic<int> flushCalls{0};
+    SlimProtoClient* clientPtr = nullptr;
+    SlimProtoClient::Events events;
+    // PlayerSession acks 'strm f' with one STMf from its onFlush handler; the
+    // wire layer must not emit a second one (that was a duplicate STAT).
+    events.onFlush = [&](bool) {
+        flushCalls.fetch_add(1);
+        clientPtr->sendStat("STMf", StreamStats{});
+    };
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x07};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
+    clientPtr = &client;
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    const unsigned char flush = 'f';
+    server.sendPacket("strm", std::span<const unsigned char>(&flush, 1));
+
+    auto isStatf = [](const std::vector<unsigned char>& pkt) {
+        return opcodeOf(pkt) == "STAT" &&
+               std::string_view(reinterpret_cast<const char*>(pkt.data() + 8), 4) == "STMf";
+    };
+    // Drain for a fixed window: the duplicate (if any) follows the first STMf
+    // immediately, while heartbeats (STMt) are ignored.
+    int statf = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    while (std::chrono::steady_clock::now() < deadline) {
+        auto pkt = server.readPacketFor(200);
+        if (pkt && isStatf(*pkt)) ++statf;
+    }
+    expect(flushCalls.load() == 1, "onFlush fired once");
+    expect(statf == 1, "strm f yields exactly one STMf");
+
+    client.stop();
 }
 
 SQ2_TEST(wire, server_silence_watchdog_reconnects) {

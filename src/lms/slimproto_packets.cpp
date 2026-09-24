@@ -256,8 +256,10 @@ void SlimProtoClient::process(const std::string& pkt) {
             break;
         case 'f':
             log::debug(log::Area::Lms, "strm f (flush)");
+            // The STMf ack is emitted by the onFlush handler (PlayerSession),
+            // matching the 'q' stop path; sending it here as well duplicated
+            // the STAT packet.
             if (events_.onFlush) events_.onFlush(true);
-            sendStat("STMf", lastStats());
             break;
         case 'p': {
             const auto ms = r.u32At(18);
