@@ -311,6 +311,63 @@ SQ2_TEST(wire, stream_start_event) {
     server.expectClosedByClient();
 }
 
+SQ2_TEST(wire, strm_start_tls_flag) {
+    LoopbackServer server;
+    std::atomic<int> lastFlags{-1};
+    std::atomic<bool> lastSsl{false};
+    std::atomic<int> seen{0};
+    SlimProtoClient::Events events;
+    events.onStart = [&](const squeeze2raop2::StrmStart& st) {
+        lastFlags.store(st.flags);
+        lastSsl.store(st.ssl);
+        seen.fetch_add(1);
+    };
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x08};
+    SlimProtoClient client(mac, "CanHTTPS=1,Model=squeezelite,mp3,pcm", std::move(events));
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    // 24-byte strm s body; flags is payload byte 11 (packet byte 15).
+    // LMS sets 0x20 for a direct https URL when the player can do TLS, and
+    // 0x40 ("stream without restarting decoder") is orthogonal.
+    std::vector<unsigned char> strmS(24);
+    strmS[0] = 's';
+    strmS[1] = '0';
+    strmS[2] = 'p';
+    strmS[11] = 0x20 | 0x40;
+    strmS[18] = 9000 >> 8;
+    strmS[19] = 9000 & 0xFF;
+    server.sendPacket("strm", strmS);
+    for (int i = 0; i < 100 && seen.load() < 1; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    expect(seen.load() == 1, "strm s with flags fired onStart");
+    expect(lastFlags.load() == (0x20 | 0x40), "flags byte decoded");
+    expect(lastSsl.load(), "0x20 sets StrmStart::ssl");
+
+    // A plain stream (0x40 only) must not request TLS.
+    std::vector<unsigned char> plain(24);
+    plain[0] = 's';
+    plain[1] = '0';
+    plain[2] = 'p';
+    plain[11] = 0x40;
+    plain[18] = 9000 >> 8;
+    plain[19] = 9000 & 0xFF;
+    server.sendPacket("strm", plain);
+    for (int i = 0; i < 100 && seen.load() < 2; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    expect(seen.load() == 2, "second strm s fired onStart");
+    expect(!lastSsl.load(), "0x40 alone leaves StrmStart::ssl false");
+
+    // Each 'strm s' is ACKed with STMf before onStart; drain both so
+    // expectClosedByClient() sees BYE! rather than a pending STAT.
+    expect(opcodeOf(server.readPacket()) == "STAT", "first strm s ACK");
+    expect(opcodeOf(server.readPacket()) == "STAT", "second strm s ACK");
+
+    client.stop();
+    server.expectClosedByClient();
+}
+
 SQ2_TEST(wire, aude_power_event) {
     LoopbackServer server;
     std::atomic<int> lastEnable{-1};

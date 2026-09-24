@@ -44,6 +44,11 @@ uint8_t bitsPerSampleFromCode(uint8_t code);
 uint8_t channelsFromCode(uint8_t code);
 PcmFormat pcmFormat(const PcmParams& params, uint32_t fallbackRate);
 
+// 'strm s' flags byte bits we care about (Squeezebox.pm). 0x20 is set on a
+// direct stream when the URL is https and the player advertised CanHTTPS=1:
+// the transport must use TLS.
+constexpr uint8_t kStrmFlagSsl = 0x20;
+
 struct StrmStart {
     uint8_t autostart = 1;
     StreamFormat format = StreamFormat::Unknown;
@@ -51,6 +56,8 @@ struct StrmStart {
     uint8_t thresholdKb = 0;
     uint8_t transitionType = 0;
     uint8_t transitionPeriodS = 0;
+    uint8_t flags = 0;
+    bool ssl = false;  // flags & kStrmFlagSsl
     uint32_t replayGain = 0;
     uint32_t serverIp = 0;
     uint16_t serverPort = 0;

@@ -58,6 +58,7 @@ option(SQUEEZE2RAOP2_BUILD_TESTS "build squeeze2raop2 unit tests" ON)
 option(SQUEEZE2RAOP2_WITH_AAC "integrate the vendored libxaac AAC decoder" ON)
 option(SQUEEZE2RAOP2_WITH_OGG "integrate the vendored stb_vorbis Ogg decoder" ON)
 option(SQUEEZE2RAOP2_WITH_OPUS "integrate the vendored libogg/libopus Ogg Opus decoder" ON)
+option(SQUEEZE2RAOP2_WITH_HTTPS "integrate mbedTLS for direct HTTPS radio streaming" ON)
 option(SQUEEZE2RAOP2_DIST "name the release binary <name>-<os>-<arch>" OFF)
 option(SQUEEZE2RAOP2_STATIC "link the executable fully static" OFF)
 
@@ -217,11 +218,21 @@ if(SQUEEZE2RAOP2_WITH_OPUS)
   set(SQUEEZE2RAOP2_OPUS_SOURCES src/playback/decoder/opus_decoder.cpp)
 endif()
 
+# TLS transport sources, added to the core only when HTTPS is enabled. Without
+# it transport_factory.cpp still compiles and reports HTTPS as unsupported.
+set(SQUEEZE2RAOP2_TLS_SOURCES "")
+if(SQUEEZE2RAOP2_WITH_HTTPS)
+  set(SQUEEZE2RAOP2_TLS_SOURCES src/common/tls_transport.cpp)
+endif()
+
 add_library(squeeze2raop2_core STATIC
   # common
   src/common/util.cpp
   src/common/log.cpp
   src/common/net_util.cpp
+  src/common/tcp_transport.cpp
+  src/common/transport_factory.cpp
+  ${SQUEEZE2RAOP2_TLS_SOURCES}
   # app
   src/app/config.cpp
   src/app/persistence.cpp
@@ -268,6 +279,17 @@ endif()
 if(SQUEEZE2RAOP2_WITH_OPUS)
   target_link_libraries(squeeze2raop2_core PUBLIC opus squeeze2raop2_ogg)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_OPUS=1)
+endif()
+if(SQUEEZE2RAOP2_WITH_HTTPS)
+  # mbedtls/mbedx509 come from the same FetchContent the sender already pulls
+  # in; without HTTPS only mbedcrypto (a raop_sender dependency) is linked.
+  if(NOT TARGET mbedtls OR NOT TARGET mbedx509)
+    message(FATAL_ERROR
+      "SQUEEZE2RAOP2_WITH_HTTPS=ON but the vendored mbedtls targets are "
+      "missing. Run: git submodule update --init --recursive")
+  endif()
+  target_link_libraries(squeeze2raop2_core PUBLIC mbedtls mbedx509 mbedcrypto)
+  target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_HTTPS=1)
 endif()
 
 add_executable(squeeze2raop2 src/app/main.cpp src/app/bridge.cpp)

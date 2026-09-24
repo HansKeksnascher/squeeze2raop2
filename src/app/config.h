@@ -30,6 +30,10 @@ struct GlobalConfig {
     log::Level logLevel = log::Level::Info;
     // reconnect when the LMS control connection is silent for this long.
     uint32_t serverTimeoutMs = 35000;
+    // Direct HTTPS streams: verify the station certificate against the system
+    // trust store (or tlsCaPath) and fail closed. tlsVerify=off skips it.
+    bool tlsVerify = true;
+    std::string tlsCaPath;  // empty = autodetect; a CA bundle file or certs dir
     // create a section (auto = true) for every discovered device that has none.
     bool autoRegister = true;
 

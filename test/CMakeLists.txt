@@ -57,6 +57,11 @@ if(Python3_Interpreter_FOUND)
   if(SQUEEZE2RAOP2_WITH_OPUS)
     list(APPEND SQUEEZE2RAOP2_INTEGRATION_TESTS opus_stream)
   endif()
+  # Direct HTTPS handover is TLS-specific: the bridge only advertises CanHTTPS
+  # and the fake LMS only serves TLS when the feature is built in.
+  if(SQUEEZE2RAOP2_WITH_HTTPS)
+    list(APPEND SQUEEZE2RAOP2_INTEGRATION_TESTS https_stream)
+  endif()
   foreach(scenario ${SQUEEZE2RAOP2_INTEGRATION_TESTS})
     add_test(NAME ${scenario}
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/${scenario}.py

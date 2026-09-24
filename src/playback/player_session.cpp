@@ -4,7 +4,9 @@
 #include "app/version.h"
 #include "common/log.h"
 #include "common/net_util.h"
+#include "common/transport.h"
 #include "common/util.h"
+#include "lms/lms_stream.h"
 
 #include <algorithm>
 #include <cctype>
@@ -144,19 +146,19 @@ void PlayerSession::start() {
     // SETD name. Firmware= is the free-text version LMS shows in player
     // settings. ModelName carries the AirPlay transport in use so the LMS UI
     // distinguishes the classic RAOP/AP1 path from the native AirPlay 2 path.
+    // CanHTTPS=1 makes LMS hand over direct https radio URLs (strm s with the
+    // 0x20 flag) instead of proxying them; only advertised when TLS is usable.
     const std::string modelName =
         output_->hasTarget() ? (output_->airplay2() ? "squeeze2raop2@ap2" : "squeeze2raop2@raop")
                              : "squeeze2raop2";
-    // Advertise exactly the codecs this build decodes. Pcm/mp3 are always
-    // present (raw PCM from LMS transcode profiles like flc-pcm, native MP3 via
-    // minimp3); AAC/Ogg/Opus appear only when built in. The list comes from
-    // Decoder::supportedCodecs(), the same source the factory and the strm
-    // guard use, so the caps cannot drift from what is actually decodable. Do
-    // NOT advertise wav/aif/flc/alc: no decoder here, and direct-streamed
-    // wav/aif would ship their container headers.
-    std::string caps = "Model=squeezelite,ModelName=" + modelName +
-                       ",AccuratePlayPoints=1,HasDigitalOut=1,MaxSampleRate=96000,"
-                       "Firmware=squeeze2raop2 " SQUEEZE2RAOP2_VERSION;
+    // Advertise exactly the codecs this build decodes, from the same
+    // supportedCodecs() list the factory and the strm guard use (so the caps
+    // cannot drift from what is decodable). Never wav/aif/flc/alc.
+    std::string caps;
+    if (tlsUsable()) caps = "CanHTTPS=1,";
+    caps += "Model=squeezelite,ModelName=" + modelName +
+            ",AccuratePlayPoints=1,HasDigitalOut=1,MaxSampleRate=96000,"
+            "Firmware=squeeze2raop2 " SQUEEZE2RAOP2_VERSION;
     for (const CodecInfo& codec : supportedCodecs()) caps += std::string(",") + codec.capToken;
     client_ = std::make_unique<SlimProtoClient>(mac_, std::move(caps), std::move(events));
     client_->setPlayerName(name_);
@@ -243,8 +245,15 @@ void PlayerSession::startStream(const StrmStart& st) {
         return;
     }
 
-    log::info(log::Area::Ses, "stream GET {}:{} icy={}", host, port,
-              st.request.find("Icy-MetaData") != std::string::npos ? "req" : "none");
+    // The request's Host header is the station hostname on a direct stream and
+    // absent on an LMS-proxied one; log it when present so the direct URL is
+    // readable next to the (DNS-resolved) IP LMS handed us.
+    const std::string hostName = requestHost(st.request);
+    const char* icy = st.request.find("Icy-MetaData") != std::string::npos ? "req" : "none";
+    if (hostName.empty())
+        log::info(log::Area::Ses, "stream GET {}:{} icy={}", host, port, icy);
+    else
+        log::info(log::Area::Ses, "stream GET {}:{} host={} icy={}", host, port, hostName, icy);
     track_ = std::make_unique<PlaybackStream>(*output_, counters_, paceRealtime_, sinkPath_);
     track_->setMetaForward([this](std::string_view block) { client_->sendMeta(block); });
     track_->setDecoderReady([this] { onDecoderReady(); });

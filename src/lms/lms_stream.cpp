@@ -1,40 +1,38 @@
 #include "lms/lms_stream.h"
 
 #include "common/log.h"
-#include "common/net_util.h"
+#include "common/transport.h"
 #include "common/util.h"
-
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
-#include <cerrno>
 #include <charconv>
 #include <cstdint>
-#include <cstring>
+#include <memory>
 
 namespace squeeze2raop2 {
 
 HttpStreamReader::~HttpStreamReader() { close(); }
 
-int HttpStreamReader::fd() const {
-    std::lock_guard<std::mutex> lock(fdMutex_);
-    return fd_.get();
-}
-
 void HttpStreamReader::interrupt() {
-    std::lock_guard<std::mutex> lock(fdMutex_);
-    fd_.shutdown();
+    // Snapshot under the lock so a concurrent openBlocking()/close() replacing
+    // transport_ cannot free it under us; the shared_ptr keeps it (and its
+    // descriptor) alive for the duration of this call.
+    std::shared_ptr<Transport> transport;
+    {
+        std::lock_guard<std::mutex> lock(transportMutex_);
+        transport = transport_;
+    }
+    if (transport) transport->interrupt();
 }
 
 void HttpStreamReader::resetLocked() {
+    std::shared_ptr<Transport> transport;
     {
-        std::lock_guard<std::mutex> lock(fdMutex_);
-        fd_.reset();
+        std::lock_guard<std::mutex> lock(transportMutex_);
+        transport = std::move(transport_);
     }
+    if (transport) transport->close();
     headers_.clear();
     leftover_.clear();
     metaInterval_ = 0;
@@ -69,30 +67,79 @@ uint32_t parseIcyMetaint(const std::string& headers) {
 
 }  // namespace
 
+// The host (without port) from a request's Host header, for TLS SNI and
+// certificate verification, and for naming the source in logs. Empty when the
+// request has no Host header. LMS builds it from the URL it handed over, so on
+// a direct stream it is the station's hostname.
+std::string requestHost(std::string_view request) {
+    auto iequals = [](std::string_view a, std::string_view b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (tolower(static_cast<unsigned char>(a[i])) !=
+                tolower(static_cast<unsigned char>(b[i])))
+                return false;
+        return true;
+    };
+    size_t pos = 0;
+    while (pos < request.size()) {
+        const size_t eol = request.find('\n', pos);
+        std::string_view line(request.data() + pos,
+                              (eol == std::string::npos ? request.size() : eol) - pos);
+        pos = (eol == std::string::npos) ? request.size() : eol + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+            line.remove_suffix(1);
+        if (line.size() <= 5 || !iequals(line.substr(0, 5), "host:")) continue;
+        std::string_view host = line.substr(5);
+        while (!host.empty() && (host.front() == ' ' || host.front() == '\t'))
+            host.remove_prefix(1);
+        // Strip a trailing :port; IPv6 literals arrive bracketed.
+        if (!host.empty() && host.front() == '[') {
+            const size_t close = host.find(']');
+            if (close != std::string_view::npos) host = host.substr(1, close - 1);
+        } else {
+            const size_t colon = host.rfind(':');
+            if (colon != std::string_view::npos && colon + 1 < host.size()) {
+                bool digits = true;
+                for (size_t i = colon + 1; i < host.size(); ++i)
+                    if (!std::isdigit(static_cast<unsigned char>(host[i]))) digits = false;
+                if (digits) host = host.substr(0, colon);
+            }
+        }
+        return std::string(host);
+    }
+    return std::string();
+}
+
 bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
-                                    const std::string& request, std::string& errorOut) {
+                                    const std::string& request, std::string& errorOut, bool ssl) {
     // Serialize against a concurrent close() (PlayerSession::stop() racing a
     // strm s). Held for the whole header phase; interrupt() still works because
     // it does not need this lock.
     std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     resetLocked();
-    const int raw = connectTcp(host, port, errorOut);
-    if (raw < 0) return false;
-    {
-        std::lock_guard<std::mutex> lock(fdMutex_);
-        fd_.reset(raw);
+
+    const std::string sniHost = ssl ? requestHost(request) : std::string();
+    std::shared_ptr<Transport> transport = makeTransport(ssl, sniHost);
+    if (!transport) {
+        errorOut = "HTTPS not supported in this build";
+        return false;
     }
-    // Bounded close: an abandoned connection must not hang close() forever.
-    linger lg{};
-    lg.l_onoff = 1;
-    lg.l_linger = 3;
-    (void)setsockopt(raw, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
+    if (ssl)
+        log::info(log::Area::Lms, "TLS connect {}:{} (sni={})", host, port,
+                  sniHost.empty() ? "?" : sniHost);
+    if (!transport->connect(host, port, errorOut)) return false;
+    {
+        std::lock_guard<std::mutex> lock(transportMutex_);
+        transport_ = transport;
+    }
+
     std::string wire = request;
     if (wire.find("\r\n\r\n") == std::string::npos) {
         if (wire.size() < 4 || wire.compare(wire.size() - 2, 2, "\r\n") != 0) wire += "\r\n";
         wire += "\r\n";
     }
-    if (!sendAll(raw, wire.data(), wire.size())) {
+    std::string sendError;
+    if (!transport->writeAll(std::span{wire.data(), wire.size()}, sendError)) {
         errorOut = "request send failed";
         resetLocked();
         return false;
@@ -110,26 +157,22 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
             resetLocked();
             return false;
         }
-        pollfd pfd{raw, POLLIN, 0};
-        const int wait = static_cast<int>(std::min<uint64_t>(1000, deadline - now));
-        const int pr = ::poll(&pfd, 1, wait);
-        if (pr < 0) {
-            if (errno == EINTR) continue;
-            errorOut = std::string("header poll: ") + errnoMessage(errno);
-            resetLocked();
-            return false;
-        }
-        if (pr == 0) continue;
-
+        const auto wait = static_cast<uint32_t>(std::min<uint64_t>(1000, deadline - now));
         char chunk[4096];
-        const ssize_t n = ::recv(raw, chunk, sizeof(chunk), 0);
-        if (n <= 0) {
-            errorOut = n < 0 ? std::string("header recv: ") + errnoMessage(errno)
-                             : "closed while reading headers";
+        const Transport::Read r = transport->read(std::span{chunk, sizeof(chunk)}, wait);
+        switch (r.result) {
+        case Transport::Result::Data: break;
+        case Transport::Result::Timeout: continue;
+        case Transport::Result::Eof:
+            errorOut = "closed while reading headers";
+            resetLocked();
+            return false;
+        case Transport::Result::Error:
+            errorOut = "header read: " + transport->lastError();
             resetLocked();
             return false;
         }
-        buf.append(chunk, static_cast<size_t>(n));
+        buf.append(chunk, r.bytes);
         const size_t pos = buf.find("\r\n\r\n");
         if (pos == std::string::npos) {
             if (buf.size() > 65536) {
@@ -149,8 +192,8 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
     }
 }
 
-// Pull raw bytes from leftover_/socket: >0 = bytes, 0 = no data yet (timeout),
-// -1 = socket error, -2 = orderly EOF.
+// Pull raw bytes from leftover_/transport: >0 = bytes, 0 = no data yet
+// (timeout), -1 = socket error, -2 = orderly EOF.
 ssize_t HttpStreamReader::pullRaw(std::span<char> dst, uint32_t timeoutMs) {
     if (!leftover_.empty()) {
         size_t n = std::min(leftover_.size(), dst.size());
@@ -158,14 +201,21 @@ ssize_t HttpStreamReader::pullRaw(std::span<char> dst, uint32_t timeoutMs) {
         leftover_.erase(0, n);
         return static_cast<ssize_t>(n);
     }
-    const int fd = this->fd();
-    if (fd < 0) return -1;
-    pollfd pfd{fd, POLLIN, 0};
-    if (poll(&pfd, 1, static_cast<int>(timeoutMs)) <= 0) return 0;
-    ssize_t n = ::recv(fd, dst.data(), dst.size(), 0);
-    if (n > 0) return n;
-    if (n == 0) return -2;
-    if (errno == EAGAIN || errno == EINTR) return 0;
+    // Snapshot under the lock; the shared_ptr keeps the transport alive across
+    // the blocking read even if close()/a new open replaces it meanwhile.
+    std::shared_ptr<Transport> transport;
+    {
+        std::lock_guard<std::mutex> lock(transportMutex_);
+        transport = transport_;
+    }
+    if (!transport) return -1;
+    const Transport::Read r = transport->read(dst, timeoutMs);
+    switch (r.result) {
+    case Transport::Result::Data: return static_cast<ssize_t>(r.bytes);
+    case Transport::Result::Timeout: return 0;
+    case Transport::Result::Eof: return -2;
+    case Transport::Result::Error: return -1;
+    }
     return -1;
 }
 

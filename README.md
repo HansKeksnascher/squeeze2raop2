@@ -43,6 +43,12 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
   Vorbis radio) and Ogg Opus (`ops`, Opus radio) stream natively too — all
   decoded in-process. A codec announced via `codc` that the bridge can't decode
   is rejected with `STMn`.
+- **Direct HTTPS radio** — advertises `CanHTTPS=1`, so LMS hands over a
+  `strm s` with the direct `https://` URL and the `0x20` TLS flag instead of
+  proxying the stream through the server. The bridge fetches it over TLS
+  (vendored mbedTLS), verifying the station certificate against the system
+  trust store by default; `tls-verify = off` or `tls-ca = <path>` override it.
+  When TLS setup fails the cap is withheld, so LMS keeps proxying.
 
 ## Build and run
 
@@ -82,6 +88,8 @@ lms       = 192.168.1.10:3483   # omit for UDP discovery on 3483
 discovery = on
 log       = debug
 # server-timeout-ms = 35000     # reconnect after this much LMS silence
+# tls-verify = on               # verify direct https stream certificates
+# tls-ca = /etc/ssl/certs/ca-certificates.crt   # override the trust store
 
 [default]                       # inherited by every player, then overridden
 volume-map = -30:1, -23:16, -15:50, 0:100
@@ -112,11 +120,17 @@ credentials persist. The program rewrites only the machine-managed `mac`,
 The dynamically linked binary needs only the GNU C/C++ runtime. The vendored
 sender, mbedTLS, mDNSResponder, minimp3, stb_vorbis, libxaac, libogg and libopus
 are all linked in statically, so there is **no** Avahi/D-Bus, ALSA/PulseAudio or
-TLS dependency. The `-static` artifact is a musl build, so it carries no runtime
-libraries at all. Any decoder can be dropped at configure time:
-`-DSQUEEZE2RAOP2_WITH_AAC=OFF`, `-DSQUEEZE2RAOP2_WITH_OGG=OFF` or
+external TLS library dependency. The `-static` artifact is a musl build, so it
+carries no runtime libraries at all. Any decoder can be dropped at configure
+time: `-DSQUEEZE2RAOP2_WITH_AAC=OFF`, `-DSQUEEZE2RAOP2_WITH_OGG=OFF` or
 `-DSQUEEZE2RAOP2_WITH_OPUS=OFF`; the HELO caps then advertise only the codecs
-that remain built in.
+that remain built in. Direct HTTPS streaming can be dropped with
+`-DSQUEEZE2RAOP2_WITH_HTTPS=OFF` (the caps then omit `CanHTTPS=1`).
+
+One piece of *data* is needed for direct HTTPS: a CA bundle to verify station
+certificates (the system store is autodetected, or set `[global] tls-ca`). With
+no bundle found the bridge logs a warning and withholds `CanHTTPS=1`, so LMS
+keeps proxying; `[global] tls-verify = off` disables verification instead.
 
 | Artifact | Needs at runtime |
 |---|---|
@@ -141,7 +155,7 @@ Vendored as git submodules under `third_party/`; each keeps its own license.
 | [libogg](https://github.com/xiph/ogg) | Ogg page demuxer for Opus | BSD-3-Clause |
 | [libopus](https://github.com/xiph/opus) | Ogg Opus decoder | BSD-3-Clause |
 | [libxaac](https://github.com/ittiam-systems/libxaac) | AAC-LC/HE-AAC decoder (ADTS + MP4 demux) | Apache-2.0 |
-| [Mbed-TLS/mbedtls](https://github.com/Mbed-TLS/mbedtls) | TLS/crypto underneath the sender | Apache-2.0 |
+| [Mbed-TLS/mbedtls](https://github.com/Mbed-TLS/mbedtls) | crypto underneath the sender + the direct-stream HTTPS client | Apache-2.0 |
 
 ## Credits
 

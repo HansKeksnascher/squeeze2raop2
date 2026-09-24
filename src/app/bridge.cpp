@@ -7,6 +7,7 @@
 #include "app/persistence.h"
 #include "app/shutdown_flag.h"
 #include "common/log.h"
+#include "common/transport.h"
 #include "discovery/device_registry.h"
 #include "discovery/mdns.h"
 #include "playback/session_manager.h"
@@ -19,6 +20,22 @@ namespace squeeze2raop2 {
 
 void runBridge(const Settings& settings, Persistence& persistence) {
     installShutdownSignalHandlers();
+
+    // Set up the shared TLS trust context before any session can advertise
+    // CanHTTPS=1. On failure the caps leave it out, so LMS keeps proxying
+    // https streams instead of handing over URLs the bridge cannot fetch.
+    {
+        tls::Options tlsOpts;
+        tlsOpts.verify = settings.global.tlsVerify;
+        tlsOpts.caPath = settings.global.tlsCaPath;
+        std::string tlsError;
+        if (!tlsConfigure(tlsOpts, tlsError)) {
+            log::warn(log::Area::App, "HTTPS direct streaming unavailable: {} (LMS will proxy)",
+                      tlsError);
+        } else if (tlsUsable()) {
+            log::info(log::Area::App, "TLS ready (verify={})", tlsOpts.verify ? "on" : "off");
+        }
+    }
 
     DeviceRegistry registry;
     SessionManager manager(settings, persistence);

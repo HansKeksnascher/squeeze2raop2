@@ -1,6 +1,7 @@
 import argparse
 import math
 import socket
+import ssl
 import struct
 import threading
 import time
@@ -55,7 +56,8 @@ class FakeLms:
                  autostart=1, fmt="p", replay_gain=0, transition=0, transition_secs=0,
                  skip_ms=0, send_aude_off=False, codc_codec=None, stall_after=0.0,
                  silent=False, pause_after=0.0, pause_for=0.0, aac_fixture=None,
-                 container="adts", aac_reps=0, ogg_fixture=None, opus_fixture=None):
+                 container="adts", aac_reps=0, ogg_fixture=None, opus_fixture=None,
+                 https_cert=None, https_key=None):
         self.tcp_port = tcp_port
         self.http_port = http_port
         self.stream_seconds = stream_seconds
@@ -80,6 +82,8 @@ class FakeLms:
         self.aac_reps = aac_reps
         self.ogg_fixture = ogg_fixture
         self.opus_fixture = opus_fixture
+        self.https_cert = https_cert
+        self.https_key = https_key
         self.stall_after = stall_after
         self.silent = silent
         self.pause_after = pause_after
@@ -95,8 +99,20 @@ class FakeLms:
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("127.0.0.1", self.http_port))
         srv.listen(4)
+        tls_ctx = None
+        if self.https_cert:
+            tls_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls_ctx.load_cert_chain(self.https_cert, self.https_key)
         while True:
             conn, _ = srv.accept()
+            if tls_ctx is not None:
+                try:
+                    conn = tls_ctx.wrap_socket(conn, server_side=True)
+                    report("tls handshake ok")
+                except (ssl.SSLError, OSError) as e:
+                    report("tls handshake failed: %s" % e)
+                    conn.close()
+                    continue
             try:
                 request = b""
                 while b"\r\n\r\n" not in request:
@@ -198,17 +214,25 @@ class FakeLms:
         packed += b"\x00"   # spdif
         packed += bytes([self.transition_secs & 0xFF])  # transition period
         packed += bytes([ord("0") + self.transition])   # transition type
-        packed += b"\x40"   # flags: stream without restart
+        flags = 0x40            # stream without restart
+        if self.https_cert:
+            flags |= 0x20       # SSL socket required (CanHTTPS=1 was advertised)
+        packed += bytes([flags])
         packed += b"\x10"   # output threshold 1.0s
         packed += b"\x00"   # reserved/slaves
         packed += struct.pack(">I", self.replay_gain & 0xFFFFFFFF)  # replay gain
         packed += struct.pack(">H", self.http_port)
         packed += bytes([127, 0, 0, 1])         # server ip
-        packed += ("GET /stream.mp3?player=%s HTTP/1.0\r\n" % self.mac.replace(":", "%3A")).encode()
-        packed += b"\r\n"
+        request = "GET /stream.mp3?player=%s HTTP/1.0\r\n" % self.mac.replace(":", "%3A")
+        if self.https_cert:
+            # A direct stream carries the station host for SNI/cert checks.
+            request += "Host: localhost\r\n"
+        request += "\r\n"
+        packed += request.encode()
         sock.sendall(slim_frame(b"strm", bytes(packed)))
-        report("strm-s sent (autostart=%d, format=%s, replay-gain=%d, transition=%d/%ds)"
-               % (self.autostart, self.fmt, self.replay_gain, self.transition, self.transition_secs))
+        report("strm-s sent (autostart=%d, format=%s, replay-gain=%d, transition=%d/%ds, https=%s)"
+               % (self.autostart, self.fmt, self.replay_gain, self.transition,
+                  self.transition_secs, bool(self.https_cert)))
 
     def send_codc(self, sock, codec):
         packed = bytearray()
@@ -398,6 +422,10 @@ def main():
                         help="serve this Ogg Vorbis file as format 'o'")
     parser.add_argument("--opus-fixture", default=None,
                         help="serve this Ogg Opus file as format 'u'")
+    parser.add_argument("--https-cert", default=None,
+                        help="serve the stream over TLS with this certificate")
+    parser.add_argument("--https-key", default=None,
+                        help="private key for --https-cert")
     args = parser.parse_args()
     lms = FakeLms(
         args.tcp_port,
@@ -423,6 +451,8 @@ def main():
         aac_reps=args.aac_reps,
         ogg_fixture=args.ogg_fixture,
         opus_fixture=args.opus_fixture,
+        https_cert=args.https_cert,
+        https_key=args.https_key,
     )
     lms.run()
 

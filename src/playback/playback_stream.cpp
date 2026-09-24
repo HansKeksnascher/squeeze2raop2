@@ -60,7 +60,7 @@ std::optional<std::string> PlaybackStream::openSource(const StrmStart& st, const
     // request is bare): LMS's /stream.mp3 only interleaves StreamTitle blocks
     // when the client sends Icy-MetaData: 1.
     std::string request = withIcyRequestHeader(st.request);
-    if (!reader_.openBlocking(host, port, request, error)) {
+    if (!reader_.openBlocking(host, port, request, error, st.ssl)) {
         disconnect_ = mapOpenError(error);
         return std::nullopt;
     }

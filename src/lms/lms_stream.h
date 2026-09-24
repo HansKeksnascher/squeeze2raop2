@@ -3,18 +3,23 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
 
-#include "common/net_util.h"  // UniqueFd
-
 namespace squeeze2raop2 {
+
+class Transport;
+
+// The host (without port) from a request's Host header, empty when absent.
+// Shared by the TLS SNI/verification path and the "stream GET" log line.
+std::string requestHost(std::string_view request);
 
 class HttpStreamReader {
 public:
-    // Timeout: no data within the deadline (keep going). Closed: socket
+    // Timeout: no data within the deadline (keep going). Closed: socket/TLS
     // error (the stream is dead). AtEof: orderly end of stream.
     enum class ReadResult : std::uint8_t { Data, Timeout, Closed, AtEof };
 
@@ -24,7 +29,7 @@ public:
     HttpStreamReader& operator=(const HttpStreamReader&) = delete;
 
     bool openBlocking(const std::string& host, uint16_t port, const std::string& request,
-                      std::string& errorOut);
+                      std::string& errorOut, bool ssl = false);
 
     // Outcome of one read() call: result == Data carries `bytes` audio bytes
     // in the buffer (a close/error after partial data is reported as Data
@@ -56,16 +61,16 @@ private:
     // >0 = bytes, 0 = no data yet (timeout), -1 = socket error, -2 = orderly EOF
     ssize_t pullRaw(std::span<char> dst, uint32_t timeoutMs);
 
-    // Current descriptor under fdMutex_, or -1. The descriptor is only ever
-    // closed by close(); interrupt() merely shuts it down, so a value read
-    // here stays valid for the duration of one pullRaw()/read() call.
-    [[nodiscard]] int fd() const;
-
-    // Clear descriptor + header/ICY state. Caller must hold lifecycleMutex_.
+    // Clear the transport + header/ICY state. Caller must hold lifecycleMutex_.
     void resetLocked();
 
-    UniqueFd fd_;
-    mutable std::mutex fdMutex_;
+    // The current byte stream under transportMutex_. Kept alive across a read
+    // by shared ownership so interrupt() (another thread) can never touch a
+    // transport being replaced by openBlocking()/close(); only close() closes
+    // it, interrupt() merely shuts the descriptor down.
+    std::shared_ptr<Transport> transport_;
+    mutable std::mutex transportMutex_;
+
     // Serializes openBlocking() against close() (they run on different threads
     // when PlayerSession::stop() races a strm s); interrupt() deliberately does
     // not take it, so it can unblock a header read still in progress.

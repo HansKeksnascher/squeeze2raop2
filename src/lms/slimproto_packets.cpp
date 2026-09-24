@@ -297,8 +297,10 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (!r.skip(1)) return;  // packet byte 12 (unused)
             st.transitionPeriodS = *r.u8();
             st.transitionType = static_cast<uint8_t>(*r.u8() - '0');
-            if (!r.skip(2)) return;  // packet bytes 15..16 (unused)
-            if (!r.skip(1)) return;  // packet byte 17 (unused)
+            st.flags = *r.u8();  // packet byte 15; 0x20 = TLS on a direct URL
+            st.ssl = (st.flags & kStrmFlagSsl) != 0;
+            if (!r.skip(1)) return;  // packet byte 16 (output threshold)
+            if (!r.skip(1)) return;  // packet byte 17 (slaves)
             st.replayGain = *r.u32();
             st.serverPort = *r.u16();
             st.serverIp = *r.u32();
