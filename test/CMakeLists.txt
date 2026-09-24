@@ -11,6 +11,8 @@ add_executable(squeeze2raop2_tests
   unit/test_slimproto_wire.cpp
   unit/test_transport.cpp
   unit/test_volume_map.cpp
+  unit/test_remote_event.cpp
+  unit/test_remote_volume.cpp
   unit/test_device_registry.cpp
   unit/test_byte_order.cpp
   unit/test_pcm_decoder.cpp
@@ -34,7 +36,8 @@ set_tests_properties(unit PROPERTIES LABELS unit)
 
 # Per-suite cases for `ctest -j` / `-R`, all sharing the one binary.
 foreach(s util config persistence wav wire transport volume registry
-          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names gain log aac ogg opus)
+          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names gain log aac ogg opus
+          remote_event remote_vol)
   add_test(NAME unit_${s} COMMAND squeeze2raop2_tests --filter ${s})
   set_tests_properties(unit_${s} PROPERTIES LABELS unit)
 endforeach()

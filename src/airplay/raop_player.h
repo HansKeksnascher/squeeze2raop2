@@ -51,6 +51,11 @@ public:
     // Fires only for device-initiated closes / session failures (our own
     // stop() is quiet by design in the sender).
     void setClosedCallback(std::function<void()> cb) { onClosed_ = std::move(cb); }
+    // Fires when the receiver changes its own output volume (AP2 event
+    // channel); the argument is the receiver's unit volume, 0..1.
+    void setRemoteVolumeCallback(std::function<void(double)> cb) {
+        onRemoteVolume_ = std::move(cb);
+    }
     void discardAudio() { ringStorage_->reset(); }
 
     void setInputRate(uint32_t rate) {
@@ -75,6 +80,7 @@ private:
     std::jthread pumpThread_;
     CredentialSink onCredentials_;
     std::function<void()> onClosed_;
+    std::function<void(double)> onRemoteVolume_;
     std::atomic<bool> launched_{false};
 };
 

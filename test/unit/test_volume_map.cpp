@@ -71,6 +71,23 @@ SQ2_TEST(volume, chain) {
     }
 }
 
+SQ2_TEST(volume, inverse) {
+    auto v = VolumeAnchors::parse(kDefaultVolumeMap);
+    expect(v.has_value(), "inverse spec parses");
+    expect(near(v->lmsPctFromDb(-30.0), 1.0, 1e-9), "-30 dB -> quiet-but-not-mute floor");
+    expect(near(v->lmsPctFromDb(-45.0), 1.0, 1e-9), "below the floor clamps to 1");
+    expect(near(v->lmsPctFromDb(-23.0), 16.0, 1e-9), "anchor dB -> slider 16");
+    expect(near(v->lmsPctFromDb(-15.0), 50.0, 1e-9), "anchor dB -> slider 50");
+    expect(near(v->lmsPctFromDb(0.0), 100.0, 1e-9), "0 dB -> slider 100");
+    expect(near(v->lmsPctFromDb(6.0), 100.0, 1e-9), "above the top clamps to 100");
+
+    // dB -> slider -> dB round-trips every anchor exactly.
+    for (int s = 1; s <= 100; ++s) {
+        const double pct = v->lmsPctFromDb(v->dbAt(s));
+        expect(near(pct, s, 1e-6), "inverse round-trips the anchor curve");
+    }
+}
+
 SQ2_TEST(volume, lms_curve) {
     // LMS mute is an explicit zero gain.
     expect(lmsSliderPctFromGain(0) == 0.0, "zero gain -> mute");

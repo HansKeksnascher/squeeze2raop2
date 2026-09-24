@@ -62,6 +62,7 @@ bool AirplayOutput::prepare(uint32_t sampleRate) {
     player_ = std::make_shared<RaopPlayer>(name_, identity_, *target_);
     player_->setCredentialSink(std::move(sink));
     player_->setClosedCallback([this] { onClosed(); });
+    if (remoteVolumeSink_) player_->setRemoteVolumeCallback(remoteVolumeSink_);
     player_->setInputRate(sampleRate);
     // Scheduled stream latency: must be set BEFORE start() (it is part of the
     // RTP timeline the receiver schedules against).
@@ -104,6 +105,12 @@ void AirplayOutput::setNowPlaying(const std::string& title, const std::string& a
                                   const std::string& album) {
     auto player = snapshot();
     if (player) player->setNowPlaying(title, artist, album);
+}
+
+void AirplayOutput::setRemoteVolumeCallback(std::function<void(double)> cb) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    remoteVolumeSink_ = std::move(cb);
+    if (player_) player_->setRemoteVolumeCallback(remoteVolumeSink_);
 }
 
 bool AirplayOutput::push(std::span<const int16_t> samples, size_t channels, const Abort& abort) {

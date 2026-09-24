@@ -72,6 +72,14 @@ public:
     // produces 0 (the -30 dB anchor would), it floors at 0.05 pct.
     double airplayPctFromLms(double lmsPct) const;
 
+    // Inverse anchors: AirPlay attenuation in dB -> LMS slider percent.
+    // Below the quietest anchor there is no representable quiet-but-not-mute
+    // slider position, so it clamps to 1 (the caller maps a true mute sentinel
+    // to 0); above the loudest anchor it clamps to 100. Used by the
+    // receiver-initiated volume path to recover the LMS slider a receiver's
+    // reported volume corresponds to.
+    [[nodiscard]] double lmsPctFromDb(double db) const;
+
     const std::vector<std::pair<double, double>>& points() const { return points_; }
 
 private:

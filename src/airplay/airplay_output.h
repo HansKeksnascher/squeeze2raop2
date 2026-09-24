@@ -63,6 +63,9 @@ public:
     bool setVolume(double pct);
     void setNowPlaying(const std::string& title, const std::string& artist,
                        const std::string& album);
+    // Receiver-originated output-volume changes (AP2 event channel), unit
+    // volume 0..1. Stored and applied to each sender the output creates.
+    void setRemoteVolumeCallback(std::function<void(double)> cb);
 
     // Blocking ring push with backpressure; returns false if aborted early.
     // `samples` is native s16 in `channels` channels; the ring is always
@@ -94,6 +97,7 @@ private:
     std::string identity_;
     std::optional<RaopTarget> target_;
     CredentialSink credSink_;
+    std::function<void(double)> remoteVolumeSink_;
     int latencyMs_ = 500;
     mutable std::mutex mutex_;  // guards player_/target_/credSink_
     std::shared_ptr<RaopPlayer> player_;

@@ -57,6 +57,10 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
                   credsJson.size());
         if (onCredentials_) onCredentials_(deviceId, credsJson);
     };
+    events.remoteVolumeChanged = [this](double unit) {
+        log::info(log::Area::Ap, "{} receiver volume event: {:.3f} (unit)", name_, unit);
+        if (onRemoteVolume_) onRemoteVolume_(unit);
+    };
 
     sender_ = std::make_unique<fxchain::RaopSender>(
         loop_, std::move(events),

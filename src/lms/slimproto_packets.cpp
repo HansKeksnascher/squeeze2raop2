@@ -217,6 +217,25 @@ void SlimProtoClient::sendDisco(uint8_t reason) {
         log::warn(log::Area::Lms, "DSCO send failed");
 }
 
+void SlimProtoClient::sendButton(uint32_t code) {
+    // BUTN: [4b time in 1 kHz ticks][4b button code]. LMS's _button_handler
+    // unpacks NH8 and resolves the code against the player's IR code set
+    // (IR/Slim_Devices_Remote.ir: volup=7689807f, voldown=768900ff), then runs
+    // the mapped button function (Default.map: volup/voldown -> volume).
+    // Timestamps must strictly increase: LMS ignores a duplicate.
+    uint32_t tick = static_cast<uint32_t>(nowMs() & 0xFFFFFFFFULL);
+    uint32_t prev = buttonTick_.load(std::memory_order_relaxed);
+    uint32_t next = 0;
+    do {
+        next = tick > prev ? tick : prev + 1u;
+    } while (!buttonTick_.compare_exchange_weak(prev, next, std::memory_order_relaxed));
+
+    PacketWriter body(8);
+    body.u32(next);
+    body.u32(code);
+    if (!sendPacket("BUTN", body.data())) log::warn(log::Area::Lms, "BUTN send failed");
+}
+
 void SlimProtoClient::sendMeta(std::string_view data) {
     // squeezelite parity: forward the raw ICY metadata block to LMS so its
     // track display follows the stream (LMS also watches direct streams

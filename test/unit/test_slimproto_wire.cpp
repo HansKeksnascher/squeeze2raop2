@@ -462,6 +462,35 @@ SQ2_TEST(wire, setd_rename_and_query) {
     server.expectClosedByClient();
 }
 
+SQ2_TEST(wire, butn_volume_nudge) {
+    LoopbackServer server;
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x09};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", SlimProtoClient::Events{});
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    client.sendButton(0x7689807fu);  // volup
+    const auto butn = server.readPacket();
+    expect(opcodeOf(butn) == "BUTN", "sendButton emits BUTN");
+    const uint32_t len = (static_cast<uint32_t>(butn[4]) << 24) |
+                         (static_cast<uint32_t>(butn[5]) << 16) |
+                         (static_cast<uint32_t>(butn[6]) << 8) | butn[7];
+    expect(len == 8, "BUTN body is time(4) + code(4)");
+    // The 4-byte code is read back by LMS's unpack('NH8'): big-endian 7689807f.
+    expect(butn[12] == 0x76 && butn[13] == 0x89 && butn[14] == 0x80 && butn[15] == 0x7f,
+           "volup code is big-endian 7689807f");
+
+    client.sendButton(0x768900ffu);  // voldown
+    const auto down = server.readPacket();
+    expect(opcodeOf(down) == "BUTN", "second nudge emits BUTN");
+    expect(down[12] == 0x76 && down[13] == 0x89 && down[14] == 0x00 && down[15] == 0xff,
+           "voldown code is big-endian 768900ff");
+
+    client.stop();
+    server.expectClosedByClient();
+}
+
 SQ2_TEST(wire, dsco_framing) {
     LoopbackServer server;
     SlimProtoClient::Events events;

@@ -30,6 +30,11 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
   (`volume-map`) → receiver `SET_PARAMETER volume`, including mute; applied
   mid-stream, remembered across session restarts, and pinnable
   (`volume = fixed`, `volume-pct`).
+- **Reverse volume sync (AirPlay 2)** — volume changes made on the receiver
+  itself (HomePod/Sonos buttons) arrive on the AP2 event channel and are
+  chased back to LMS with `BUTN` volume nudges, so the LMS slider follows the
+  speaker. On by default; disable with `volume-feedback = off`. slimproto has
+  no absolute player→server volume, so a large jump is walked in steps.
 - **Now-playing metadata** — ICY in-band metadata from streams → DMAP on the
   receiver, passed through as `META` to LMS.
 - **Clean transport** — stop/pause sends FLUSH and drains the ring so the

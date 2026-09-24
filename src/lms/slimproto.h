@@ -61,6 +61,10 @@ public:
     void sendSetdName(const std::string& name);
     void sendDisco(uint8_t reason);
     void sendMeta(std::string_view data);
+    // A hard-button / IR code press (squeezelite parity). Used to nudge the
+    // LMS volume from receiver-initiated volume changes: LMS maps the
+    // volup/voldown codes to its own volume mixer and answers with AUDG.
+    void sendButton(uint32_t code);
 
     const std::array<uint8_t, 6>& mac() const { return mac_; }
 
@@ -106,6 +110,10 @@ private:
     std::string playerName_;
     bool reconnect_ = false;
     std::function<StreamStats()> statsProvider_;
+    // Strictly increasing 1 kHz tick for BUTN hard-button presses: LMS drops a
+    // press whose timestamp equals the previous one, so fast receiver volume
+    // nudges must never collide.
+    std::atomic<uint32_t> buttonTick_{0};
 };
 
 }  // namespace squeeze2raop2

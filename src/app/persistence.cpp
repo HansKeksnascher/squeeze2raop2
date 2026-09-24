@@ -298,6 +298,9 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
     } else if (key == "auto-register") {
         if (!parseBool(value, b)) return fail(error, lineNo, "auto-register must be on|off");
         global_.autoRegister = b;
+    } else if (key == "volume-feedback") {
+        if (!parseBool(value, b)) return fail(error, lineNo, "volume-feedback must be on|off");
+        global_.volumeFeedback = b;
     } else if (key == "server-timeout-ms") {
         unsigned v = 0;
         if (!parseNumber(value, v))
@@ -609,6 +612,7 @@ void Persistence::writeTemplate() {
            "# tls-ca = /etc/ssl/certs/ca-certificates.crt\n"
            "log = info\n"
            "auto-register = on\n"
+           "# volume-feedback = on\n"
            "\n"
            "[default]\n"
            "protocol = ap2\n"

@@ -39,6 +39,9 @@ struct GlobalConfig {
     std::string tlsCaPath;  // empty = autodetect; a CA bundle file or certs dir
     // create a section (auto = true) for every discovered device that has none.
     bool autoRegister = true;
+    // Report receiver-initiated volume changes (HomePod/Sonos volume buttons)
+    // back to LMS by nudging its volume mixer. Off disables the feedback.
+    bool volumeFeedback = true;
 
     std::string configPath = "squeeze2raop2.conf";
 };
