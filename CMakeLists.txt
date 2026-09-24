@@ -58,6 +58,7 @@ option(SQUEEZE2RAOP2_BUILD_TESTS "build squeeze2raop2 unit tests" ON)
 option(SQUEEZE2RAOP2_WITH_SENDER "integrate the vendored raop_sender library" ON)
 option(SQUEEZE2RAOP2_WITH_AAC "integrate the vendored libxaac AAC decoder" ON)
 option(SQUEEZE2RAOP2_WITH_OGG "integrate the vendored stb_vorbis Ogg decoder" ON)
+option(SQUEEZE2RAOP2_WITH_OPUS "integrate the vendored libogg/libopus Ogg Opus decoder" ON)
 option(SQUEEZE2RAOP2_DIST "name the release binary <name>-<os>-<arch>" OFF)
 option(SQUEEZE2RAOP2_STATIC "link the executable fully static" OFF)
 
@@ -149,6 +150,13 @@ if(SQUEEZE2RAOP2_WITH_AAC)
   add_subdirectory(cmake/libxaac EXCLUDE_FROM_ALL)
 endif()
 
+# Ogg Opus decoder stack (libogg + libopus): built through cmake/opus so
+# libopus's directory-scoped CMake state stays isolated. Only the static
+# libraries are built (no tests/programs/install rules).
+if(SQUEEZE2RAOP2_WITH_OPUS)
+  add_subdirectory(cmake/opus EXCLUDE_FROM_ALL)
+endif()
+
 add_library(squeeze2raop2_apple_mdns STATIC
   third_party/mDNSResponder/mDNSPosix/mDNSPosix.c
   third_party/mDNSResponder/mDNSPosix/mDNSUNP.c
@@ -203,6 +211,12 @@ if(SQUEEZE2RAOP2_WITH_OGG)
   set(SQUEEZE2RAOP2_OGG_SOURCES src/playback/decoder/ogg_decoder.cpp)
 endif()
 
+# Ogg Opus decoder sources, added to the core only when libopus is enabled.
+set(SQUEEZE2RAOP2_OPUS_SOURCES "")
+if(SQUEEZE2RAOP2_WITH_OPUS)
+  set(SQUEEZE2RAOP2_OPUS_SOURCES src/playback/decoder/opus_decoder.cpp)
+endif()
+
 add_library(squeeze2raop2_core STATIC
   # common
   src/common/util.cpp
@@ -236,6 +250,7 @@ add_library(squeeze2raop2_core STATIC
   src/playback/decoder/pcm_decoder.cpp
   ${SQUEEZE2RAOP2_AAC_SOURCES}
   ${SQUEEZE2RAOP2_OGG_SOURCES}
+  ${SQUEEZE2RAOP2_OPUS_SOURCES}
 )
 target_include_directories(squeeze2raop2_core PUBLIC
   ${CMAKE_BINARY_DIR}/generated src third_party/minimp3)
@@ -252,6 +267,10 @@ endif()
 if(SQUEEZE2RAOP2_WITH_OGG)
   target_link_libraries(squeeze2raop2_core PUBLIC squeeze2raop2_stb_vorbis)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_OGG=1)
+endif()
+if(SQUEEZE2RAOP2_WITH_OPUS)
+  target_link_libraries(squeeze2raop2_core PUBLIC opus squeeze2raop2_ogg)
+  target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_OPUS=1)
 endif()
 
 add_executable(squeeze2raop2 src/app/main.cpp src/app/bridge.cpp)

@@ -18,3 +18,9 @@
 [submodule "third_party/stb"]
 	path = third_party/stb
 	url = https://github.com/nothings/stb
+[submodule "third_party/ogg"]
+	path = third_party/ogg
+	url = https://github.com/xiph/ogg
+[submodule "third_party/opus"]
+	path = third_party/opus
+	url = https://github.com/xiph/opus

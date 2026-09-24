@@ -55,7 +55,7 @@ class FakeLms:
                  autostart=1, fmt="p", replay_gain=0, transition=0, transition_secs=0,
                  skip_ms=0, send_aude_off=False, codc_codec=None, stall_after=0.0,
                  silent=False, pause_after=0.0, pause_for=0.0, aac_fixture=None,
-                 container="adts", aac_reps=0, ogg_fixture=None):
+                 container="adts", aac_reps=0, ogg_fixture=None, opus_fixture=None):
         self.tcp_port = tcp_port
         self.http_port = http_port
         self.stream_seconds = stream_seconds
@@ -79,6 +79,7 @@ class FakeLms:
         self.container = container
         self.aac_reps = aac_reps
         self.ogg_fixture = ogg_fixture
+        self.opus_fixture = opus_fixture
         self.stall_after = stall_after
         self.silent = silent
         self.pause_after = pause_after
@@ -109,6 +110,9 @@ class FakeLms:
                     content_type = b"audio/aac" if self.container == "adts" else b"audio/mp4"
                 elif self.ogg_fixture:
                     audio = open(self.ogg_fixture, "rb").read()
+                    content_type = b"audio/ogg"
+                elif self.opus_fixture:
+                    audio = open(self.opus_fixture, "rb").read()
                     content_type = b"audio/ogg"
                 else:
                     seconds = self.stream_seconds if self.queue_tracks else self.stream_seconds + 60.0
@@ -157,6 +161,12 @@ class FakeLms:
                     conn.shutdown(socket.SHUT_WR)
                     conn.close()
                     report("ogg fixture streamed and closed")
+                elif self.opus_fixture:
+                    # A file-backed Opus fixture is a finite stream: close so the
+                    # bridge decodes to EOF and reports the end.
+                    conn.shutdown(socket.SHUT_WR)
+                    conn.close()
+                    report("opus fixture streamed and closed")
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
 
@@ -363,7 +373,7 @@ def main():
         help="serve N short tracks, advancing on the player's STMd (queue test)",
     )
     parser.add_argument("--autostart", type=int, default=1, help="strm-s autostart 0-3")
-    parser.add_argument("--format", default="p", help="strm-s format: p/m/a/o/?")
+    parser.add_argument("--format", default="p", help="strm-s format: p/m/a/o/u/?")
     parser.add_argument("--replay-gain", type=int, default=0, help="strm-s replay gain (16.16)")
     parser.add_argument("--transition", type=int, default=0, help="strm-s transition type 0-4")
     parser.add_argument("--transition-secs", type=int, default=0, help="strm-s transition period")
@@ -386,6 +396,8 @@ def main():
                         help="repeat the AAC fixture this many times (0 = auto)")
     parser.add_argument("--ogg-fixture", default=None,
                         help="serve this Ogg Vorbis file as format 'o'")
+    parser.add_argument("--opus-fixture", default=None,
+                        help="serve this Ogg Opus file as format 'u'")
     args = parser.parse_args()
     lms = FakeLms(
         args.tcp_port,
@@ -410,6 +422,7 @@ def main():
         container=args.container,
         aac_reps=args.aac_reps,
         ogg_fixture=args.ogg_fixture,
+        opus_fixture=args.opus_fixture,
     )
     lms.run()
 

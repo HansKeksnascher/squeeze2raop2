@@ -16,6 +16,7 @@ enum class StreamFormat : uint8_t {
     Flac = 'f',
     Wma = 'w',
     Ogg = 'o',
+    Opus = 'u',
     Aac = 'a',
     Alac = 'l',
 };

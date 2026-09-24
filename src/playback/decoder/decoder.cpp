@@ -9,6 +9,9 @@
 #if defined(SQUEEZE2RAOP2_WITH_OGG)
 #include "playback/decoder/ogg_decoder.h"
 #endif
+#if defined(SQUEEZE2RAOP2_WITH_OPUS)
+#include "playback/decoder/opus_decoder.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -103,6 +106,9 @@ std::unique_ptr<Decoder> Decoder::create(StreamFormat format, const PcmFormat& i
 #endif
 #if defined(SQUEEZE2RAOP2_WITH_OGG)
     case StreamFormat::Ogg: return std::make_unique<OggDecoder>(in);
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_OPUS)
+    case StreamFormat::Opus: return std::make_unique<OggOpusDecoder>(in);
 #endif
     default: return nullptr;
     }

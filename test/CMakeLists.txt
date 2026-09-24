@@ -17,6 +17,7 @@ add_executable(squeeze2raop2_tests
   unit/test_decoder.cpp
   unit/test_aac_decoder.cpp
   unit/test_ogg_decoder.cpp
+  unit/test_opus_decoder.cpp
   unit/test_ring_telemetry.cpp
   unit/test_icy_meta.cpp
   unit/test_stream_counters.cpp
@@ -33,7 +34,7 @@ set_tests_properties(unit PROPERTIES LABELS unit)
 
 # Per-suite cases for `ctest -j` / `-R`, all sharing the one binary.
 foreach(s util config persistence wav wire transport volume registry
-          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names gain log aac ogg)
+          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names gain log aac ogg opus)
   add_test(NAME unit_${s} COMMAND squeeze2raop2_tests --filter ${s})
   set_tests_properties(unit_${s} PROPERTIES LABELS unit)
 endforeach()
@@ -44,7 +45,7 @@ if(Python3_Interpreter_FOUND)
   set(SQUEEZE2RAOP2_INTEGRATION_TESTS
     single_player_stream two_player_registration queue_advance
     skip_ahead replay_gain power_off codc_stream codc_unsupported
-    watchdog fade fade_out pause_resume aac_adts_stream aac_mp4_stream ogg_vorbis_stream)
+    watchdog fade fade_out pause_resume aac_adts_stream aac_mp4_stream ogg_vorbis_stream opus_stream)
   foreach(scenario ${SQUEEZE2RAOP2_INTEGRATION_TESTS})
     add_test(NAME ${scenario}
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/${scenario}.py
