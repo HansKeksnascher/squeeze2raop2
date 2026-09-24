@@ -1,11 +1,11 @@
 # Build the Ogg Opus third-party stack in an isolated CMake directory scope.
 #
-# - libogg is two C files (framing + bitwise); compile them directly and
-#   silence their warnings like the other vendored sources.
-# - libopus has its own CMake, but it also builds tests/programs/install rules
+# - libogg is built through its own CMake: its os_types.h includes the
+#   generated ogg/config_types.h, which only its build step produces. Building
+#   framing.c/bitwise.c by hand would silently rely on a system libogg header.
+# - libopus also has its own CMake, but it builds tests/programs/install rules
 #   and touches directory-scoped state. Running it from this dedicated
-#   subdirectory keeps those side effects off squeeze2raop2's own targets
-#   while still producing the static `opus` library.
+#   subdirectory keeps those side effects off squeeze2raop2's own targets.
 #
 # Both are pinned as git submodules at third_party/ogg and third_party/opus.
 
@@ -18,12 +18,13 @@ if(NOT EXISTS "${OGG_ROOT}/src/framing.c" OR NOT EXISTS "${OPUS_ROOT}/CMakeLists
     "missing. Run: git submodule update --init --recursive")
 endif()
 
-# libogg: framing + bitwise only, warnings silenced.
-add_library(squeeze2raop2_ogg STATIC
-  "${OGG_ROOT}/src/framing.c"
-  "${OGG_ROOT}/src/bitwise.c")
-target_compile_options(squeeze2raop2_ogg PRIVATE -w)
-target_include_directories(squeeze2raop2_ogg PUBLIC "${OGG_ROOT}/include")
+# libogg: static library only, no docs/pkg-config/CMake package install rules.
+set(INSTALL_DOCS OFF CACHE BOOL "" FORCE)
+set(INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(INSTALL_CMAKE_PACKAGE_MODULE OFF CACHE BOOL "" FORCE)
+add_subdirectory("${OGG_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/ogg" EXCLUDE_FROM_ALL)
+# Descriptive alias so the top-level links a name that says what it is.
+add_library(squeeze2raop2_ogg ALIAS ogg)
 
 # libopus reads its version from a git tag or a package_version file, neither
 # of which is present in a submodule checkout; seed it from the pinned tag so
