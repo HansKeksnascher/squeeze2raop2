@@ -316,7 +316,9 @@ void Mp4AacDemuxer::parseEsds(std::span<const std::byte> body) {
                     static_cast<uint8_t>(((asc_[0] & 0x07u) << 1) | ((asc_[1] >> 7) & 0x01u));
                 const uint8_t ch = static_cast<uint8_t>((asc_[1] >> 3) & 0x0Fu);
                 if (sfi == 15 && ascLen_ >= 5) {
-                    const uint32_t freq = (static_cast<uint32_t>(asc_[1] & 0x7Fu) << 17) |
+                    // (asc_[1] & 0x7Fu) is already unsigned int: the u-suffixed literal
+                    // promotes the uint8_t operand, so no widening cast is needed.
+                    const uint32_t freq = ((asc_[1] & 0x7Fu) << 17) |
                                           (static_cast<uint32_t>(asc_[2]) << 9) |
                                           (static_cast<uint32_t>(asc_[3]) << 1) |
                                           (static_cast<uint32_t>(asc_[4]) >> 7);
@@ -341,7 +343,8 @@ void Mp4AacDemuxer::synthAdts(std::span<const std::byte> sample, std::vector<std
     auto push = [&out](uint8_t b) { out.push_back(static_cast<std::byte>(b)); };
     push(0xFF);
     push(0xF1);  // MPEG-4, layer 0, no CRC
-    push(static_cast<uint8_t>((profile_ << 6) | (sfi_ << 2) | ((ch >> 2) & 0x01u)));
+    push(static_cast<uint8_t>((static_cast<uint32_t>(profile_) << 6) |
+                              (static_cast<uint32_t>(sfi_) << 2) | ((ch >> 2) & 0x01u)));
     push(static_cast<uint8_t>(((ch & 0x03u) << 6) | ((frameLen >> 11) & 0x03u)));
     push(static_cast<uint8_t>((frameLen >> 3) & 0xFFu));
     push(static_cast<uint8_t>(((frameLen & 0x07u) << 5) | 0x1Fu));

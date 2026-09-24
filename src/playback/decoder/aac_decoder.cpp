@@ -168,9 +168,12 @@ size_t AacDecoder::frameEnd(size_t limit) const {
         const uint8_t b0 = std::to_integer<uint8_t>(buffer_[off]);
         const uint8_t b1 = std::to_integer<uint8_t>(buffer_[off + 1]);
         if (b0 == 0xFF && (b1 & 0xF6u) == 0xF0u) {
-            const size_t len = ((std::to_integer<uint8_t>(buffer_[off + 3]) & 0x03u) << 11) |
-                               (std::to_integer<uint8_t>(buffer_[off + 4]) << 3) |
-                               (std::to_integer<uint8_t>(buffer_[off + 5]) >> 5);
+            // Assemble the 13-bit frame length from three header bytes; keep
+            // every term unsigned so the shifts do not mix int and unsigned.
+            const uint32_t b3 = std::to_integer<uint8_t>(buffer_[off + 3]);
+            const uint32_t b4 = std::to_integer<uint8_t>(buffer_[off + 4]);
+            const uint32_t b5 = std::to_integer<uint8_t>(buffer_[off + 5]);
+            const uint32_t len = ((b3 & 0x03u) << 11) | (b4 << 3) | (b5 >> 5);
             if (len >= 7 && off + len <= limit) {
                 off += len;
                 end = off;
