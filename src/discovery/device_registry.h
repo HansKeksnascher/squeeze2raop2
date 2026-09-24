@@ -24,11 +24,14 @@ struct AirplayDevice {
     bool pw = false;
     bool encrypted = false;
 
+    // `features` bits that mark a native AirPlay 2 / HAP-capable receiver
+    // (bits 38 and 48; either one is sufficient). See the TXT parse in
+    // device_registry.cpp.
+    static constexpr uint64_t kAirPlay2Features = (1ULL << 38) | (1ULL << 48);
+
     bool hasRaop() const { return raopPort != 0; }
     bool hasAirplay() const { return airplayPort != 0; }
-    bool airplay2() const {
-        return (features & (1ULL << 38)) != 0 || (features & (1ULL << 48)) != 0;
-    }
+    bool airplay2() const { return (features & kAirPlay2Features) != 0; }
     // Native AirPlay 2 only when the `_airplay._tcp` record is present AND
     // advertises the HK bits; otherwise classic RAOP (squeeze2raop2 prefers
     // AirPlay 2 and falls back).

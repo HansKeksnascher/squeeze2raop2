@@ -47,7 +47,7 @@ PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
 }
 
 std::optional<size_t> PcmDecoder::checkHeader() {
-    const auto* p = reinterpret_cast<const std::byte*>(buf_.data());
+    const std::byte* p = buf_.data();
     const size_t have = buf_.size();
     if (have < kHeaderProbeBytes) return std::nullopt;  // keep buffering
 
@@ -155,7 +155,7 @@ size_t PcmDecoder::normalizeMore() {
     size_t frames = std::min(inFrames, kStageMaxFrames - stageFrames);
     if (!frames) return 0;
 
-    const auto* ip = reinterpret_cast<const std::byte*>(buf_.data());
+    const std::byte* ip = buf_.data();
     stage_.resize(stage_.size() + frames * 2);
     int16_t* op = stage_.data() + stageFrames * 2;
 

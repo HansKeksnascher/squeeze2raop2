@@ -123,17 +123,18 @@ std::string legacyStatePath(const std::string& configPath) {
 
 // --- matching / state -------------------------------------------------------
 
-Persistence::Section* Persistence::findSection(const std::string& key) {
+const Persistence::Section* Persistence::findSection(const std::string& key) const {
     const std::string lk = lower(key);
-    for (auto& s : sections_)
+    for (const auto& s : sections_)
         if (!s.config.id.value_or("").empty() && lower(*s.config.id) == lk) return &s;
-    for (auto& s : sections_)
+    for (const auto& s : sections_)
         if (lower(s.name) == lk) return &s;
     return nullptr;
 }
 
-const Persistence::Section* Persistence::findSection(const std::string& key) const {
-    return const_cast<Persistence*>(this)->findSection(key);
+Persistence::Section* Persistence::findSection(const std::string& key) {
+    const Persistence& self = *this;
+    return const_cast<Section*>(self.findSection(key));
 }
 
 Persistence::Section& Persistence::ensureSection(const std::string& key, const std::string& name,
