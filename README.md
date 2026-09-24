@@ -51,7 +51,7 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
 Linux, CMake ≥ 3.16, C++20:
 
 ```sh
-git submodule update --init --recursive   # sender, mDNSResponder, minimp3, mbedtls, libxaac
+git submodule update --init --recursive   # sender, mDNSResponder, mbedtls, minimp3, stb, libxaac, libogg, libopus
 cmake -B build
 cmake --build build -j
 ```
@@ -110,11 +110,13 @@ credentials persist. The program rewrites only the machine-managed `mac`,
 ## Runtime requirements
 
 The dynamically linked binary needs only the GNU C/C++ runtime. The vendored
-sender, mbedTLS, mDNSResponder, minimp3 and libxaac are all linked in
-statically, so there is **no** Avahi/D-Bus, ALSA/PulseAudio or TLS dependency.
-The `-static` artifact is a musl build, so it carries no runtime libraries at
-all. AAC decoding can be dropped at configure time with
-`-DSQUEEZE2RAOP2_WITH_AAC=OFF`.
+sender, mbedTLS, mDNSResponder, minimp3, stb_vorbis, libxaac, libogg and libopus
+are all linked in statically, so there is **no** Avahi/D-Bus, ALSA/PulseAudio or
+TLS dependency. The `-static` artifact is a musl build, so it carries no runtime
+libraries at all. Any decoder can be dropped at configure time:
+`-DSQUEEZE2RAOP2_WITH_AAC=OFF`, `-DSQUEEZE2RAOP2_WITH_OGG=OFF` or
+`-DSQUEEZE2RAOP2_WITH_OPUS=OFF`; the HELO caps then advertise only the codecs
+that remain built in.
 
 | Artifact | Needs at runtime |
 |---|---|
@@ -151,7 +153,6 @@ Vendored as git submodules under `third_party/`; each keeps its own license.
 - **Triode (Adrian Smith)** — squeezelite, the slimproto protocol reference
 - **The Logitech Media Server team** — LMS itself, plus the slimserver Perl
   sources that document the audg/volume encoding and STAT semantics
-- **Ittiam Systems / AOSP** — libxaac, the Apache-2.0 AAC decoder
 - **The pyatv project** — AirPlay sender protocol reference (dB volume
   scale, FLUSH form, user-agent/digest auth details)
 - **The owntone project** — receiver-side behavior parity reference
