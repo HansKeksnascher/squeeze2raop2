@@ -30,5 +30,6 @@ SQ2_TEST(session_exit, policy) {
 
     // Natural end vs error.
     expect(decideExit({false, false, false, true}) == ExitAction::EndedEof, "eof -> STMd");
-    expect(decideExit({false, false, false, false}) == ExitAction::EndedError, "error -> STMu");
+    expect(decideExit({false, false, false, false}) == ExitAction::EndedError,
+           "error -> EndedError");
 }

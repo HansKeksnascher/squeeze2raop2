@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A stalled HTTP source is detected by [global] source-timeout-ms: the server
 stops sending but keeps the socket open, so the reader never returns EOF or a
-socket error. The bridge must end the track (DSCO + STMu) so LMS re-issues the
+socket error. The bridge must end the track (DSCO + STMn) so LMS re-issues the
 stream, instead of reading timeouts forever with the sender ring drained."""
 
 import sys
@@ -16,9 +16,12 @@ def body(c):
                   what="the bridge to trip the source-stall watchdog")
     c.wait_bridge(lambda t: "stream ended" in t, timeout=10.0,
                   what="the stalled stream to end")
-    # LMS must have been told the stream is gone so it can retry/advance.
+    # LMS must have seen the disconnect as an error (DSCO + STMn), not a normal
+    # end, so it can retry/advance.
     c.wait_lms(lambda t: "DSCO" in t, timeout=5.0,
                what="the bridge to report DSCO to LMS")
+    c.wait_lms(lambda t: "STAT STMn" in t, timeout=5.0,
+               what="the bridge to report STMn to LMS")
     assert c.wav_files(), "the pre-stall audio was written under %s" % c.workdir
 
 

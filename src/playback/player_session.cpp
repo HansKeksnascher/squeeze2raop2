@@ -558,11 +558,16 @@ void PlayerSession::streamLoop(std::stop_token st) {
             break;
         case ExitAction::EndedError:
             // Socket or decode error: the stream is dead, not merely finished.
-            // A source-side failure carries a DSCO reason; a decode error does
-            // not (its code is None).
-            if (track_->disconnectCode() != DisconnectCode::None)
+            // A source-side failure carries a DSCO reason; report it as STMn
+            // (an error) rather than STMu (a normal end), so LMS treats it as a
+            // failure and can re-issue the stream. A decode error already sent
+            // STMn above and has no disconnect reason.
+            if (track_->disconnectCode() != DisconnectCode::None) {
                 client_->sendDisco(static_cast<uint8_t>(track_->disconnectCode()));
-            client_->sendStat("STMu", currentStats());
+                client_->sendStat("STMn", currentStats());
+            } else {
+                client_->sendStat("STMu", currentStats());
+            }
             break;
         }
 

@@ -43,7 +43,7 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
 - **Resilient control link** — an LMS-silence watchdog (`server-timeout-ms`)
   reconnects a dead control connection instead of waiting on TCP keepalive.
 - **Source-stall watchdog** — a stream whose HTTP source delivers nothing for
-  `source-timeout-ms` is ended (`DSCO` + `STMu`) so LMS re-issues it, instead
+  `source-timeout-ms` is ended (`DSCO` + `STMn`) so LMS re-issues it, instead
   of hanging on a half-open socket forever.
 - **Honest codec caps** — advertises `pcm,mp3,aac,ogg,ops`, so LMS transcodes
   FLAC and everything else losslessly on the LAN; AAC radio and `.m4a` files
