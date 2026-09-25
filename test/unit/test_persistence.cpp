@@ -223,35 +223,6 @@ SQ2_TEST(persistence, static_players) {
     expect(players.front().sinkPath.value_or("") == "/tmp/k.wav", "static config resolved");
 }
 
-SQ2_TEST(persistence, legacy_import) {
-    ScratchDir dir("migrated");
-    const std::string statePath = dir.file("migrated.state");
-    writeFile(statePath,
-              "mac  Kitchen aa:ba:87:2b:cf:01\n"
-              "creds  Kitchen {\"tok\":\"x\"}\n"
-              "mac  542a1b5cc9e2 aa:4b:9a:4f:dd:01\n");
-    const std::string configPath = dir.file("migrated.conf");
-
-    Persistence p;
-    Settings s;
-    std::string error;
-    expect(p.open(configPath, s, error), "import legacy state");
-    expect(s.players.size() == 2, "two entries imported");
-    const auto* named = findByKey(s, "Kitchen");
-    expect(named != nullptr, "name-keyed entry imported");
-    expect(named && !named->autoRegistered, "named entry is static");
-    const std::array<uint8_t, 6> want{0xaa, 0xba, 0x87, 0x2b, 0xcf, 0x01};
-    expect(named && named->mac == want, "named mac imported");
-    const auto* hex = findByKey(s, "542a1b5cc9e2");
-    expect(hex != nullptr, "hex entry imported");
-    expect(hex && hex->autoRegistered, "hex entry is auto");
-    expect(p.credsFor("Kitchen").value_or("") == "{\"tok\":\"x\"}", "creds imported");
-
-    const std::string text = readFile(configPath);
-    expect(text.find("[player \"Kitchen\"]") != std::string::npos,
-           "legacy import wrote a player section");
-}
-
 SQ2_TEST(persistence, server_timeout_global) {
     ScratchDir dir("timeout");
     Persistence p;

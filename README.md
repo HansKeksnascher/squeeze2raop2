@@ -98,8 +98,7 @@ A section spawns at startup when it is user-authored; discovered devices are
 matched by `id`, then virtual `mac`, then name, and (with
 `auto-register = on`) get an `auto = true` section so their MAC and pairing
 credentials persist. The program rewrites only the machine-managed `mac`,
-`creds` and `name` keys, preserving your comments and layout. A legacy
-`squeeze2raop2.state` is imported automatically on first run.
+`creds` and `name` keys, preserving your comments and layout.
 
 ### Run
 

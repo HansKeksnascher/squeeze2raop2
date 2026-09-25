@@ -92,9 +92,6 @@ constexpr const char* kVolumeModeFixed = "fixed";
 constexpr const char* kPaceFast = "fast";
 constexpr const char* kPaceRealtime = "realtime";
 
-// Legacy single-file state suffix (imported on first run).
-constexpr const char* kLegacyStateSuffix = ".state";
-
 enum class VolumeMode {
     Lms,    // follow the LMS slider: the AUDG-recovered slider percent passes
             // straight to the receiver (LMS minimum = receiver mute, LMS

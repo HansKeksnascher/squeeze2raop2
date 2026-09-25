@@ -140,15 +140,6 @@ bool parseSectionHeader(std::string_view raw, std::string& canonical, bool& isPl
     return false;
 }
 
-std::string legacyStatePath(const std::string& configPath) {
-    const size_t slash = configPath.find_last_of('/');
-    const std::string dir = (slash == std::string::npos) ? "" : configPath.substr(0, slash + 1);
-    std::string stem = (slash == std::string::npos) ? configPath : configPath.substr(slash + 1);
-    const size_t dot = stem.find_last_of('.');
-    if (dot != std::string::npos) stem = stem.substr(0, dot);
-    return dir + stem + kLegacyStateSuffix;
-}
-
 }  // namespace
 
 // --- matching / state -------------------------------------------------------
@@ -565,55 +556,6 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
 
 // --- loading / saving -------------------------------------------------------
 
-bool Persistence::importLegacy(const std::string& legacyPath, std::string& error) {
-    std::ifstream in(legacyPath);
-    if (!in) return false;
-    std::string raw;
-    int lineNo = 0;
-    int imported = 0;
-    while (std::getline(in, raw)) {
-        ++lineNo;
-        const std::string_view t = trimView(raw);
-        if (t.empty() || t.front() == '#') continue;
-        std::istringstream iss{std::string(t)};
-        std::string tag, id;
-        if (!(iss >> tag >> id)) continue;
-        const std::string key = urlDecode(id);
-        const bool hex = isHex12(key);
-        const std::string canonical = hex ? toLower(key) : key;
-        if (tag == "mac") {
-            std::string macText;
-            iss >> macText;
-            std::array<uint8_t, 6> mac{};
-            if (!macFromString(macText, mac)) {
-                log::warn(log::Area::App, "legacy state {}:{}: bad mac, skipping", legacyPath,
-                          lineNo);
-                continue;
-            }
-            Section& s = ensureSection(canonical, canonical, hex);
-            if (hex) s.config.id = canonical;
-            s.config.name = s.name;
-            s.mac = mac;
-            s.hasMac = true;
-            ++imported;
-        } else if (tag == "creds") {
-            std::string rest;
-            std::getline(iss, rest);
-            const size_t start = rest.find_first_not_of(' ');
-            if (start == std::string::npos) continue;
-            Section& s = ensureSection(canonical, canonical, hex);
-            if (hex) s.config.id = canonical;
-            s.config.name = s.name;
-            s.creds = rest.substr(start);
-            ++imported;
-        }
-    }
-    (void)error;
-    if (imported > 0)
-        log::info(log::Area::App, "imported {} entries from {}", imported, legacyPath);
-    return imported > 0;
-}
-
 void Persistence::writeTemplate() {
     std::ofstream out(path_, std::ios::trunc);
     if (!out) return;
@@ -665,14 +607,7 @@ bool Persistence::open(const std::string& path, Settings& out, std::string& erro
     if (!probe.good()) {
         probe.close();
         std::lock_guard<std::mutex> lock(mutex_);
-        const std::string legacy = legacyStatePath(path_);
-        bool imported = false;
-        if (legacy != path_) imported = importLegacy(legacy, error);
-        if (!imported) {
-            writeTemplate();
-        } else {
-            saveLocked();
-        }
+        writeTemplate();
     }
 
     std::ifstream in(path_);

@@ -21,7 +21,7 @@ namespace squeeze2raop2 {
 class Persistence {
 public:
     // Reads path, resolving [global] + [default] + per-player inheritance into
-    // `out`. Creates the file (or imports a legacy .state) when missing.
+    // `out`. Creates the file with a template when missing.
     bool open(const std::string& path, Settings& out, std::string& error);
 
     // Matches a discovered/static device to a player section by id, then MAC,
@@ -72,7 +72,6 @@ private:
     bool parsePlayerKey(std::string_view key, std::string_view value, int lineNo, PlayerConfig& pc,
                         Section* section, bool isDefault, std::string& error);
 
-    bool importLegacy(const std::string& path, std::string& error);
     void writeTemplate();
     bool saveLocked();
     void flushIfDirtyLocked();
