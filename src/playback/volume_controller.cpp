@@ -1,13 +1,7 @@
-// Receiver-initiated volume chase: see remote_volume_chaser.h. The pure
-// per-step rule is in remote_volume.h; this file is the pacing/threading shell.
-// Extracted from PlayerSession so the session no longer carries the stepper
-// state and its own thread.
-
-#include "playback/remote_volume_chaser.h"
+#include "playback/volume_controller.h"
 
 #include "common/log.h"
 #include "common/util.h"
-#include "playback/remote_volume.h"
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +11,14 @@
 namespace squeeze2raop2 {
 
 namespace {
+
+// LMS resolves these IR codes against IR/Slim_Devices_Remote.ir (volup /
+// voldown) and Default.map ("volup = volume"), then moves its own volume
+// mixer one step. That is the only player->server volume primitive slimproto
+// offers; absolute levels are not expressible, so the receiver's reported
+// volume is chased with a closed loop driven by the AUDG echo.
+constexpr uint32_t kVolUpButton = 0x7689807fu;
+constexpr uint32_t kVolDownButton = 0x768900ffu;
 
 // Stop nudging once LMS is within this many slider points of the target, and
 // cap the steps per receiver change so a bogus/looping event can't spin.
@@ -36,17 +38,24 @@ constexpr double kEchoTolerancePct = 2.0;
 
 }  // namespace
 
-RemoteVolumeChaser::RemoteVolumeChaser(VolumeAnchors anchors, std::function<bool()> linkAlive,
-                                       std::function<void(bool up)> sendButton,
-                                       std::function<double()> lmsSliderPct)
-    : anchors_(std::move(anchors)),
+VolumeController::VolumeController(AirplayOutput& output, VolumeAnchors anchors, VolumeMode mode,
+                                   float fixedPct, bool feedback, std::function<bool()> linkAlive,
+                                   std::function<void(uint32_t code)> sendButton)
+    : output_(output),
+      anchors_(std::move(anchors)),
+      volumeMode_(mode),
+      fixedVolumePct_(fixedPct),
+      volumeFeedback_(feedback),
       linkAlive_(std::move(linkAlive)),
-      sendButton_(std::move(sendButton)),
-      lmsSliderPct_(std::move(lmsSliderPct)) {}
+      sendButton_(std::move(sendButton)) {
+    // Receiver-initiated volume (HomePod/Sonos buttons) flows back through the
+    // sender's AP2 event channel into this controller.
+    output_.setRemoteVolumeCallback([this](double unit) { onReceiverVolume(unit); });
+}
 
-RemoteVolumeChaser::~RemoteVolumeChaser() { stop(); }
+VolumeController::~VolumeController() { stop(); }
 
-void RemoteVolumeChaser::start() {
+void VolumeController::start() {
     if (thread_.joinable()) return;
     thread_ = std::jthread([this](std::stop_token st) {
         std::unique_lock lock(mutex_);
@@ -77,7 +86,7 @@ void RemoteVolumeChaser::start() {
     });
 }
 
-void RemoteVolumeChaser::stop() {
+void VolumeController::stop() {
     pending_.store(false, std::memory_order_relaxed);
     if (thread_.joinable()) {
         thread_.request_stop();
@@ -85,17 +94,48 @@ void RemoteVolumeChaser::stop() {
     }
 }
 
-void RemoteVolumeChaser::onReceiverVolume(double unit, double echoPct) {
+void VolumeController::onLmsVolume(double l, double r) {
+    // The recovered LMS slider percent goes through the --vol-map dB anchors
+    // before it reaches the AirPlay sender's 0..100 % domain (0 % = -144 mute
+    // sentinel, 100 % = 0 dB).
+    double lmsPct = (l == r) ? r : (l + r) / 2.0;
+    lmsSliderPct_.store(lmsPct, std::memory_order_relaxed);
+    if (volumeMode_ == VolumeMode::Fixed) {
+        log::info(log::Area::Ses, "volume l={:.0f} r={:.0f} -> {} (ignored, fixed at {})", l, r,
+                  lmsPct, fixedVolumePct_);
+        return;
+    }
+    double pct = anchors_.airplayPctFromLms(lmsPct);
+    // Remember the slider, not mute pushes: LMS's stop-fade ends at gain 0
+    // and fresh players get a 0-gain push on registration, so a stored 0
+    // would mute the next session until the first AUDG.
+    if (pct > 0.0) lastLmsPct_.store(pct, std::memory_order_relaxed);
+    if (output_.setVolume(pct)) {
+        log::info(log::Area::Ap, "volume {:.1f} pct applied (lms)", pct);
+    } else {
+        log::info(log::Area::Ses, "volume -> {:.1f} pct ({})", pct,
+                  pct > 0.0 ? "remembered for next session" : "mute, not remembered");
+    }
+}
+
+// Receiver changed its own output volume (HomePod/Sonos buttons). The receiver
+// reports a unit volume (0..1, unit = db/30 + 1), which is the same domain the
+// sender's setVolume() pct uses: airplayPct = unit * 100. Invert the anchor
+// table to get the LMS slider that corresponds, then chase it with volume
+// button nudges (slimproto has no absolute player->server volume).
+void VolumeController::onReceiverVolume(double unit) {
+    if (!volumeFeedback_ || volumeMode_ != VolumeMode::Lms) return;
     unit = std::clamp(unit, 0.0, 1.0);
     const double airplayPct = unit * 100.0;
     // Ignore an echo of the volume we last pushed to the receiver (some
     // receivers report it back on the event channel); only a real user change
     // should move LMS.
+    const double echoPct = lastLmsPct_.load(std::memory_order_relaxed);
     if (echoPct > 0.0 && std::abs(airplayPct - echoPct) <= kEchoTolerancePct) return;
     // Unit 0 is the receiver's mute/floor: LMS 0 is its mute, so map it there.
     const double target =
         (airplayPct <= 0.0) ? 0.0 : anchors_.lmsPctFromDb(dbFromAirplayPct(airplayPct));
-    const double lms = lmsSliderPct_();
+    const double lms = lmsSliderPct_.load(std::memory_order_relaxed);
     if (std::abs(target - lms) < kTolerancePct) {
         log::info(log::Area::Ses, "receiver volume {:.3f} -> LMS {:.1f} (already there)", unit,
                   target);
@@ -115,7 +155,25 @@ void RemoteVolumeChaser::onReceiverVolume(double unit, double echoPct) {
     // The paced stepper thread sends the nudges.
 }
 
-void RemoteVolumeChaser::pumpLocked() {
+// Start the AirPlay sender with the right initial volume. Volume must be
+// applied AFTER start(): RaopSender::start() wipes pendingVolumeDb_ ("never
+// carry volume between devices"), so a pre-start setVolume is lost and
+// startStreaming_ falls back to 0 dB = full blast. Post-start it only stores
+// until the handshake finishes; startStreaming_ sends the stored value before
+// the audio pacer starts. In lms mode the last AUDG slider value wins; without
+// one yet the fixed --vol-pct level covers the first seconds until LMS pushes
+// the slider.
+void VolumeController::launch() {
+    double pct = fixedVolumePct_;
+    if (volumeMode_ == VolumeMode::Lms) {
+        const double remembered = lastLmsPct_.load(std::memory_order_relaxed);
+        if (remembered > 0.0) pct = remembered;
+    }
+    log::info(log::Area::Ap, "volume {:.1f} pct applied (post-start)", pct);
+    output_.launch(pct);
+}
+
+void VolumeController::pumpLocked() {
     if (!pending_.load(std::memory_order_relaxed)) return;
     if (!linkAlive_ || !linkAlive_()) {
         pending_.store(false, std::memory_order_relaxed);
@@ -130,7 +188,7 @@ void RemoteVolumeChaser::pumpLocked() {
     if (lastStep != 0 && now - lastStep < static_cast<uint64_t>(kStepMs)) return;
 
     const double target = target_.load(std::memory_order_relaxed);
-    const double lms = lmsSliderPct_();
+    const double lms = lmsSliderPct_.load(std::memory_order_relaxed);
     const int dir = dir_.load(std::memory_order_relaxed);
     const int budget = budget_.load(std::memory_order_relaxed);
 
@@ -177,7 +235,7 @@ void RemoteVolumeChaser::pumpLocked() {
     dir_.store(up ? 1 : -1, std::memory_order_relaxed);
     lastStepMs_.store(now, std::memory_order_relaxed);
     lastLms_.store(lms, std::memory_order_relaxed);
-    if (sendButton_) sendButton_(up);
+    if (sendButton_) sendButton_(up ? kVolUpButton : kVolDownButton);
 }
 
 }  // namespace squeeze2raop2

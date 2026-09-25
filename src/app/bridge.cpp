@@ -1,16 +1,16 @@
 // squeeze2raop2 - bridge between LMS slimproto and AirPlay receivers.
 // This file wires the process together: signals, the config/state store, the
 // device registry and mDNS discovery. Per-device streaming lives in
-// playback/player_session.cpp; session lifecycle in session_manager.cpp.
+// playback/player_session.cpp; session lifecycle in app/session_manager.cpp.
 
 #include "app/config.h"
 #include "app/persistence.h"
+#include "app/session_manager.h"
 #include "app/shutdown_flag.h"
 #include "common/log.h"
 #include "common/transport.h"
 #include "discovery/device_registry.h"
 #include "discovery/mdns.h"
-#include "playback/session_manager.h"
 
 #include <chrono>
 #include <string>

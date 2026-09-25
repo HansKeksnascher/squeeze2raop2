@@ -19,6 +19,8 @@
 // Wire domain: AirPlay pct 0..100 -> -30..0 dBFS, pct 0 = -144 mute sentinel,
 // so 0 is reserved for true mute and non-mute levels floor at 0.05.
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -96,5 +98,57 @@ private:
     // (slider pct, dB), sorted ascending by pct.
     std::vector<std::pair<double, double>> points_;
 };
+
+// --- 16.16 fixed-point gain and fades -------------------------------------
+//
+// The pump's replay-gain and fade math (squeezelite parity). Header-only so the
+// unit suite can pin the math without pulling in the pipeline.
+
+inline constexpr int32_t kFixedOne = 0x10000;  // 1.0 in 16.16
+
+// squeezelite's gain(): (gain * sample) >> 16. Applied to an s16 sample the
+// result is the scaled s16 (gain 0x10000 is unity); saturate instead of
+// wrapping if replay gain boosts past full scale.
+inline int16_t applyGain16(int16_t sample, int32_t gain) {
+    const int64_t res = (static_cast<int64_t>(gain) * static_cast<int64_t>(sample)) >> 16;
+    return static_cast<int16_t>(std::clamp<int64_t>(res, -32768, 32767));
+}
+
+// Linear amplitude ramp at frame `pos` of `dur`, in 16.16. up = 0->1,
+// otherwise 1->0. dur == 0 or pos >= dur pins to the end value.
+inline int32_t fadeGain16(uint32_t pos, uint32_t dur, bool up) {
+    if (dur == 0) return kFixedOne;
+    if (pos >= dur) return up ? kFixedOne : 0;
+    const int32_t g = static_cast<int32_t>((static_cast<int64_t>(pos) * kFixedOne) / dur);
+    return up ? g : (kFixedOne - g);
+}
+
+// --- Receiver-volume chase step -------------------------------------------
+//
+// An AirPlay 2 receiver (HomePod/Sonos) reports the volume its buttons set as
+// an absolute unit volume; LMS only exposes relative volume buttons over
+// slimproto (BUTN volup/voldown), so the bridge paces LMS toward the reported
+// target one step at a time. The presses must be spaced so LMS treats each as
+// a fresh press (not a held-button repeat, whose increment computes to zero).
+// This is the pure decision for one step; VolumeController owns the pacing.
+
+enum class VolumeNudge {
+    Up,         // press volume up
+    Down,       // press volume down
+    Reached,    // within tolerance of the target: stop
+    Overshoot,  // a step already carried LMS past the target: stop
+    Exhausted,  // per-change step budget spent: stop
+};
+
+// `lastDir` is the direction of the previous step (-1 down, +1 up, 0 unset);
+// `budget` is the number of steps still allowed for this target.
+[[nodiscard]] inline VolumeNudge decideVolumeNudge(double targetPct, double lmsPct, int lastDir,
+                                                   int budget, double tolerance) {
+    if (std::fabs(targetPct - lmsPct) <= tolerance) return VolumeNudge::Reached;
+    const int need = (targetPct - lmsPct) > 0.0 ? 1 : -1;
+    if (lastDir != 0 && need != lastDir) return VolumeNudge::Overshoot;
+    if (budget <= 0) return VolumeNudge::Exhausted;
+    return need > 0 ? VolumeNudge::Up : VolumeNudge::Down;
+}
 
 }  // namespace squeeze2raop2

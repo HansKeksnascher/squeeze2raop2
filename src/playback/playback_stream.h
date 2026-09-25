@@ -4,12 +4,13 @@
 #include "lms/lms_stream.h"
 #include "lms/slimproto_types.h"
 #include "playback/decoder/decoder.h"
-#include "playback/gain.h"
 #include "playback/ring_telemetry.h"
 #include "playback/stream_counters.h"
+#include "playback/volume_map.h"
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -23,7 +24,7 @@
 
 namespace squeeze2raop2 {
 
-class PcmFileSink;
+class DebugWavSink;
 
 // Why a stream's HTTP source ended without a normal decode completion. Mirrors
 // squeezelite's disconnect_code so the session can emit the right DSCO.
@@ -110,7 +111,7 @@ private:
     // Decode `data` and emit its chunks (sink + ring); false when the decoder
     // failed. `toOutput=false` is the paused drain (decode, discard).
     bool feed(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
-              PcmFileSink* sink, bool toOutput = true);
+              DebugWavSink* sink, bool toOutput = true);
     // Drop queued skip frames from one chunk; returns the played drop count.
     size_t consumeSkip(size_t frames);
     // Apply replay gain + the active fade to an s16 chunk in scratch.
@@ -125,7 +126,7 @@ private:
 
     HttpStreamReader reader_;
     std::unique_ptr<Decoder> decoder_;
-    std::unique_ptr<PcmFileSink> sink_;
+    std::unique_ptr<DebugWavSink> sink_;
     RingTelemetry ringTelemetry_;
     std::atomic<uint64_t> pauseUntilMs_{0};
     std::atomic<uint64_t> skipFrames_{0};
@@ -173,5 +174,16 @@ private:
     uint32_t sourceTimeoutMs_ = 0;
     uint64_t lastDataMs_ = 0;
 };
+
+// --- Pure stream-pump helpers (unit-testable without a pipeline) -----------
+
+// Skip-ahead interval in ms -> source frames at `rate`. 0 ms -> 0 frames.
+inline uint64_t skipFramesFor(uint32_t ms, uint32_t rate) {
+    return (static_cast<uint64_t>(ms) * rate) / 1000u;
+}
+
+// STMo decision: the receiver output is running but its ring is empty while
+// the HTTP source is still active (a network underrun, squeezelite parity).
+inline bool outputUnderrun(bool running, size_t queued) { return running && queued == 0; }
 
 }  // namespace squeeze2raop2

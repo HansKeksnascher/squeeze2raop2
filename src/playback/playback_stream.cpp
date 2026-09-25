@@ -3,8 +3,8 @@
 #include "app/shutdown_flag.h"
 #include "common/log.h"
 #include "common/util.h"
+#include "debug/debug_wav_sink.h"
 #include "lms/icy_meta.h"
-#include "playback/wav_sink.h"
 
 #include <algorithm>
 #include <chrono>
@@ -81,7 +81,7 @@ bool PlaybackStream::attachDecoder(StreamFormat format, const PcmParams& pcm, st
     }
     log::info(log::Area::Pb, "decoder: {} stream", decoder_->name());
     if (sinkPath_) {
-        sink_ = std::make_unique<PcmFileSink>(*sinkPath_);
+        sink_ = std::make_unique<DebugWavSink>(*sinkPath_);
         if (!sink_->open(decoder_->format(), error)) {
             sink_.reset();
             return false;
@@ -211,19 +211,19 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             for (;;) {
                 const uint64_t until = pauseUntilMs_.load(std::memory_order_relaxed);
                 if (until == 0) break;  // unpaused
-                if (until != std::numeric_limits<uint64_t>::max()) {
-                    const uint64_t now = nowMs();
-                    if (until <= now) break;  // timed pause elapsed
-                    pauseCv_.wait_for(
-                        lock, st, std::chrono::milliseconds(std::min<uint64_t>(until - now, 25)),
-                        [this, until] {
-                            return pauseUntilMs_.load(std::memory_order_relaxed) != until;
-                        });
-                } else {
-                    pauseCv_.wait_for(lock, st, std::chrono::milliseconds(25), [this, until] {
-                        return pauseUntilMs_.load(std::memory_order_relaxed) != until;
-                    });
-                }
+                const bool timed = until != std::numeric_limits<uint64_t>::max();
+                const uint64_t now = timed ? nowMs() : 0;
+                if (timed && until <= now) break;  // timed pause elapsed
+
+                // Wake on unpause (pauseUntilMs_ changed) or after a <=25 ms
+                // slice, so a stop request and the sender's keep-alive stay
+                // responsive.
+                const auto pauseChanged = [this, until] {
+                    return pauseUntilMs_.load(std::memory_order_relaxed) != until;
+                };
+                const uint64_t sliceMs = timed ? std::min<uint64_t>(until - now, 25) : 25;
+                pauseCv_.wait_for(lock, st, std::chrono::milliseconds(sliceMs), pauseChanged);
+
                 if (st.stop_requested()) break;
                 lock.unlock();
                 output_.pump(std::chrono::milliseconds(0));
@@ -410,7 +410,7 @@ std::span<const int16_t> PlaybackStream::applyGainFade(std::span<const int16_t> 
 // (mp3 decode / pcm header-skip + s16 stereo normalization) and are drained in
 // the same 1152-frame chunks. Returns false when the decoder failed.
 bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
-                          PcmFileSink* sink, bool toOutput) {
+                          DebugWavSink* sink, bool toOutput) {
     if (!decoder_) return true;
     const AirplayOutput::Abort abort = [&] {
         return st.stop_requested() || !g_run.load() || output_.lost();

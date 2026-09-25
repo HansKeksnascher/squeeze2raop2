@@ -1,4 +1,4 @@
-#include "playback/wav_sink.h"
+#include "debug/debug_wav_sink.h"
 
 #include "common/byte_order.h"
 #include "common/log.h"
@@ -13,11 +13,11 @@
 
 namespace squeeze2raop2 {
 
-PcmFileSink::PcmFileSink(std::string path) : path_(std::move(path)) {}
+DebugWavSink::DebugWavSink(std::string path) : path_(std::move(path)) {}
 
-PcmFileSink::~PcmFileSink() { close(); }
+DebugWavSink::~DebugWavSink() { close(); }
 
-bool PcmFileSink::open(const PcmFormat& format, std::string& errorOut) {
+bool DebugWavSink::open(const PcmFormat& format, std::string& errorOut) {
     format_ = format;
     fp_ = fopen(path_.c_str(), "wb");
     if (!fp_) {
@@ -30,7 +30,7 @@ bool PcmFileSink::open(const PcmFormat& format, std::string& errorOut) {
     return true;
 }
 
-void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format) {
+void DebugWavSink::feed(std::span<const std::byte> data, const PcmFormat& format) {
     if (!fp_ || writeFailed_ || data.empty()) return;
 
     if (!headerWritten_) {
@@ -91,7 +91,7 @@ void PcmFileSink::feed(std::span<const std::byte> data, const PcmFormat& format)
     total_ += outLen;
 }
 
-void PcmFileSink::close() {
+void DebugWavSink::close() {
     if (fp_) {
         if (headerWritten_ && total_ > 0 && !writeFailed_) {
             // RIFF chunk size = file size - 8 = (44-byte header + data) - 8.

@@ -3,7 +3,7 @@
 // must know when to press, when to stop on convergence, and when a step has
 // already overshot.
 
-#include "playback/remote_volume.h"
+#include "playback/volume_map.h"
 
 #include "check.h"
 

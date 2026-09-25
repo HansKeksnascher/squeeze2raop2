@@ -236,6 +236,7 @@ add_library(squeeze2raop2_core STATIC
   # app
   src/app/config.cpp
   src/app/persistence.cpp
+  src/app/session_manager.cpp
   # discovery
   src/discovery/device_registry.cpp
   src/discovery/mdns_embedded.cpp
@@ -249,13 +250,15 @@ add_library(squeeze2raop2_core STATIC
   src/airplay/airplay_output.cpp
   # playback
   src/playback/volume_map.cpp
-  src/playback/wav_sink.cpp
   src/playback/ring_telemetry.cpp
   src/playback/stream_counters.cpp
-  src/playback/remote_volume_chaser.cpp
+  src/playback/volume_controller.cpp
   src/playback/playback_stream.cpp
+  src/playback/slimproto_session.cpp
+  src/playback/stream_coordinator.cpp
   src/playback/player_session.cpp
-  src/playback/session_manager.cpp
+  # debug
+  src/debug/debug_wav_sink.cpp
   # decoder
   src/playback/decoder/decoder.cpp
   src/playback/decoder/buffered_decoder.cpp

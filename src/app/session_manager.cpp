@@ -1,4 +1,4 @@
-#include "playback/session_manager.h"
+#include "app/session_manager.h"
 
 #include "airplay/raop_types.h"
 #include "common/log.h"
