@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "common/net_util.h"  // UniqueFd
-#include "lms/slimproto_types.h"
+#include "lms/slimproto_protocol.h"
 
 namespace squeeze2raop2 {
 
@@ -90,7 +90,7 @@ private:
     std::string caps_;
     Events events_;
     std::string host_;
-    uint16_t port_ = 3483;
+    uint16_t port_ = kDefaultLmsPort;
 
     // Socket lifetime: kept alive across sends by shared ownership, published
     // atomically so a reader/sender can snapshot it without a mutex. Replaced
@@ -103,7 +103,7 @@ private:
     StreamStats stats_{};
     std::mutex sendMutex_;  // serializes packet writes and guards stats_
     uint64_t lastHeartbeatMs_ = 0;
-    uint32_t serverTimeoutMs_ = 35000;
+    uint32_t serverTimeoutMs_ = kServerSilenceTimeoutMs;
     uint64_t lastServerMsgMs_ = 0;
     std::string playerName_;
     bool reconnect_ = false;

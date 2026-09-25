@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lms/slimproto_types.h"
+#include "lms/slimproto_protocol.h"
 
 #include <array>
 #include <cstddef>
@@ -87,7 +87,7 @@ protected:
     // output shape every native decoder produces.
     PcmFormat s16StereoFormat() const {
         return PcmFormat{.sampleRate = sampleRate(),
-                         .bitsPerSample = 16,
+                         .bitsPerSample = kDefaultBitsPerSample,
                          .channels = static_cast<uint8_t>(channels()),
                          .bigEndian = false};
     }
@@ -109,6 +109,27 @@ private:
     uint64_t pcmWindowReceivedBytes_ = 0;
     double pcmAppliedRate_ = 0.0;
 };
+
+// Codec HELO capability tokens (the LMS caps vocabulary).
+constexpr const char* kCodecCapPcm = "pcm";
+constexpr const char* kCodecCapMp3 = "mp3";
+constexpr const char* kCodecCapAac = "aac";
+constexpr const char* kCodecCapOgg = "ogg";
+constexpr const char* kCodecCapOpus = "ops";
+
+// PCM output-rate regulation thresholds (see Decoder::regulateRate): the
+// decoder measures the source fps and nudges a resample step so a source that
+// under/over-delivers cannot drain the AirPlay ring.
+constexpr double kRegulationNominalRate = 44100.0;
+constexpr double kRegulationMinWindowSec = 5.0;
+constexpr double kRegulationSanityLo = 0.95;  // reject a stall/burst measurement
+constexpr double kRegulationSanityHi = 1.05;
+constexpr size_t kRegulationPrebufferBytes = 131072;
+constexpr double kRegulationOverdrive = 1.002;
+constexpr double kRegulationEngage = 44.0;   // ~0.1% deviation: start regulating
+constexpr double kRegulationRelease = 20.0;  // ~0.045%: back to pass-through
+constexpr double kRegulationRefresh = 2.0;   // min target change before re-applying
+constexpr double kRegulationPpmScale = 1e6;  // fraction -> ppm for logs
 
 // One decodable stream format: its LMS HELO capability token and the factory
 // that builds its decoder for Decoder::create(). The list in decoder.cpp is

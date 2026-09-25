@@ -30,10 +30,10 @@ double dbFromAirplayPct(double pct) { return kAirplayFloorDb + kAirplayDbPerPct 
 
 double lmsSliderPctFromGain(uint32_t newGain) {
     if (newGain == 0) return 0.0;  // LMS mute
-    const double db = 20.0 * std::log10(static_cast<double>(newGain) / 65536.0);
+    const double db = 20.0 * std::log10(static_cast<double>(newGain) / kFixedOne);
     const double pct = (db >= kLmsStepDb) ? kLmsStepPoint + (db - kLmsStepDb) / kLmsSlopeHigh
                                           : (db - kLmsTotalVolumeRange) / kLmsSlopeLow;
-    return std::clamp(pct, 0.0, 100.0);
+    return std::clamp(pct, kLmsSliderMin, kLmsSliderMax);
 }
 
 std::optional<VolumeAnchors> VolumeAnchors::parse(std::string_view spec) {
@@ -58,7 +58,8 @@ std::optional<VolumeAnchors> VolumeAnchors::parse(std::string_view spec) {
             std::from_chars(item.data() + colon + 1, item.data() + item.size(), pct);
         if (pctEc != std::errc{} || pctEnd != item.data() + item.size()) return std::nullopt;
         // pct 0 is the mute sentinel, kept out of the anchor table
-        if (db > 0.0 || db < -144.0 || pct < 1.0 || pct > 100.0) return std::nullopt;
+        if (db > 0.0 || db < kAirplayMuteDb || pct < 1.0 || pct > kLmsSliderMax)
+            return std::nullopt;
         out.points_.emplace_back(pct, db);
         any = true;
     }
@@ -88,20 +89,20 @@ double VolumeAnchors::dbAt(double pct) const {
 }
 
 double VolumeAnchors::airplayPctFromLms(double lmsPct) const {
-    if (lmsPct <= 0.0) return 0.0;  // LMS mute -> -144 mute sentinel
-    double db = dbAt(std::clamp(lmsPct, 0.0, 100.0));
+    if (lmsPct <= kLmsSliderMin) return kAirplayMutePct;  // LMS mute -> -144 sentinel
+    double db = dbAt(std::clamp(lmsPct, kLmsSliderMin, kLmsSliderMax));
     // AirPlay pct for a dBFS level: pct = (db - floor) / slope. The floor
     // anchor lands at pct 0 = mute, so non-mute levels floor at the quietest
     // step.
-    double pct = (db - kAirplayFloorDb) / kAirplayDbPerPct;
-    return clampAirVolumePct(std::max(pct, 0.05));
+    const double pct = (db - kAirplayFloorDb) / kAirplayDbPerPct;
+    return clampAirVolumePct(std::max(pct, kAirplayMinAudiblePct));
 }
 
 double VolumeAnchors::lmsPctFromDb(double db) const {
     const auto& p = points_;
     if (p.empty()) return 0.0;
     if (db <= p.front().second) return 1.0;  // quiet-but-not-mute floor
-    if (db >= p.back().second) return 100.0;
+    if (db >= p.back().second) return kLmsSliderMax;
     for (size_t i = 1; i < p.size(); ++i) {
         if (db <= p[i].second) {
             const double p1 = p[i - 1].first, d1 = p[i - 1].second;
@@ -110,7 +111,7 @@ double VolumeAnchors::lmsPctFromDb(double db) const {
             return p1 + (db - d1) * (p2 - p1) / (d2 - d1);
         }
     }
-    return 100.0;
+    return kLmsSliderMax;
 }
 
 }  // namespace squeeze2raop2

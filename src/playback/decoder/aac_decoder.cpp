@@ -4,6 +4,8 @@
 
 #include "playback/decoder/aac_decoder.h"
 
+#include "playback/decoder/container.h"
+
 #include "common/log.h"
 #include "common/third_party_warnings.h"
 #include "playback/decoder/mp4_aac_demux.h"
@@ -158,22 +160,22 @@ size_t AacDecoder::fillInput() {
 size_t AacDecoder::frameEnd(size_t limit) const {
     size_t off = consumed_;
     size_t end = consumed_;
-    while (off + 7 <= limit) {
+    while (off + kAdtsHeaderBytes <= limit) {
         const uint8_t b0 = std::to_integer<uint8_t>(buffer_[off]);
         const uint8_t b1 = std::to_integer<uint8_t>(buffer_[off + 1]);
-        if (b0 == 0xFF && (b1 & 0xF6u) == 0xF0u) {
+        if (b0 == kAdtsSyncByte && (b1 & kAdtsSyncMask) == kAdtsSyncValue) {
             // Assemble the 13-bit frame length from three header bytes; keep
             // every term unsigned so the shifts do not mix int and unsigned.
             const uint32_t b3 = std::to_integer<uint8_t>(buffer_[off + 3]);
             const uint32_t b4 = std::to_integer<uint8_t>(buffer_[off + 4]);
             const uint32_t b5 = std::to_integer<uint8_t>(buffer_[off + 5]);
             const uint32_t len = ((b3 & 0x03u) << 11) | (b4 << 3) | (b5 >> 5);
-            if (len >= 7 && off + len <= limit) {
+            if (len >= kAdtsHeaderBytes && off + len <= limit) {
                 off += len;
                 end = off;
                 continue;
             }
-            if (len >= 7) break;  // partial frame at the limit
+            if (len >= kAdtsHeaderBytes) break;  // partial frame at the limit
         }
         ++off;  // junk or a bad header: scan for the next sync word
     }

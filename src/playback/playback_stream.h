@@ -2,7 +2,7 @@
 
 #include "airplay/airplay_output.h"
 #include "lms/lms_stream.h"
-#include "lms/slimproto_types.h"
+#include "lms/slimproto_protocol.h"
 #include "playback/decoder/decoder.h"
 #include "playback/ring_telemetry.h"
 #include "playback/stream_counters.h"
@@ -185,5 +185,29 @@ inline uint64_t skipFramesFor(uint32_t ms, uint32_t rate) {
 // STMo decision: the receiver output is running but its ring is empty while
 // the HTTP source is still active (a network underrun, squeezelite parity).
 inline bool outputUnderrun(bool running, size_t queued) { return running && queued == 0; }
+
+// --- Pump and stream-exit tuning -------------------------------------------
+//
+// Policy knobs for one track's pump (playback_stream.cpp) and the exit/drain
+// path (stream_coordinator.cpp).
+
+constexpr size_t kReadBufferBytes = 4096;     // source read buffer
+constexpr uint32_t kReadPollTimeoutMs = 150;  // HTTP read poll timeout
+constexpr size_t kPrebufferDivisor = 2;       // prebuffer gate = ring / N
+constexpr uint32_t kPauseSliceMs = 25;        // max pause-wait slice
+constexpr uint32_t kUnderrunWindowMs = 1000;  // sustained-empty window -> STMo
+constexpr uint32_t kPacerLeadMs = 60;         // pacer sleep headroom
+constexpr uint32_t kPacerMaxSleepMs = 120;    // max pacer sleep slice
+constexpr uint32_t kDrainTimeoutMs = 5000;    // bound on the end-of-track drain
+constexpr uint32_t kDrainPumpMs = 20;         // sender pump slice while draining
+constexpr uint32_t kRetryDelayMs = 2000;      // receiver-loss retry delay
+
+// LMS 'strm s' transition types (Squeezebox.pm). Cross (1) is unsupported and
+// mapped to no fade.
+constexpr uint8_t kFadeModeNone = 0;
+constexpr uint8_t kFadeModeCross = 1;
+constexpr uint8_t kFadeModeIn = 2;
+constexpr uint8_t kFadeModeOut = 3;
+constexpr uint8_t kFadeModeInOut = 4;
 
 }  // namespace squeeze2raop2

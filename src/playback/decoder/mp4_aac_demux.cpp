@@ -8,6 +8,8 @@
 
 #include "playback/decoder/mp4_aac_demux.h"
 
+#include "playback/decoder/container.h"
+
 #include "common/byte_order.h"
 
 #include <algorithm>
@@ -337,12 +339,12 @@ void Mp4AacDemuxer::parseEsds(std::span<const std::byte> body) {
 }
 
 void Mp4AacDemuxer::synthAdts(std::span<const std::byte> sample, std::vector<std::byte>& out) {
-    const size_t frameLen = sample.size() + 7;
-    if (frameLen > 0x1FFFu) return;  // ADTS frame length is 13 bits
+    const size_t frameLen = sample.size() + kAdtsHeaderBytes;
+    if (frameLen > kAdtsMaxFrameLen) return;  // ADTS frame length is 13 bits
     const uint8_t ch = (channels_ >= 1 && channels_ <= 7) ? channels_ : 2;
     auto push = [&out](uint8_t b) { out.push_back(static_cast<std::byte>(b)); };
-    push(0xFF);
-    push(0xF1);  // MPEG-4, layer 0, no CRC
+    push(kAdtsSyncByte);
+    push(kAdtsNoCrcBits);  // MPEG-4, layer 0, no CRC
     push(static_cast<uint8_t>((static_cast<uint32_t>(profile_) << 6) |
                               (static_cast<uint32_t>(sfi_) << 2) | ((ch >> 2) & 0x01u)));
     push(static_cast<uint8_t>(((ch & 0x03u) << 6) | ((frameLen >> 11) & 0x03u)));

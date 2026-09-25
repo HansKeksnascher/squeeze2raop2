@@ -1,12 +1,16 @@
 #pragma once
 
-#include "lms/slimproto_types.h"
+#include "lms/slimproto_protocol.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
 
 namespace squeeze2raop2 {
+
+// Reported to LMS as the stream buffer size in the STAT reply (squeezelite
+// reports a fixed 1 MiB stream buffer).
+constexpr uint32_t kStreamBufferBytes = 1 << 20;
 
 // The stream loop's byte/frame accounting. Written on the stream thread,
 // read by the STAT provider on the SlimProto reader thread; one mutex gives
@@ -37,7 +41,7 @@ private:
     uint64_t fedBytes_ = 0;
     uint64_t fedSamples_ = 0;
     size_t queuedSamples_ = 0;
-    uint32_t outputRate_ = 44100;
+    uint32_t outputRate_ = kDefaultSampleRate;
 };
 
 }  // namespace squeeze2raop2

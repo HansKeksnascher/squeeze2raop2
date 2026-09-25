@@ -72,12 +72,12 @@ void SlimProtoSession::start() {
     events.onStart = [this](const StrmStart& st) { delegate_.onStreamStart(st); };
     events.onCont = [this](uint32_t) { delegate_.onCont(); };
     events.onStop = [this]() {
-        stat("STMf");
+        stat(kStatFlush);
         delegate_.onStop();
     };
     events.onFlush = [this](bool) {
         delegate_.onFlush();
-        stat("STMf");
+        stat(kStatFlush);
     };
     events.onPause = [this](uint32_t ms) { delegate_.onPause(ms); };
     events.onUnpause = [this](uint32_t ms) { delegate_.onUnpause(ms); };

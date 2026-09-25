@@ -1,6 +1,7 @@
 #include "playback/decoder/decoder.h"
 
 #include "common/log.h"
+#include "common/util.h"
 #include "playback/decoder/mp3_decoder.h"
 #include "playback/decoder/pcm_decoder.h"
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
@@ -86,30 +87,31 @@ void Decoder::compactConsumed(std::vector<std::byte>& buffer, size_t& consumed) 
 // ~8 cent pitch offset).
 double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t windowMs) {
     if (!regulatesRate() || !inputFrameBytes_) return pcmAppliedRate_;
-    const double sec = double(windowMs) / 1000.0;
-    if (sec < 5.0) return pcmAppliedRate_;
+    const double sec = double(windowMs) / kMsPerSecond;
+    if (sec < kRegulationMinWindowSec) return pcmAppliedRate_;
 
     const uint64_t prevReceived = pcmWindowReceivedBytes_;
     pcmWindowReceivedBytes_ = receivedBytes;
     if (prevReceived == 0 || receivedBytes < prevReceived) return pcmAppliedRate_;
 
-    constexpr double kNominal = 44100.0;
+    constexpr double kNominal = kRegulationNominalRate;
     const double fps = double(receivedBytes - prevReceived) / double(inputFrameBytes_) / sec;
-    if (fps < 0.95 * kNominal || fps > 1.05 * kNominal) return pcmAppliedRate_;  // stall/burst
+    if (fps < kRegulationSanityLo * kNominal || fps > kRegulationSanityHi * kNominal)
+        return pcmAppliedRate_;  // stall/burst
 
     const double off = std::abs(fps - kNominal);
     // Gentle rebuild while below the prebuffer reserve.
-    const double overdrive = queued < 131072 ? 1.002 : 1.0;
+    const double overdrive = queued < kRegulationPrebufferBytes ? kRegulationOverdrive : 1.0;
     if (pcmAppliedRate_ == 0.0) {
-        if (off > 44.0) {  // 0.1%
+        if (off > kRegulationEngage) {  // 0.1%
             pcmAppliedRate_ = fps / overdrive;
             setSourceRate(pcmAppliedRate_);
             log::warn(log::Area::Dec, "pcm source {} fps ({} ppm off): regulating", fps,
-                      int((fps - kNominal) / kNominal * 1e6));
+                      int((fps - kNominal) / kNominal * kRegulationPpmScale));
         }
         return pcmAppliedRate_;
     }
-    if (off <= 20.0) {  // back within ~0.045%: release to pass-through
+    if (off <= kRegulationRelease) {  // back within ~0.045%: release to pass-through
         pcmAppliedRate_ = 0.0;
         setSourceRate(kNominal);
         log::info(log::Area::Dec, "pcm source rate nominal: pass-through");
@@ -117,7 +119,7 @@ double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t win
     }
     // Keep regulating; refresh the overdrive decision.
     const double target = fps / overdrive;
-    if (std::abs(target - pcmAppliedRate_) > 2.0) {
+    if (std::abs(target - pcmAppliedRate_) > kRegulationRefresh) {
         pcmAppliedRate_ = target;
         setSourceRate(target);
     }
@@ -128,15 +130,15 @@ std::span<const CodecInfo> supportedCodecs() {
     // The one place codec enablement is decided. Order is the advertised HELO
     // caps order (pcm, mp3, aac, ogg, ops); keep it stable.
     static constexpr CodecInfo kCodecs[] = {
-        {StreamFormat::Pcm, "pcm", &makePcm},   {StreamFormat::Mp3, "mp3", &makeMp3},
+        {StreamFormat::Pcm, kCodecCapPcm, &makePcm},    {StreamFormat::Mp3, kCodecCapMp3, &makeMp3},
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
-        {StreamFormat::Aac, "aac", &makeAac},
+        {StreamFormat::Aac, kCodecCapAac, &makeAac},
 #endif
 #if defined(SQUEEZE2RAOP2_WITH_OGG)
-        {StreamFormat::Ogg, "ogg", &makeOgg},
+        {StreamFormat::Ogg, kCodecCapOgg, &makeOgg},
 #endif
 #if defined(SQUEEZE2RAOP2_WITH_OPUS)
-        {StreamFormat::Opus, "ops", &makeOpus},
+        {StreamFormat::Opus, kCodecCapOpus, &makeOpus},
 #endif
     };
     return std::span<const CodecInfo>(kCodecs);

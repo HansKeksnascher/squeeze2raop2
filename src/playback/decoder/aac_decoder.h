@@ -64,7 +64,7 @@ private:
     std::unique_ptr<Xaac> xaac_;
     std::unique_ptr<Mp4AacDemuxer> mp4_;
     uint32_t sampleRate_ = 0;
-    int channels_ = 2;
+    int channels_ = kDefaultChannels;
     bool initDone_ = false;
     bool inputOver_ = false;
 };

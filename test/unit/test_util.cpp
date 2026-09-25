@@ -1,5 +1,6 @@
 #include "common/util.h"
 #include "lms/slimproto.h"
+#include "playback/volume_map.h"
 
 #include "check.h"
 

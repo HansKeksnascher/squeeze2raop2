@@ -47,7 +47,7 @@ private:
     stb_vorbis* vorbis_ = nullptr;  // stb_vorbis decoder state (opaque)
     bool opened_ = false;           // header pass succeeded
     uint32_t sampleRate_ = 0;
-    int channels_ = 2;
+    int channels_ = kDefaultChannels;
 };
 
 }  // namespace squeeze2raop2

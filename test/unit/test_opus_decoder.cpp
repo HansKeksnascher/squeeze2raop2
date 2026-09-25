@@ -5,7 +5,7 @@
 
 #include "check.h"
 #include "decoder_util.h"
-#include "lms/slimproto_types.h"
+#include "lms/slimproto_protocol.h"
 #include "opus_fixture.h"
 
 #include <algorithm>

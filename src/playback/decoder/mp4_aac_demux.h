@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lms/slimproto_protocol.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -62,8 +64,8 @@ private:
     size_t ascLen_ = 0;
     uint8_t profile_ = 1;  // ADTS profile = AOT - 1 (LC core)
     uint8_t sfi_ = 4;      // sampling-frequency index (44100)
-    uint32_t sampleRate_ = 44100;
-    uint8_t channels_ = 2;
+    uint32_t sampleRate_ = kDefaultSampleRate;
+    uint8_t channels_ = kDefaultChannels;
 };
 
 }  // namespace squeeze2raop2

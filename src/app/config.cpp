@@ -60,7 +60,7 @@ ResolvedPlayerConfig resolvePlayer(const PlayerConfig& defaults, const PlayerCon
         r.explicitMac = true;
     }
     if (player.targetHost && !player.targetHost->empty()) {
-        uint16_t port = player.targetPort.value_or(7000);
+        uint16_t port = player.targetPort.value_or(kDefaultTargetPort);
         r.target = std::make_pair(*player.targetHost, port);
     }
     r.autoRegistered = player.autoSection.value_or(false);
@@ -76,8 +76,8 @@ ResolvedPlayerConfig resolvePlayer(const PlayerConfig& defaults, const PlayerCon
     r.password = pick(player.password, defaults.password, std::string());
     r.volumeMode = pick(player.volumeMode, defaults.volumeMode, VolumeMode::Lms);
     r.volumeMap = pick(player.volumeMap, defaults.volumeMap, std::string(kDefaultVolumeMap));
-    r.volPct = pick(player.volPct, defaults.volPct, 0.7f);
-    r.latencyMs = pick(player.latencyMs, defaults.latencyMs, 500);
+    r.volPct = pick(player.volPct, defaults.volPct, kDefaultVolumePct);
+    r.latencyMs = pick(player.latencyMs, defaults.latencyMs, kDefaultLatencyMs);
     r.paceRealtime = pick(player.paceRealtime, defaults.paceRealtime, true);
     r.sinkPath = player.sinkPath ? player.sinkPath : defaults.sinkPath;
 

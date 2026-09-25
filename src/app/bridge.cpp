@@ -11,6 +11,7 @@
 #include "common/transport.h"
 #include "discovery/device_registry.h"
 #include "discovery/mdns.h"
+#include "discovery/mdns_names.h"
 
 #include <chrono>
 #include <string>
@@ -79,12 +80,12 @@ void runBridge(const Settings& settings, Persistence& persistence) {
     MdnsBrowser browser;
     MdnsBrowser::RecordCallback cb = [&registry](const MdnsRecord& rec,
                                                  MdnsBrowser::RecordEvent ev) {
-        if (rec.type == "_raop._tcp") {
+        if (rec.type == kRaopService) {
             if (ev == MdnsBrowser::RecordEvent::Added)
                 registry.onRaopAdded(rec.instance, rec.host, rec.port, rec.txt);
             else
                 registry.onRaopGone(rec.instance);
-        } else if (rec.type == "_airplay._tcp") {
+        } else if (rec.type == kAirplayService) {
             if (ev == MdnsBrowser::RecordEvent::Added)
                 registry.onAirplayAdded(rec.instance, rec.host, rec.port, rec.txt);
             else

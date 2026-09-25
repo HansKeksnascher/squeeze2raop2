@@ -64,7 +64,7 @@ mDNS_PlatformSupport gMdnsPlatformSupport;
 // other piece of browser state lives in MdnsBrowser::Impl.
 std::atomic<MdnsBrowser*> g_activeBrowser{nullptr};
 
-constexpr std::array<std::string_view, 2> kServiceTypes{"_raop._tcp", "_airplay._tcp"};
+constexpr std::array<std::string_view, 2> kServiceTypes{kRaopService, kAirplayService};
 
 std::string domainToString(const domainname* name) {
     char buffer[MAX_ESCAPED_DOMAIN_NAME];

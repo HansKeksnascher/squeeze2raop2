@@ -10,6 +10,17 @@
 
 namespace squeeze2raop2 {
 
+// AirPlay mDNS TXT record keys (airsync/RAOP TXT vocabulary).
+constexpr const char* kTxtModel = "am";
+constexpr const char* kTxtModelAlt = "model";
+constexpr const char* kTxtPassword = "pw";
+constexpr const char* kTxtStatusFlags = "sf";
+constexpr const char* kTxtEncryptionType = "et";
+constexpr const char* kTxtDeviceId = "deviceid";
+constexpr const char* kTxtFeatures = "features";
+constexpr const char* kTxtPublicKey = "pk";
+constexpr uint64_t kTxtEncryptedBit = 0x2;
+
 struct AirplayDevice {
     std::string id;
     std::string name;

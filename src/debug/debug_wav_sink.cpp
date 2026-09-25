@@ -3,6 +3,7 @@
 #include "common/byte_order.h"
 #include "common/log.h"
 #include "common/util.h"
+#include "playback/decoder/container.h"
 
 #include <algorithm>
 #include <array>
@@ -35,14 +36,15 @@ void DebugWavSink::feed(std::span<const std::byte> data, const PcmFormat& format
 
     if (!headerWritten_) {
         format_ = format;
-        std::array<std::byte, 44> header{};
+        std::array<std::byte, kWavHeaderBytes> header{};
         auto putTag = [&header](size_t off, std::string_view tag) {
             std::ranges::copy(std::as_bytes(std::span{tag}),
                               header.begin() + static_cast<std::ptrdiff_t>(off));
         };
-        putTag(0, "RIFF");
+        putTag(0, kWavTagRiff);
         writeInt<Endian::Little>(header.data() + 4, uint32_t{0xFFFFFFFF});
-        putTag(8, "WAVEfmt ");
+        putTag(8, kWavTagWave);
+        putTag(12, kWavTagFmt);
         writeInt<Endian::Little>(header.data() + 16, uint32_t{16});
         writeInt<Endian::Little>(header.data() + 20, uint16_t{1});
         writeInt<Endian::Little>(header.data() + 22, static_cast<uint16_t>(format_.channels));
@@ -52,7 +54,7 @@ void DebugWavSink::feed(std::span<const std::byte> data, const PcmFormat& format
         writeInt<Endian::Little>(header.data() + 28, byteRate);
         writeInt<Endian::Little>(header.data() + 32, blockAlign);
         writeInt<Endian::Little>(header.data() + 34, static_cast<uint16_t>(format_.bitsPerSample));
-        putTag(36, "data");
+        putTag(36, kWavTagData);
         writeInt<Endian::Little>(header.data() + 40, uint32_t{0xFFFFFFFF});
         if (fwrite(header.data(), 1, header.size(), fp_) != header.size()) {
             writeFailed_ = true;
@@ -64,9 +66,10 @@ void DebugWavSink::feed(std::span<const std::byte> data, const PcmFormat& format
                   format_.bitsPerSample, format_.channels);
     }
 
-    if (total_ == 0 && data.size() >= 4 && std::memcmp(data.data(), "RIFF", 4) == 0) {
-        if (data.size() >= 44) {
-            data = data.subspan(44);
+    if (total_ == 0 && data.size() >= kFourccBytes &&
+        std::memcmp(data.data(), kWavTagRiff, kFourccBytes) == 0) {
+        if (data.size() >= kWavHeaderBytes) {
+            data = data.subspan(kWavHeaderBytes);
         }
     }
 
@@ -98,8 +101,8 @@ void DebugWavSink::close() {
             // WAV tops out at 32-bit sizes; clamp like streaming writers do.
             const uint32_t dataSize =
                 static_cast<uint32_t>(std::min<uint64_t>(total_, 0xFFFFFFFFu));
-            const uint32_t riffSize =
-                static_cast<uint32_t>(std::min<uint64_t>(total_ + 36, 0xFFFFFFFFu));
+            const uint32_t riffSize = static_cast<uint32_t>(
+                std::min<uint64_t>(total_ + (kWavHeaderBytes - 8), 0xFFFFFFFFu));
             fseek(fp_, 4, SEEK_SET);
             std::array<std::byte, 4> buf{};
             writeInt<Endian::Little>(buf.data(), riffSize);

@@ -28,7 +28,8 @@ void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
                                                  ? squeeze2raop2::log::Level::Warn
                                                  : squeeze2raop2::log::Level::Debug;
     std::string_view text = msg;
-    if (text.starts_with("Cast: ")) text.remove_prefix(6);
+    if (text.starts_with(kSenderLogPrefix))
+        text.remove_prefix(std::string_view(kSenderLogPrefix).size());
     squeeze2raop2::log::write(mapped, squeeze2raop2::log::Area::Ap, text);
 }
 
@@ -36,7 +37,7 @@ void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
 
 RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget target)
     : name_(std::move(deviceName)), identity_(std::move(identity)), target_(std::move(target)) {
-    ringStorage_ = std::make_unique<fxchain::RingBuffer<int16_t>>(1 << 18);
+    ringStorage_ = std::make_unique<fxchain::RingBuffer<int16_t>>(kRingCapacitySamples);
 
     fxchain::RaopEvents events;
     events.launched = [this](bool ok, const std::string& error) {
@@ -71,8 +72,8 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
         }));
     sender_->attachRing(ringStorage_.get());
 
-    sender_->setIdentity({name_, identity_, "iPhone14,3"});
-    sender_->setInputFormat(44100);
+    sender_->setIdentity({name_, identity_, kSenderIdentity});
+    sender_->setInputFormat(kDefaultSampleRate);
     sender_->setAuth(authFor(target_), target_.airplay2, identity_, target_.storedCreds,
                      target_.password);
 }
@@ -110,7 +111,7 @@ void RaopPlayer::pumpUntil(std::chrono::steady_clock::time_point deadline) {
     using namespace std::chrono;
     while (!loop_.stopRequested() && steady_clock::now() < deadline) {
         const auto left = duration_cast<milliseconds>(deadline - steady_clock::now());
-        pump(std::min(left, milliseconds(20)));
+        pump(std::min(left, milliseconds(kSenderPumpMaxWaitMs)));
     }
 }
 
@@ -128,7 +129,8 @@ void RaopPlayer::stopKeepAlive() {
 // Coarse cadence: no audio is owed between tracks, the session only needs the
 // 1 Hz sync / AP2 feedback keep-alives and a running RTP timeline.
 void RaopPlayer::keepAliveLoop() {
-    while (keepAlive_.load(std::memory_order_relaxed)) pump(std::chrono::milliseconds(100));
+    while (keepAlive_.load(std::memory_order_relaxed))
+        pump(std::chrono::milliseconds(kKeepAlivePeriodMs));
 }
 
 void RaopPlayer::setVolume(double pct) {

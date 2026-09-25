@@ -22,13 +22,17 @@ namespace {
 
 bool parseBool(std::string_view v, bool& out) {
     const std::string s = toLower(trimView(v));
-    if (s == "on" || s == "true" || s == "yes" || s == "1") {
-        out = true;
-        return true;
+    for (const char* t : kTrueValues) {
+        if (s == t) {
+            out = true;
+            return true;
+        }
     }
-    if (s == "off" || s == "false" || s == "no" || s == "0") {
-        out = false;
-        return true;
+    for (const char* f : kFalseValues) {
+        if (s == f) {
+            out = false;
+            return true;
+        }
     }
     return false;
 }
@@ -114,18 +118,20 @@ bool parseSectionHeader(std::string_view raw, std::string& canonical, bool& isPl
     const std::string_view t = trimView(raw);
     if (t.size() < 2 || t.front() != '[' || t.back() != ']') return false;
     const std::string_view inner = trimView(t.substr(1, t.size() - 2));
-    if (inner == "global") {
-        canonical = "global";
+    if (inner == kSectionGlobal) {
+        canonical = kSectionGlobal;
         isPlayer = false;
         return true;
     }
-    if (inner == "default") {
-        canonical = "default";
+    if (inner == kSectionDefault) {
+        canonical = kSectionDefault;
         isPlayer = false;
         return true;
     }
-    if (inner.size() >= 6 && toLower(inner.substr(0, 6)) == "player") {
-        const std::string_view rest = trimView(inner.substr(6));
+    if (inner.size() >= std::string_view{kSectionPlayer}.size() &&
+        toLower(inner.substr(0, std::string_view{kSectionPlayer}.size())) == kSectionPlayer) {
+        const std::string_view rest =
+            trimView(inner.substr(std::string_view{kSectionPlayer}.size()));
         if (rest.empty()) return false;
         canonical = unquote(rest);
         isPlayer = true;
@@ -140,7 +146,7 @@ std::string legacyStatePath(const std::string& configPath) {
     std::string stem = (slash == std::string::npos) ? configPath : configPath.substr(slash + 1);
     const size_t dot = stem.find_last_of('.');
     if (dot != std::string::npos) stem = stem.substr(0, dot);
-    return dir + stem + ".state";
+    return dir + stem + kLegacyStateSuffix;
 }
 
 }  // namespace
@@ -297,7 +303,7 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
                                  std::string& error) {
     const KeySetter set{path_, lineNo, error};
     bool b = false;
-    if (key == "lms") {
+    if (key == kKeyLms) {
         const auto colon = value.find(':');
         if (colon != std::string_view::npos) {
             const auto port = parsePort(value.substr(colon + 1));
@@ -307,36 +313,36 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
         } else {
             global_.lmsHost = std::string(value);
         }
-    } else if (key == "discovery") {
+    } else if (key == kKeyDiscovery) {
         if (!set.boolKey(value, b, "discovery")) return false;
         global_.discovery = b;
-    } else if (key == "iface") {
+    } else if (key == kKeyIface) {
         global_.mdnsIface = std::string(value);
-    } else if (key == "mdns-debug") {
+    } else if (key == kKeyMdnsDebug) {
         if (!set.boolKey(value, b, "mdns-debug")) return false;
         global_.mdnsDebug = b;
-    } else if (key == "auto-register") {
+    } else if (key == kKeyAutoRegister) {
         if (!set.boolKey(value, b, "auto-register")) return false;
         global_.autoRegister = b;
-    } else if (key == "volume-feedback") {
+    } else if (key == kKeyVolumeFeedback) {
         if (!set.boolKey(value, b, "volume-feedback")) return false;
         global_.volumeFeedback = b;
-    } else if (key == "server-timeout-ms") {
-        if (!set.numberKey(value, global_.serverTimeoutMs, 1000u, 600000u, "server-timeout-ms",
-                           "1000-600000"))
+    } else if (key == kKeyServerTimeoutMs) {
+        if (!set.numberKey(value, global_.serverTimeoutMs, kServerTimeoutMinMs, kServerTimeoutMaxMs,
+                           kKeyServerTimeoutMs, "1000-600000"))
             return false;
-    } else if (key == "source-timeout-ms") {
+    } else if (key == kKeySourceTimeoutMs) {
         unsigned v = 0;
         if (!parseNumber(value, v)) return set.fail("source-timeout-ms must be a number");
-        if (v != 0 && (v < 1000 || v > 600000))
+        if (v != 0 && (v < kSourceTimeoutMinMs || v > kSourceTimeoutMaxMs))
             return set.fail("source-timeout-ms must be 0 (off) or 1000-600000");
         global_.sourceTimeoutMs = v;
-    } else if (key == "tls-verify") {
+    } else if (key == kKeyTlsVerify) {
         if (!set.boolKey(value, b, "tls-verify")) return false;
         global_.tlsVerify = b;
-    } else if (key == "tls-ca") {
+    } else if (key == kKeyTlsCa) {
         global_.tlsCaPath = std::string(value);
-    } else if (key == "log") {
+    } else if (key == kKeyLog) {
         if (value == "off")
             global_.logLevel = log::Level::Off;
         else if (value == "error")
@@ -359,26 +365,26 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
                                  PlayerConfig& pc, Section* section, bool isDefault,
                                  std::string& error) {
     // Identity/machine keys are meaningless in [default]; reject them up front.
-    if (isDefault &&
-        (key == "id" || key == "mac" || key == "name" || key == "target" || key == "creds")) {
+    if (isDefault && (key == kKeyId || key == kKeyMac || key == kKeyName || key == kKeyTarget ||
+                      key == kKeyCreds)) {
         log::warn(log::Area::App, "config {}:{}: '{}' is not valid in [default], ignoring", path_,
                   lineNo, key);
         return true;
     }
 
     const KeySetter set{path_, lineNo, error};
-    if (key == "id") {
+    if (key == kKeyId) {
         pc.id = std::string(value);
-    } else if (key == "mac") {
+    } else if (key == kKeyMac) {
         std::array<uint8_t, 6> mac{};
         if (!set.macKey(value, mac)) return false;
         pc.mac = mac;
         section->mac = mac;
         section->hasMac = true;
-    } else if (key == "name") {
+    } else if (key == kKeyName) {
         pc.name = std::string(value);
         section->hasNameOverride = true;
-    } else if (key == "target") {
+    } else if (key == kKeyTarget) {
         const auto colon = value.find(':');
         if (colon != std::string_view::npos) {
             const auto port = parsePort(value.substr(colon + 1));
@@ -388,53 +394,54 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
         } else {
             pc.targetHost = std::string(value);
         }
-    } else if (key == "protocol") {
-        if (value == "ap1")
+    } else if (key == kKeyProtocol) {
+        if (value == kProtocolAp1)
             pc.airplay2 = false;
-        else if (value == "ap2")
+        else if (value == kProtocolAp2)
             pc.airplay2 = true;
         else
             return set.fail("protocol must be ap1|ap2");
-    } else if (key == "password") {
+    } else if (key == kKeyPassword) {
         pc.password = std::string(value);
-    } else if (key == "enabled") {
+    } else if (key == kKeyEnabled) {
         bool b = false;
         if (!set.boolKey(value, b, "enabled")) return false;
         pc.enabled = b;
-    } else if (key == "volume") {
-        if (value == "lms")
+    } else if (key == kKeyVolume) {
+        if (value == kVolumeModeLms)
             pc.volumeMode = VolumeMode::Lms;
-        else if (value == "fixed")
+        else if (value == kVolumeModeFixed)
             pc.volumeMode = VolumeMode::Fixed;
         else
             return set.fail("volume must be lms|fixed");
-    } else if (key == "volume-map") {
+    } else if (key == kKeyVolumeMap) {
         if (!VolumeAnchors::parse(value))
             return set.fail("volume-map needs \"db:pct, ...\" pairs, ascending pct 1-100, db <= 0");
         pc.volumeMap = std::string(value);
-    } else if (key == "volume-pct") {
+    } else if (key == kKeyVolumePct) {
         float parsed = 0.0f;
-        if (!set.numberKey(value, parsed, 0.5f, 100.f, "volume-pct", "0.5-100 (0 would be mute)"))
+        if (!set.numberKey(value, parsed, kVolumePctMin, kVolumePctMax, kKeyVolumePct,
+                           "0.5-100 (0 would be mute)"))
             return false;
         pc.volPct = parsed;
-    } else if (key == "latency-ms") {
+    } else if (key == kKeyLatencyMs) {
         int parsed = 0;
-        if (!set.numberKey(value, parsed, 250, 2000, "latency-ms",
+        if (!set.numberKey(value, parsed, kLatencyMinMs, kLatencyMaxMs, kKeyLatencyMs,
                            "250-2000 (receiver latencyMin..Max)"))
             return false;
         pc.latencyMs = parsed;
-    } else if (key == "sink") {
+    } else if (key == kKeySink) {
         pc.sinkPath = std::string(value);
-    } else if (key == "pace") {
-        if (value == "fast")
+    } else if (key == kKeyPace) {
+        if (value == kPaceFast)
             pc.paceRealtime = false;
-        else if (value == "realtime")
+        else if (value == kPaceRealtime)
             pc.paceRealtime = true;
         else
             return set.fail("pace must be realtime|fast");
-    } else if (key == "creds") {
+    } else if (key == kKeyCreds) {
         section->creds = std::string(value);
-    } else if (key == "auto") {
+    } else if (key == kKeyAuto) {
         bool b = false;
         if (!set.boolKey(value, b, "auto")) return false;
         pc.autoSection = b;
@@ -490,10 +497,10 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
             line.kind = Line::Kind::Section;
             line.section = canonical;
             currentName = canonical;
-            if (canonical == "global") {
+            if (canonical == kSectionGlobal) {
                 current = Kind::Global;
                 currentSection = nullptr;
-            } else if (canonical == "default") {
+            } else if (canonical == kSectionDefault) {
                 current = Kind::Default;
                 currentSection = nullptr;
             } else {
@@ -613,30 +620,36 @@ void Persistence::writeTemplate() {
     out << "# squeeze2raop2 config + state. Edit [global]/[default]/[player]; the\n"
            "# program only rewrites the machine-managed 'mac', 'creds' and 'name'\n"
            "# keys.\n"
-           "\n"
-           "[global]\n"
-           "# lms = 192.168.1.10:3483   (omit for UDP discovery on 3483)\n"
-           "discovery = on\n"
+           "\n["
+        << kSectionGlobal << "]\n"
+        << "# " << kKeyLms << " = 192.168.1.10:" << kDefaultLmsPort
+        << "   (omit for UDP discovery on " << kDefaultLmsPort << ")\n"
+        << kKeyDiscovery
+        << " = on\n"
            "# iface = eth0\n"
            "# mdns-debug = off\n"
-           "# server-timeout-ms = 35000\n"
-           "# source-timeout-ms = 15000\n"
+        << "# " << kKeyServerTimeoutMs << " = " << kDefaultServerTimeoutMs << "\n"
+        << "# " << kKeySourceTimeoutMs << " = " << kDefaultSourceTimeoutMs
+        << "\n"
            "# tls-verify = on\n"
            "# tls-ca = /etc/ssl/certs/ca-certificates.crt\n"
-           "log = info\n"
-           "auto-register = on\n"
-           "# volume-feedback = on\n"
-           "\n"
-           "[default]\n"
-           "protocol = ap2\n"
+        << kKeyLog << " = info\n"
+        << kKeyAutoRegister << " = on\n"
+        << "# " << kKeyVolumeFeedback
+        << " = on\n"
+           "\n["
+        << kSectionDefault << "]\n"
+        << kKeyProtocol << " = " << kProtocolAp2
+        << "\n"
            "# password =\n"
-           "enabled = on\n"
-           "volume = lms\n"
-           "volume-map = -30:1, -23:16, -15:50, 0:100\n"
-           "volume-pct = 0.7\n"
-           "latency-ms = 500\n"
+        << kKeyEnabled << " = on\n"
+        << kKeyVolume << " = " << kVolumeModeLms << "\n"
+        << kKeyVolumeMap << " = " << kDefaultVolumeMap << "\n"
+        << kKeyVolumePct << " = " << kDefaultVolumePct << "\n"
+        << kKeyLatencyMs << " = " << kDefaultLatencyMs
+        << "\n"
            "# sink =\n"
-           "pace = realtime\n";
+        << kKeyPace << " = " << kPaceRealtime << "\n";
     out.flush();
 }
 
@@ -684,15 +697,19 @@ bool Persistence::saveLocked() {
     std::set<std::string> sectionNames;
     for (const auto& s : sections_) sectionNames.insert(s.name);
 
+    const auto isManaged = [](std::string_view k) {
+        return std::ranges::find(kManagedKeys, k) != std::end(kManagedKeys);
+    };
+
     std::set<std::string> headerSeen;
     std::set<std::string> hasMacLine, hasCredsLine, hasAutoLine, hasNameLine;
     for (const auto& l : lines_) {
         if (l.kind == Line::Kind::Section) headerSeen.insert(l.section);
         if (l.kind == Line::Kind::Key) {
-            if (l.key == "mac") hasMacLine.insert(l.section);
-            if (l.key == "creds") hasCredsLine.insert(l.section);
-            if (l.key == "auto") hasAutoLine.insert(l.section);
-            if (l.key == "name") hasNameLine.insert(l.section);
+            if (l.key == kKeyMac) hasMacLine.insert(l.section);
+            if (l.key == kKeyCreds) hasCredsLine.insert(l.section);
+            if (l.key == kKeyAuto) hasAutoLine.insert(l.section);
+            if (l.key == kKeyName) hasNameLine.insert(l.section);
         }
     }
 
@@ -710,16 +727,15 @@ bool Persistence::saveLocked() {
             return false;
         }
         for (const auto& l : lines_) {
-            if (l.kind == Line::Kind::Key &&
-                (l.key == "mac" || l.key == "creds" || l.key == "name")) {
+            if (l.kind == Line::Kind::Key && isManaged(l.key)) {
                 const Section* s = sectionByName(l.section);
                 if (!s) {
                     out << l.raw << "\n";
                     continue;
                 }
-                if (l.key == "mac") {
+                if (l.key == kKeyMac) {
                     if (s->hasMac) out << l.valuePrefix << macToString(s->mac) << "\n";
-                } else if (l.key == "creds") {
+                } else if (l.key == kKeyCreds) {
                     if (!s->creds.empty()) out << l.valuePrefix << oneLine(s->creds) << "\n";
                 } else if (s->hasNameOverride) {
                     out << l.valuePrefix << s->config.name.value_or(s->name) << "\n";

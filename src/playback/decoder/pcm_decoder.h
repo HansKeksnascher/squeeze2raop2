@@ -69,10 +69,10 @@ private:
     void resetRateStage();
 
     // Source conversion params (the container header may override them).
-    uint8_t srcBits_ = 16;
-    uint8_t srcChannels_ = 2;
+    uint8_t srcBits_ = kDefaultBitsPerSample;
+    uint8_t srcChannels_ = kDefaultChannels;
     bool srcBigEndian_ = false;
-    uint32_t srcRate_ = 44100;
+    uint32_t srcRate_ = kDefaultSampleRate;
     size_t bytesPerFrame_ = 4;    // source input frame size
     PcmFormat fmt_;               // OUTPUT format (post-adoption, post-rate)
     uint32_t outRate_ = 0;        // target output clock (0 = unregulated)

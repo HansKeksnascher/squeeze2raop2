@@ -60,7 +60,7 @@ private:
     std::unique_ptr<Impl> impl_;
     // 0 until the OpusHead is parsed so format() falls back to the input.
     uint32_t sampleRate_ = 0;
-    int channels_ = 2;
+    int channels_ = kDefaultChannels;
     bool headerSeen_ = false;
 };
 

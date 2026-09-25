@@ -117,16 +117,17 @@ void DeviceRegistry::onRaopAdded(const std::string& instance, const std::string&
 
         size_t at = instance.find('@');
         if (at != std::string::npos && at + 1 < instance.size()) d.name = instance.substr(at + 1);
-        if (auto it = txt.find("am"); it != txt.end() && !it->second.empty()) d.model = it->second;
-        if (auto it = txt.find("pw"); it != txt.end())
+        if (auto it = txt.find(kTxtModel); it != txt.end() && !it->second.empty())
+            d.model = it->second;
+        if (auto it = txt.find(kTxtPassword); it != txt.end())
             d.pw = (it->second == "true" || it->second == "1");
-        if (auto it = txt.find("sf"); it != txt.end()) {
+        if (auto it = txt.find(kTxtStatusFlags); it != txt.end()) {
             // Preserve the legacy strtoull semantics: garbage input parses as 0.
             uint64_t sf = 0;
             std::from_chars(it->second.data(), it->second.data() + it->second.size(), sf, 16);
-            d.encrypted = (sf & 0x2) != 0;
+            d.encrypted = (sf & kTxtEncryptedBit) != 0;
         }
-        if (auto it = txt.find("et"); it != txt.end())
+        if (auto it = txt.find(kTxtEncryptionType); it != txt.end())
             d.encrypted = d.encrypted || it->second.find('1') != std::string::npos;
     });
     // Notify without holding mutex_: callbacks build/destroy whole player
@@ -142,7 +143,7 @@ void DeviceRegistry::onAirplayAdded(const std::string& instance, const std::stri
     // the 12-hex deviceid in the TXT record is the shared identity that
     // matches the raop instance prefix; use it so both records merge
     std::string key;
-    if (auto it = txt.find("deviceid"); it != txt.end()) key = normalizeHexKey(it->second);
+    if (auto it = txt.find(kTxtDeviceId); it != txt.end()) key = normalizeHexKey(it->second);
     if (key.empty()) key = keyFor(instance);
 
     auto [snapshot, added] = upsertAndNotifyKey(key, [&](State& st) {
@@ -153,11 +154,12 @@ void DeviceRegistry::onAirplayAdded(const std::string& instance, const std::stri
         st.lastSeenAirplay = true;
 
         if (d.name.empty()) d.name = instance;
-        if (auto it = txt.find("features"); it != txt.end() && !it->second.empty())
+        if (auto it = txt.find(kTxtFeatures); it != txt.end() && !it->second.empty())
             d.features = parseAirplayFeatures(it->second);
-        if (auto it = txt.find("pk"); it != txt.end()) d.pk = it->second;
-        if (auto it = txt.find("model"); it != txt.end() && d.model.empty()) d.model = it->second;
-        if (auto it = txt.find("pw"); it != txt.end() && !d.pw)
+        if (auto it = txt.find(kTxtPublicKey); it != txt.end()) d.pk = it->second;
+        if (auto it = txt.find(kTxtModelAlt); it != txt.end() && d.model.empty())
+            d.model = it->second;
+        if (auto it = txt.find(kTxtPassword); it != txt.end() && !d.pw)
             d.pw = (it->second == "true" || it->second == "1");
     });
     // Notify without holding mutex_ (see onRaopAdded).

@@ -48,10 +48,10 @@ void StreamCoordinator::onStreamStart(const StrmStart& st) {
     sentStms_ = false;
 
     std::string host = st.serverIp ? ipv4ToString(st.serverIp) : link_.serverHost();
-    uint16_t port = st.serverPort ? st.serverPort : 9000;
+    uint16_t port = st.serverPort ? st.serverPort : kDefaultStreamPort;
     if (host.empty() || st.request.empty()) {
         log::error(log::Area::Ses, "strm-s missing stream target or request header");
-        link_.stat("STMn");
+        link_.stat(kStatError);
         return;
     }
     // Only formats the track pump actually consumes, per Decoder::supportedCodecs()
@@ -64,12 +64,12 @@ void StreamCoordinator::onStreamStart(const StrmStart& st) {
     if (!unknown && !supportsFormat(st.format)) {
         log::error(log::Area::Ses, "strm s: unsupported stream format '{}'",
                    static_cast<char>(st.format));
-        link_.stat("STMn");
+        link_.stat(kStatError);
         return;
     }
-    if (unknown && st.autostart < 2) {
+    if (unknown && st.autostart < kAutostartRequireCont) {
         log::error(log::Area::Ses, "strm s: unknown codec requires autostart >= 2");
-        link_.stat("STMn");
+        link_.stat(kStatError);
         return;
     }
 
@@ -86,19 +86,19 @@ void StreamCoordinator::onStreamStart(const StrmStart& st) {
                                               sourceTimeoutMs_);
     track_->setMetaForward([this](std::string_view block) { link_.meta(block); });
     track_->setDecoderReady([this] { onDecoderReady(); });
-    track_->setUnderrun([this] { link_.stat("STMo"); });
+    track_->setUnderrun([this] { link_.stat(kStatUnderrun); });
 
     std::string error;
     const std::optional<std::string> headers = track_->openSource(st, host, port, error);
     if (!headers) {
         log::error(log::Area::Ses, "stream connect {}:{} failed: {}", host, port, error);
         link_.disco(track_->disconnectCode());
-        link_.stat("STMn");
+        link_.stat(kStatError);
         track_.reset();
         return;
     }
     link_.resp(*headers);
-    link_.stat("STMc");
+    link_.stat(kStatConnect);
 
     if (unknown) {
         awaitCodc_.store(true);
@@ -107,7 +107,7 @@ void StreamCoordinator::onStreamStart(const StrmStart& st) {
     }
     if (!track_->attachDecoder(st.format, st.pcm, error)) {
         log::error(log::Area::Ses, "strm s: cannot create decoder: {}", error);
-        link_.stat("STMn");
+        link_.stat(kStatError);
         track_.reset();
         return;
     }
@@ -128,7 +128,7 @@ void StreamCoordinator::onCodc(StreamFormat format, const PcmParams& pcm) {
     if (!track_->attachDecoder(format, pcm, error)) {
         log::error(log::Area::Ses, "codc: unsupported codec '{}': {}", static_cast<char>(format),
                    error);
-        link_.stat("STMn");
+        link_.stat(kStatError);
         track_.reset();
         awaitCodc_.store(false);
         return;
@@ -193,7 +193,7 @@ void StreamCoordinator::maybeStartPump() {
     if (!track_) return;
     if (streamThread_.joinable()) return;
     if (awaitCodc_.load() && !haveCodc_.load()) return;
-    if (autostart_.load() >= 2 && !haveCont_.load()) return;
+    if (autostart_.load() >= kAutostartRequireCont && !haveCont_.load()) return;
     streamThread_ = std::jthread([this](std::stop_token st) { streamLoop(st); });
 }
 
@@ -201,13 +201,13 @@ void StreamCoordinator::maybeStartPump() {
 // with no AirPlay target, the track start (STMs) since the prebuffer gate is
 // disabled.
 void StreamCoordinator::onDecoderReady() {
-    if (autostart_.load() == 0 && !sentStml_) {
+    if (autostart_.load() == kAutostartDecoderReady && !sentStml_) {
         sentStml_ = true;
-        link_.stat("STMl");
+        link_.stat(kStatAutostart);
     }
     if (!output_.hasTarget() && !sentStms_) {
         sentStms_ = true;
-        link_.stat("STMs");
+        link_.stat(kStatStart);
     }
 }
 
@@ -216,7 +216,7 @@ void StreamCoordinator::onDecoderReady() {
 void StreamCoordinator::onPrebufferReady() {
     if (!sentStms_) {
         sentStms_ = true;
-        link_.stat("STMs");
+        link_.stat(kStatStart);
     }
     volume_.launch();
 }
@@ -245,13 +245,13 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
     if (haveTarget) {
         if (!output_.prepare(fmt.sampleRate)) {
             log::error(log::Area::Ap, "cannot start airplay session for {}", link_.name());
-            link_.stat("STMn");
+            link_.stat(kStatError);
             streamActive_.store(false);
             return;
         }
         // (input rate is applied inside prepare(); the only later setInputRate
         // is the track's mid-stream format-adoption update)
-        if (fmt.channels != 2)
+        if (fmt.channels != kDefaultChannels)
             log::warn(log::Area::Ses, "input is {}-channel; bridges Apple receivers expect stereo",
                       fmt.channels);
     }
@@ -261,7 +261,7 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
     // fresh ring.
     for (;;) {
         const PlaybackStream::End end = track_->run(st, [this] { onPrebufferReady(); });
-        if (end == PlaybackStream::End::DecodeError) link_.stat("STMn");
+        if (end == PlaybackStream::End::DecodeError) link_.stat(kStatError);
 
         const bool keepSession = flushed_.exchange(false);
         const bool lost = output_.consumeLost();
@@ -291,8 +291,9 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
         case ExitAction::SilentStop: break;
         case ExitAction::Retry:
             retryUsed_.store(true);
-            log::info(log::Area::Ap, "receiver session lost; retrying in 2s");
-            std::this_thread::sleep_for(std::chrono::seconds(2));
+            log::info(log::Area::Ap, "receiver session lost; retrying in {}s",
+                      kRetryDelayMs / kMsPerSecond);
+            std::this_thread::sleep_for(std::chrono::milliseconds(kRetryDelayMs));
             if (output_.prepare(track_->format().sampleRate)) {
                 track_->reapplyNowPlaying();
                 // The HTTP source stays open across a receiver restart, so loop
@@ -301,21 +302,21 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
                 continue;
             }
             log::error(log::Area::Ap, "cannot restart airplay session for {}", link_.name());
-            link_.stat("STMn");
+            link_.stat(kStatError);
             break;
         case ExitAction::GaveUp:
             log::info(log::Area::Ap, "receiver session lost again; giving up (STMd)");
-            link_.stat("STMd");
+            link_.stat(kStatDone);
             break;
         case ExitAction::EndedEof:
             // Decoder complete: DSCO(OK) closes the stream, then STMd tells LMS
             // we are ready for the next track.
             link_.disco(track_->disconnectCode());
-            link_.stat("STMd");
+            link_.stat(kStatDone);
             // Then let the receiver play out the buffered tail before the
             // output underrun (normal end of playback).
             waitForOutputDrain(st);
-            if (!st.stop_requested() && g_run.load() && !output_.lost()) link_.stat("STMu");
+            if (!st.stop_requested() && g_run.load() && !output_.lost()) link_.stat(kStatEnd);
             break;
         case ExitAction::EndedError:
             // Socket or decode error: the stream is dead, not merely finished.
@@ -325,9 +326,9 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
             // STMn above and has no disconnect reason.
             if (track_->disconnectCode() != DisconnectCode::None) {
                 link_.disco(track_->disconnectCode());
-                link_.stat("STMn");
+                link_.stat(kStatError);
             } else {
-                link_.stat("STMu");
+                link_.stat(kStatEnd);
             }
             break;
         }
@@ -353,14 +354,14 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
 // request from a new track or shutdown). Keeps the ring occupancy current so
 // the final STMu reports the played position.
 void StreamCoordinator::waitForOutputDrain(std::stop_token st) {
-    const uint64_t deadline = nowMs() + 5000;
+    const uint64_t deadline = nowMs() + kDrainTimeoutMs;
     while (!st.stop_requested() && g_run.load() && !output_.lost()) {
         const size_t avail = output_.queued();
         counters_.setQueued(avail);
         if (avail == 0) return;
         if (nowMs() >= deadline) return;
         // Keep the sender running so the buffered tail actually leaves the ring.
-        output_.pump(std::chrono::milliseconds(20));
+        output_.pump(std::chrono::milliseconds(kDrainPumpMs));
     }
 }
 

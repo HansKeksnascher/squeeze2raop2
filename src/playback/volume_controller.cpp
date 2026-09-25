@@ -2,6 +2,7 @@
 
 #include "common/log.h"
 #include "common/util.h"
+#include "lms/slimproto_protocol.h"
 
 #include <algorithm>
 #include <chrono>
@@ -11,14 +12,6 @@
 namespace squeeze2raop2 {
 
 namespace {
-
-// LMS resolves these IR codes against IR/Slim_Devices_Remote.ir (volup /
-// voldown) and Default.map ("volup = volume"), then moves its own volume
-// mixer one step. That is the only player->server volume primitive slimproto
-// offers; absolute levels are not expressible, so the receiver's reported
-// volume is chased with a closed loop driven by the AUDG echo.
-constexpr uint32_t kVolUpButton = 0x7689807fu;
-constexpr uint32_t kVolDownButton = 0x768900ffu;
 
 // Stop nudging once LMS is within this many slider points of the target, and
 // cap the steps per receiver change so a bogus/looping event can't spin.
@@ -126,7 +119,7 @@ void VolumeController::onLmsVolume(double l, double r) {
 void VolumeController::onReceiverVolume(double unit) {
     if (!volumeFeedback_ || volumeMode_ != VolumeMode::Lms) return;
     unit = std::clamp(unit, 0.0, 1.0);
-    const double airplayPct = unit * 100.0;
+    const double airplayPct = unit * kAirplayPctMax;
     // Ignore an echo of the volume we last pushed to the receiver (some
     // receivers report it back on the event channel); only a real user change
     // should move LMS.

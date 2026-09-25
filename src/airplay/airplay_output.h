@@ -107,7 +107,7 @@ private:
     std::optional<RaopTarget> target_;
     CredentialSink credSink_;
     std::function<void(double)> remoteVolumeSink_;
-    int latencyMs_ = 500;
+    int latencyMs_ = kDefaultAirplayLatencyMs;
     mutable std::mutex mutex_;  // guards player_/target_/credSink_
     std::shared_ptr<RaopPlayer> player_;
     std::atomic<bool> lost_{false};

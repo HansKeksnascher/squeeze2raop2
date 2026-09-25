@@ -1,6 +1,8 @@
 #pragma once
 
 #include "airplay/raop_types.h"
+#include "common/util.h"
+#include "lms/slimproto_protocol.h"
 #include "raop_auth.h"
 #include "raop_loop.h"
 #include "raop_sender.h"
@@ -55,7 +57,7 @@ public:
     void setVolume(double pct);
     void setLatencyMs(int ms) {
         std::lock_guard<std::mutex> lock(senderMutex_);
-        if (sender_) sender_->setLatency(uint32_t(int64_t(ms) * 44100 / 1000));
+        if (sender_) sender_->setLatency(uint32_t(int64_t(ms) * kDefaultSampleRate / kMsPerSecond));
     }
     void flush() {
         std::lock_guard<std::mutex> lock(senderMutex_);

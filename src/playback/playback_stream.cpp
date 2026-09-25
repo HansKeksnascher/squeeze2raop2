@@ -38,13 +38,13 @@ PlaybackStream::~PlaybackStream() { close(); }
 
 std::optional<std::string> PlaybackStream::openSource(const StrmStart& st, const std::string& host,
                                                       uint16_t port, std::string& error) {
-    const PcmFormat input = pcmFormat(st.pcm, 44100);
+    const PcmFormat input = pcmFormat(st.pcm, kDefaultSampleRate);
     counters_.reset(input.sampleRate);
 
     // Per-stream audio parameters. Crossfade (mode 1) is unsupported: the
     // bridge never overlaps two tracks in the ring, so map it to no fade.
     replayGain_ = static_cast<int32_t>(st.replayGain);
-    fadeMode_ = (st.transitionType == 1) ? 0 : st.transitionType;
+    fadeMode_ = (st.transitionType == kFadeModeCross) ? kFadeModeNone : st.transitionType;
     fadeSecs_ = st.transitionPeriodS;
     fadeIn_ = false;
     fadeInDone_ = false;
@@ -70,11 +70,11 @@ std::optional<std::string> PlaybackStream::openSource(const StrmStart& st, const
 }
 
 bool PlaybackStream::attachDecoder(StreamFormat format, const PcmParams& pcm, std::string& error) {
-    const PcmFormat input = pcmFormat(pcm, 44100);
+    const PcmFormat input = pcmFormat(pcm, kDefaultSampleRate);
     // One decoder per stream format, one feed pipeline for both. PCM regulates
     // to the AirPlay output clock (44100) so a source that under-delivers
     // cannot drain the pipeline.
-    decoder_ = Decoder::create(format, input, 44100, pcm.sampleSizeCode);
+    decoder_ = Decoder::create(format, input, kDefaultSampleRate, pcm.sampleSizeCode);
     if (!decoder_) {
         error = "unsupported stream format";
         return false;
@@ -111,14 +111,14 @@ void PlaybackStream::unpause() {
 }
 
 void PlaybackStream::skipAhead(uint32_t ms) {
-    const uint32_t rate = format().sampleRate ? format().sampleRate : 44100;
+    const uint32_t rate = format().sampleRate ? format().sampleRate : kDefaultSampleRate;
     const uint64_t frames = skipFramesFor(ms, rate);
     skipFrames_.fetch_add(frames, std::memory_order_relaxed);
     log::info(log::Area::Pb, "skip ahead {} ms ({} frames)", ms, frames);
 }
 
 bool PlaybackStream::requestFadeOut() {
-    if (fadeSecs_ == 0 || (fadeMode_ != 3 && fadeMode_ != 4)) return false;
+    if (fadeSecs_ == 0 || (fadeMode_ != kFadeModeOut && fadeMode_ != kFadeModeInOut)) return false;
     fadeOutRequested_.store(true, std::memory_order_relaxed);
     return true;
 }
@@ -161,14 +161,14 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
     // silence-padding its way into the session. Re-armed each pass: a retry
     // creates a fresh ring.
     const bool haveTarget = output_.hasTarget();
-    const size_t prebufferSamples = haveTarget ? output_.capacity() / 2 : 0;
+    const size_t prebufferSamples = haveTarget ? output_.capacity() / kPrebufferDivisor : 0;
     bool prebuffering = haveTarget && prebufferSamples != 0;
     const uint64_t prebufferStartMs = nowMs();
     if (prebuffering)
         log::info(log::Area::Pb, "prebuffering {} samples (50% of ring)", prebufferSamples);
 
     PcmFormat fmt = format();
-    char buf[4096];
+    char buf[kReadBufferBytes];
     bool reachedEof = false;
     bool decodeFailed = false;
     lastDataMs_ = nowMs();  // fresh deadline for a (re-entered) pass
@@ -180,7 +180,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
         if (fadeOutRequested_.exchange(false, std::memory_order_relaxed)) {
             fadeOut_ = true;
             fadeOutFrames_ = 0;
-            const uint32_t rate = fmt.sampleRate ? fmt.sampleRate : 44100;
+            const uint32_t rate = fmt.sampleRate ? fmt.sampleRate : kDefaultSampleRate;
             fadeOutDur_ = static_cast<uint32_t>(static_cast<uint64_t>(fadeSecs_) * rate);
             prebuffering = false;
         }
@@ -221,7 +221,8 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
                 const auto pauseChanged = [this, until] {
                     return pauseUntilMs_.load(std::memory_order_relaxed) != until;
                 };
-                const uint64_t sliceMs = timed ? std::min<uint64_t>(until - now, 25) : 25;
+                const uint64_t sliceMs =
+                    timed ? std::min<uint64_t>(until - now, kPauseSliceMs) : kPauseSliceMs;
                 pauseCv_.wait_for(lock, st, std::chrono::milliseconds(sliceMs), pauseChanged);
 
                 if (st.stop_requested()) break;
@@ -233,7 +234,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
         }
 
         uint64_t iterStart = nowMs();
-        auto rr = reader_.read(std::span{buf}, 150);
+        auto rr = reader_.read(std::span{buf}, kReadPollTimeoutMs);
 
         if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
             const auto audio = std::as_bytes(std::span{buf}).first(rr.bytes);
@@ -282,7 +283,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             if (empty) {
                 if (ringEmptySinceMs_ == 0) {
                     ringEmptySinceMs_ = nowMs();
-                } else if (!underrunFired_ && nowMs() - ringEmptySinceMs_ >= 1000) {
+                } else if (!underrunFired_ && nowMs() - ringEmptySinceMs_ >= kUnderrunWindowMs) {
                     underrunFired_ = true;
                     log::info(log::Area::Pb, "output underrun while stream active (STMo)");
                     if (underrun_) underrun_();
@@ -317,7 +318,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
         // without regulation (step 1.0) the pacing keeps the baseline read
         // cadence.
         if (paceRealtime_ && !prebuffering && !fadeOut_ && !(decoder_ && decoder_->regulating())) {
-            const uint64_t timeline = counters_.fedSamples() * 1000ULL / fmt.sampleRate;
+            const uint64_t timeline = counters_.fedSamples() * kMsPerSecond / fmt.sampleRate;
             // Pace reads to playback time with a lead: keeps the sender's ring
             // fed without running far ahead of the wire. The lead is the
             // pass-through path's only jitter headroom (44.1 kHz PCM goes ring
@@ -325,8 +326,9 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             // inBuf_); too small and any LMS proxy/transcode burst silence-pads
             // RTP packets = crackle. Skipped while prebuffering: the gate wants
             // the ring filled as fast as the source allows.
-            if (timeline > activeMs_ + 60) {
-                const uint64_t sleepMs = std::min<uint64_t>(timeline - (activeMs_ + 60), 120);
+            if (timeline > activeMs_ + kPacerLeadMs) {
+                const uint64_t sleepMs =
+                    std::min<uint64_t>(timeline - (activeMs_ + kPacerLeadMs), kPacerMaxSleepMs);
                 // The pace wait doubles as the sender's service window: pump
                 // until the deadline instead of sleeping, so RTP/sync/retransmit
                 // stay on time even though there is no dedicated pump thread.
@@ -360,13 +362,13 @@ size_t PlaybackStream::consumeSkip(size_t frames) {
 std::span<const int16_t> PlaybackStream::applyGainFade(std::span<const int16_t> chunk,
                                                        const PcmFormat& fmt) {
     const bool haveReplay = replayGain_ != 0 && replayGain_ != kFixedOne;
-    const uint32_t rate = fmt.sampleRate ? fmt.sampleRate : 44100;
-    const size_t channels = fmt.channels ? fmt.channels : 2;
+    const uint32_t rate = fmt.sampleRate ? fmt.sampleRate : kDefaultSampleRate;
+    const size_t channels = fmt.channels ? fmt.channels : kDefaultChannels;
     const uint64_t frames = chunk.size() / channels;
 
     // Start the initial fade-in on the first emitted chunk (once per stream).
     if (!fadeIn_ && !fadeInDone_ && !fadeOut_ && fadeSecs_ > 0 &&
-        (fadeMode_ == 2 || fadeMode_ == 4)) {
+        (fadeMode_ == kFadeModeIn || fadeMode_ == kFadeModeInOut)) {
         fadeIn_ = true;
         fadeInFrames_ = 0;
         fadeInDur_ = static_cast<uint32_t>(static_cast<uint64_t>(fadeSecs_) * rate);
@@ -398,9 +400,9 @@ std::span<const int16_t> PlaybackStream::applyGainFade(std::span<const int16_t> 
 
     gainScratch_.resize(chunk.size());
     const int32_t fade =
-        static_cast<int32_t>((static_cast<int64_t>(fadeInGain) * fadeOutGain) >> 16);
+        static_cast<int32_t>((static_cast<int64_t>(fadeInGain) * fadeOutGain) >> kFixedShift);
     const int32_t base = haveReplay ? replayGain_ : kFixedOne;
-    const int32_t gain = static_cast<int32_t>((static_cast<int64_t>(base) * fade) >> 16);
+    const int32_t gain = static_cast<int32_t>((static_cast<int64_t>(base) * fade) >> kFixedShift);
     std::transform(chunk.begin(), chunk.end(), gainScratch_.begin(),
                    [gain](int16_t s) { return applyGain16(s, gain); });
     return std::span<const int16_t>(gainScratch_);
@@ -438,7 +440,7 @@ bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, P
             if (decoderReady_) decoderReady_();
         }
 
-        const size_t channels = fmt.channels ? fmt.channels : 2;
+        const size_t channels = fmt.channels ? fmt.channels : kDefaultChannels;
 
         // Skip-ahead (strm a): drop whole frames, counting them as played so
         // the elapsed clock advances as in squeezelite.

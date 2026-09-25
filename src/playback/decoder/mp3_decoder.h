@@ -40,7 +40,7 @@ private:
 
     mp3dec_t dec_{};  // minimp3 decoder state, embedded by value
     uint32_t sampleRate_ = 0;
-    int channels_ = 2;
+    int channels_ = kDefaultChannels;
 };
 
 }  // namespace squeeze2raop2

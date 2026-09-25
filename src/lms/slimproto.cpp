@@ -32,9 +32,6 @@ namespace squeeze2raop2 {
 
 namespace {
 
-constexpr size_t kMaxPacket = size_t{4096} * 8;
-constexpr int kPollTimeoutMs = 100;
-
 // Reads exactly `len` bytes, retrying EINTR and short reads. Returns false on
 // EOF or a real error.
 bool recvFully(int fd, void* dst, size_t len) {
@@ -78,7 +75,7 @@ bool discoverLms(std::string& hostOut, uint16_t port, uint32_t timeoutMs) {
         if (now >= deadline) break;
         const uint64_t remaining = deadline - now;
         pollfd pfd{fd.get(), POLLIN, 0};
-        const int wait = static_cast<int>(std::min<uint64_t>(2000, remaining));
+        const int wait = static_cast<int>(std::min<uint64_t>(kDiscoveryPollWaitMs, remaining));
         const int pr = ::poll(&pfd, 1, wait);
         if (pr < 0) {
             if (errno == EINTR) continue;
@@ -125,8 +122,8 @@ void SlimProtoClient::stop() {
         // Graceful goodbye: LMS 9.1's BYE! handler is a near no-op (it only
         // reacts to the old SDK upgrade reason), but it is correct protocol
         // and makes the intent visible in LMS logs before the socket drops.
-        const uint8_t bye = 0;
-        (void)sendPacket("BYE!", std::as_bytes(std::span{&bye, 1}));  // best effort
+        const uint8_t bye = kByeReasonNormal;
+        (void)sendPacket(kOpBye, std::as_bytes(std::span{&bye, 1}));  // best effort
         // shutdown() (not close) wakes a reader blocked in poll()/recv() and is
         // safe concurrently with the best-effort BYE! send above.
         if (auto sock = currentSock()) sock->shutdown();
@@ -149,11 +146,12 @@ bool SlimProtoClient::sendRaw(std::span<const std::byte> data) {
 bool SlimProtoClient::sendPacket(const char (&opcode)[5], std::span<const std::byte> payload) {
     // client -> LMS framing (per squeezelite/HELO spec):
     // [4b opcode][4b big-endian length = payload bytes][payload]
-    std::array<std::byte, 8> header{};
-    std::memcpy(header.data(), opcode, 4);
-    writeInt<Endian::Big>(header.data() + 4, static_cast<uint32_t>(payload.size()));
+    std::array<std::byte, kFrameHeaderBytes> header{};
+    std::memcpy(header.data(), opcode, kOpcodeBytes);
+    writeInt<Endian::Big>(header.data() + kLengthFieldOffset,
+                          static_cast<uint32_t>(payload.size()));
     std::vector<std::byte> pkt;
-    pkt.reserve(8 + payload.size());
+    pkt.reserve(kFrameHeaderBytes + payload.size());
     pkt.insert(pkt.end(), header.begin(), header.end());
     if (!payload.empty()) pkt.insert(pkt.end(), payload.begin(), payload.end());
     return sendRaw(std::span{pkt});
@@ -171,7 +169,7 @@ bool SlimProtoClient::connectOnce(bool reconnect) {
     // Server-dead resilience (squeezelite's 35 s watchdog parity): kernel
     // keepalive detects a half-open control connection (~2.5 min to fail
     // with these settings) so run() reconnects instead of blocking forever.
-    int kaIdle = 30, kaIntvl = 10, kaCnt = 6;
+    int kaIdle = kKeepAliveIdleSec, kaIntvl = kKeepAliveIntervalSec, kaCnt = kKeepAliveCount;
     (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &kaIdle, sizeof(kaIdle));
     (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &kaIntvl, sizeof(kaIntvl));
     (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &kaCnt, sizeof(kaCnt));
@@ -185,27 +183,31 @@ bool SlimProtoClient::connectOnce(bool reconnect) {
 
 void SlimProtoClient::maybeHeartbeat() {
     const uint64_t now = nowMs();
-    if (now - lastHeartbeatMs_ >= 1000) {
+    if (now - lastHeartbeatMs_ >= kHeartbeatIntervalMs) {
         lastHeartbeatMs_ = now;
-        sendStat("STMt", statsProvider_ ? statsProvider_() : StreamStats{});
+        sendStat(kStatHeartbeat, statsProvider_ ? statsProvider_() : StreamStats{});
     }
 }
 
 void SlimProtoClient::run(std::stop_token st) {
     unsigned fails = 0;
     while (!st.stop_requested()) {
-        if (host_.empty() && !discoverLms(host_, port_, 5000)) {
+        if (host_.empty() && !discoverLms(host_, port_, kDiscoveryTimeoutMs)) {
             log::warn(log::Area::Lms, "LMS discovery failed, retrying in 5s");
-            for (unsigned i = 0; i < 50 && !st.stop_requested(); ++i)
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            for (unsigned i = 0;
+                 i < static_cast<unsigned>(kDiscoveryRetryIterations) && !st.stop_requested(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(kRetryTickMs));
             continue;
         }
         if (!connectOnce(reconnect_)) {
             ++fails;
-            unsigned delay = std::min<unsigned>(fails * 2, 15);
+            unsigned delay =
+                std::min<unsigned>(fails * static_cast<unsigned>(kReconnectBackoffFactorSec),
+                                   static_cast<unsigned>(kReconnectBackoffCapSec));
             log::warn(log::Area::Lms, "connect to {} failed, retrying in {}s", host_, delay);
-            for (unsigned i = 0; i < delay * 10 && !st.stop_requested(); ++i)
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            const unsigned ticks = delay * 1000u / kRetryTickMs;
+            for (unsigned i = 0; i < ticks && !st.stop_requested(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(kRetryTickMs));
             continue;
         }
         fails = 0;
@@ -221,7 +223,7 @@ void SlimProtoClient::run(std::stop_token st) {
 
         std::string buf;
         size_t expect = 0;
-        std::array<char, 2048> tmp{};
+        std::array<char, kReadDrainBufferBytes> tmp{};
 
         while (!st.stop_requested()) {
             pollfd pfd{fd, POLLIN, 0};
@@ -243,10 +245,10 @@ void SlimProtoClient::run(std::stop_token st) {
                 continue;
             }
             if (expect == 0) {
-                std::byte hdr[2];
+                std::byte hdr[kLengthPrefixBytes];
                 if (!recvFully(fd, hdr, sizeof(hdr))) break;
                 expect = static_cast<size_t>(readInt<Endian::Big, uint16_t>(hdr));
-                if (expect > kMaxPacket || expect < 4) {
+                if (expect > kMaxPacketBytes || expect < kMinPacketBytes) {
                     log::error(log::Area::Lms, "bogus packet length {}", expect);
                     break;
                 }

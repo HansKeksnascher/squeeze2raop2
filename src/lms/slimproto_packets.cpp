@@ -154,17 +154,17 @@ PcmFormat pcmFormat(const PcmParams& params, uint32_t fallbackRate) {
 
 void SlimProtoClient::sendHelo(bool reconnect) {
     const std::string& caps = caps_;
-    PacketWriter body(36 + caps.size());
-    body.u8(12);  // deviceid 12 = squeezeplay class (squeezelite parity)
-    body.u8(1);   // revision: single byte, shown as player firmware rev
+    PacketWriter body(kHeloBodyBytes + caps.size());
+    body.u8(kHeloDeviceId);  // deviceid 12 = squeezeplay class (squeezelite parity)
+    body.u8(kHeloRevision);  // single byte, shown as player firmware rev
     body.bytes(std::as_bytes(std::span{mac_}));
     body.skip(16);  // reserved: packet bytes 8..23
-    body.u16(static_cast<uint16_t>(reconnect ? 0x4000 : 0x0000));
+    body.u16(static_cast<uint16_t>(reconnect ? kHeloFlagReconnect : 0x0000));
     body.skip(10);  // reserved: packet bytes 26..35
     body.bytes(std::as_bytes(std::span{caps}));
 
     log::info(log::Area::Lms, "HELO mac={} cap={}", macToString(mac_), caps);
-    if (!sendPacket("HELO", body.data())) log::error(log::Area::Lms, "HELO send failed");
+    if (!sendPacket(kOpHelo, body.data())) log::error(log::Area::Lms, "HELO send failed");
 }
 
 StreamStats SlimProtoClient::lastStats() {
@@ -180,7 +180,7 @@ void SlimProtoClient::sendStat(const char (&event)[5], StreamStats stats,
         std::lock_guard<std::mutex> lock(sendMutex_);
         stats_ = stats;
     }
-    PacketWriter body(53);
+    PacketWriter body(kStatBodyBytes);
     body.bytes(std::as_bytes(std::span{event}.first(4)));
     body.skip(3);  // reserved: packet bytes 4..6 (the old code zeroed byte 6)
     body.u32(stats.streamBufferSize);
@@ -196,24 +196,24 @@ void SlimProtoClient::sendStat(const char (&event)[5], StreamStats stats,
     body.u32(stats.elapsedMs);
     body.u32(serverTimestamp);
     body.u16(0);
-    if (!sendPacket("STAT", body.data())) log::warn(log::Area::Lms, "STAT send failed");
+    if (!sendPacket(kOpStat, body.data())) log::warn(log::Area::Lms, "STAT send failed");
 }
 
 void SlimProtoClient::sendResp(const std::string& header) {
-    if (!sendPacket("RESP", std::as_bytes(std::span{header})))
+    if (!sendPacket(kOpResp, std::as_bytes(std::span{header})))
         log::warn(log::Area::Lms, "RESP send failed");
 }
 
 void SlimProtoClient::sendSetdName(const std::string& name) {
-    PacketWriter body(2 + name.size());
+    PacketWriter body(kSetdBodyBytes + name.size());
     body.u8(0);
     body.bytes(std::as_bytes(std::span{name}));
     body.u8(0);  // trailing NUL
-    if (!sendPacket("SETD", body.data())) log::warn(log::Area::Lms, "SETD send failed");
+    if (!sendPacket(kOpSetd, body.data())) log::warn(log::Area::Lms, "SETD send failed");
 }
 
 void SlimProtoClient::sendDisco(uint8_t reason) {
-    if (!sendPacket("DSCO", std::as_bytes(std::span{&reason, 1})))
+    if (!sendPacket(kOpDsco, std::as_bytes(std::span{&reason, 1})))
         log::warn(log::Area::Lms, "DSCO send failed");
 }
 
@@ -230,10 +230,10 @@ void SlimProtoClient::sendButton(uint32_t code) {
         next = tick > prev ? tick : prev + 1u;
     } while (!buttonTick_.compare_exchange_weak(prev, next, std::memory_order_relaxed));
 
-    PacketWriter body(8);
+    PacketWriter body(kButnBodyBytes);
     body.u32(next);
     body.u32(code);
-    if (!sendPacket("BUTN", body.data())) log::warn(log::Area::Lms, "BUTN send failed");
+    if (!sendPacket(kOpButn, body.data())) log::warn(log::Area::Lms, "BUTN send failed");
 }
 
 void SlimProtoClient::sendMeta(std::string_view data) {
@@ -243,68 +243,68 @@ void SlimProtoClient::sendMeta(std::string_view data) {
     // The ICY de-interleaver only invokes this with a non-empty block; an
     // empty block carries no information for LMS either way.
     if (data.empty()) return;
-    (void)sendPacket("META", std::as_bytes(std::span{data}));  // best effort:
+    (void)sendPacket(kOpMeta, std::as_bytes(std::span{data}));  // best effort:
     // metadata is cosmetic; connection health is the read loop's job
 }
 
 void SlimProtoClient::process(const std::string& pkt) {
     const size_t len = pkt.size();
-    if (len < 4) return;
-    const std::string_view op(pkt.data(), 4);
+    if (len < kMinPacketBytes) return;
+    const std::string_view op(pkt.data(), kOpcodeBytes);
     PacketReader r(std::as_bytes(std::span{pkt}));
-    if (!r.skip(4)) return;  // opcode (len >= 4 already guarantees this)
+    if (!r.skip(kOpcodeBytes)) return;  // opcode (len bound already guarantees this)
 
-    if (op == "strm") {
-        if (len < 5) return;
+    if (op == kOpStrm) {
+        if (len < kStrmMinBytes) return;
         const uint8_t command = *r.u8();
         switch (command) {
-        case 't': {
+        case kStrmHeartbeat: {
             // heartbeat timestamp sits at packet bytes 18..21
             const auto ts = r.u32At(18);
             if (!ts) return;
             // Reply with the real stats (squeezelite parity): a zeroed reply
             // makes LMS's progress display drop to 0 until the next heartbeat
             // and clobbers the cached lastStats() used by later replies.
-            sendStat("STMt", statsProvider_ ? statsProvider_() : StreamStats{}, *ts);
+            sendStat(kStatHeartbeat, statsProvider_ ? statsProvider_() : StreamStats{}, *ts);
             lastHeartbeatMs_ = nowMs();
             break;
         }
-        case 'q':
+        case kStrmStop:
             log::debug(log::Area::Lms, "strm q (stop)");
             if (events_.onStop) events_.onStop();
             break;
-        case 'f':
+        case kStrmFlush:
             log::debug(log::Area::Lms, "strm f (flush)");
             // The STMf ack is emitted by the onFlush handler (PlayerSession),
             // matching the 'q' stop path; sending it here as well duplicated
             // the STAT packet.
             if (events_.onFlush) events_.onFlush(true);
             break;
-        case 'p': {
+        case kStrmPause: {
             const auto ms = r.u32At(18);
             if (!ms) return;
             log::debug(log::Area::Lms, "strm p (pause, interval={})", *ms);
             if (events_.onPause) events_.onPause(*ms);
-            if (!*ms) sendStat("STMp", lastStats());
+            if (!*ms) sendStat(kStatPause, lastStats());
             break;
         }
-        case 'a': {
+        case kStrmSkip: {
             const auto ms = r.u32At(18);
             if (!ms) return;
             log::debug(log::Area::Lms, "strm a (skip ahead, interval={})", *ms);
             if (events_.onSkipAhead) events_.onSkipAhead(*ms);
             break;
         }
-        case 'u': {
+        case kStrmUnpause: {
             const auto jiffies = r.u32At(18);
             if (!jiffies) return;
             log::debug(log::Area::Lms, "strm u (unpause, jiffies={})", *jiffies);
             if (events_.onUnpause) events_.onUnpause(*jiffies);
-            sendStat("STMr", lastStats());
+            sendStat(kStatResume, lastStats());
             break;
         }
-        case 's': {
-            if (len < 28) return;
+        case kStrmStart: {
+            if (len < kStrmStartMinBytes) return;
             StrmStart st;
             st.autostart = static_cast<uint8_t>(*r.u8() - '0');
             st.format = static_cast<StreamFormat>(*r.u8());
@@ -327,23 +327,23 @@ void SlimProtoClient::process(const std::string& pkt) {
             st.request.assign(reinterpret_cast<const char*>(rest.data()), rest.size());
             log::debug(log::Area::Lms, "strm s autostart={} format={} threshold={}", st.autostart,
                        static_cast<char>(st.format), st.thresholdKb);
-            sendStat("STMf", lastStats());
+            sendStat(kStatFlush, lastStats());
             if (events_.onStart) events_.onStart(st);
             break;
         }
         default: log::warn(log::Area::Lms, "unhandled strm command '{}'", command); break;
         }
-    } else if (op == "cont") {
+    } else if (op == kOpCont) {
         if (const auto metaint = r.u32()) {
             if (events_.onCont) events_.onCont(*metaint);
         }
-    } else if (op == "codc") {
-        if (len < 9) return;  // opcode(4) + format + 4 pcm bytes
+    } else if (op == kOpCodc) {
+        if (len < kCodcMinBytes) return;  // opcode + format + 4 pcm bytes
         const StreamFormat f = static_cast<StreamFormat>(*r.u8());
         const PcmParams pcm{*r.u8(), *r.u8(), *r.u8(), *r.u8()};
         if (events_.onCodc) events_.onCodc(f, pcm);
-    } else if (op == "audg") {
-        if (len < 22) return;
+    } else if (op == kOpAudg) {
+        if (len < kAudgMinBytes) return;
         if (!r.skip(8)) return;  // packet bytes 4..11
         const uint8_t adjust = *r.u8();
         // dvc=0 is LMS's fixed-output mode: the gains are the no-op 1.0 and
@@ -365,17 +365,17 @@ void SlimProtoClient::process(const std::string& pkt) {
         const uint32_t gainR = *r.u32();
         if (events_.onVolume)
             events_.onVolume(lmsSliderPctFromGain(gainL), lmsSliderPctFromGain(gainR));
-    } else if (op == "aude") {
+    } else if (op == kOpAude) {
         // Output enable/disable. squeezelite keys power on enable_spdif and
         // ignores enable_dac; mirror that.
-        if (len < 6) return;
+        if (len < kAudeMinBytes) return;
         const uint8_t enableSpdif = *r.u8();
         if (!r.skip(1)) return;  // enable_dac
         if (events_.onAude) events_.onAude(enableSpdif != 0);
-    } else if (op == "setd") {
-        if (len < 5) return;
+    } else if (op == kOpSetdServer) {
+        if (len < kSetdMinBytes) return;
         if (*r.u8() != 0) return;
-        if (len == 5) {
+        if (len == kSetdMinBytes) {
             sendSetdName(playerName_.empty() ? "squeeze2raop2" : playerName_);
         } else {
             std::string name(reinterpret_cast<const char*>(r.tail().data()), r.remaining());
@@ -385,8 +385,8 @@ void SlimProtoClient::process(const std::string& pkt) {
             if (events_.onSetName) events_.onSetName(name);
             sendSetdName(name);
         }
-    } else if (op == "serv") {
-        if (len < 8) return;
+    } else if (op == kOpServ) {
+        if (len < kServMinBytes) return;
         const uint32_t ip = *r.u32();
         if (events_.onServerSwitch) events_.onServerSwitch(ip);
     } else if (std::ranges::find(kIgnoredOps, op) != kIgnoredOps.end()) {

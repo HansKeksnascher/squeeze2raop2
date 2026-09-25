@@ -64,6 +64,27 @@ inline constexpr const char* kDefaultVolumeMap = "-30:1, -23:16, -15:50, 0:100";
 inline constexpr double kAirplayFloorDb = -30.0;
 inline constexpr double kAirplayDbPerPct = 0.3;
 
+// AirPlay volume domain: pct 0..100, with 0 as the -144 dB mute sentinel.
+constexpr double kAirplayPctMin = 0.0;
+constexpr double kAirplayPctMax = 100.0;
+constexpr double kAirplayMutePct = 0.0;
+constexpr double kAirplayMuteDb = -144.0;
+// Quietest audible step (-29.985 dB): a tiny nonzero LMS gain quantizes to ~0
+// pct and would silently mute instead of playing the protocol floor, so it
+// clamps up to this.
+constexpr double kAirplayMinAudiblePct = 0.05;
+
+// LMS slider domain.
+constexpr double kLmsSliderMin = 0.0;
+constexpr double kLmsSliderMax = 100.0;
+
+// Clamp a linear volume percent to the AirPlay domain, preserving the exact
+// mute sentinel and flooring tiny audible levels.
+inline double clampAirVolumePct(double pct) {
+    if (pct <= kAirplayMutePct) return kAirplayMutePct;
+    return std::clamp(pct, kAirplayMinAudiblePct, kAirplayPctMax);
+}
+
 // AirPlay attenuation in dB for an AirPlay percent (0..100).
 double dbFromAirplayPct(double pct);
 
@@ -105,12 +126,13 @@ private:
 // unit suite can pin the math without pulling in the pipeline.
 
 inline constexpr int32_t kFixedOne = 0x10000;  // 1.0 in 16.16
+constexpr int kFixedShift = 16;                // fractional bits in 16.16
 
 // squeezelite's gain(): (gain * sample) >> 16. Applied to an s16 sample the
 // result is the scaled s16 (gain 0x10000 is unity); saturate instead of
 // wrapping if replay gain boosts past full scale.
 inline int16_t applyGain16(int16_t sample, int32_t gain) {
-    const int64_t res = (static_cast<int64_t>(gain) * static_cast<int64_t>(sample)) >> 16;
+    const int64_t res = (static_cast<int64_t>(gain) * static_cast<int64_t>(sample)) >> kFixedShift;
     return static_cast<int16_t>(std::clamp<int64_t>(res, -32768, 32767));
 }
 
