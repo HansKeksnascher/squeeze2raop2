@@ -148,9 +148,7 @@ void StreamCoordinator::flush() {
 }
 
 void StreamCoordinator::pause(uint32_t ms) {
-    // squeezelite parity: 'p 0' pauses indefinitely, 'p N' is a timed pause
-    // (transition gaps). LMS's stop for a remote stream is a fade-down
-    // followed by 'p 0'. The deadline lives in the track's pump loop.
+    // The deadline lives in the track's pump loop.
     if (track_) track_->pause(ms);
     output_.silence();
     log::debug(log::Area::Ses, "pause requested: interval={} ms", ms);

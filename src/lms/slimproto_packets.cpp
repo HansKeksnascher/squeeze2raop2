@@ -15,21 +15,18 @@
 #include <vector>
 
 // Wire half of the slimproto client: opcode/packet encoding (HELO, STAT,
-// RESP, SETD, DSCO, META) and decoding (the process() dispatch, including
-// the AUDG gain -> slider percent inversion), plus the PCM parameter code
-// tables. Connection lifecycle lives in slimproto.cpp.
+// RESP, SETD, DSCO, META) and decoding (the process() dispatch, including the
+// AUDG gain -> slider percent inversion), plus the PCM parameter code tables.
+// Connection lifecycle lives in slimproto.cpp.
 //
-// Every slimproto integer field is big-endian. PacketWriter/PacketReader
-// append/consume fields sequentially so the packet layout is expressed by
-// field order, not by hand-kept byte offsets; PacketReader also bounds-checks
-// every read (earlier offset arithmetic caused an out-of-bounds regression,
-// pinned by the short-packet unit test).
+// Every integer field is big-endian; PacketWriter/PacketReader express the
+// layout by field order and bounds-check every read (offset arithmetic once
+// caused an OOB regression, pinned by the short-packet unit test).
 
 namespace squeeze2raop2 {
 
 namespace {
 
-// Appends big-endian fields to a packet body in wire order.
 class PacketWriter {
 public:
     // Reserve the exact body size so the writer never reallocates mid-packet
@@ -60,8 +57,7 @@ private:
     std::vector<std::byte> out_;
 };
 
-// Sequential big-endian cursor over a received packet. Reads past the end
-// return nullopt; skip() reports failure.
+// Reads past the end return nullopt; skip() reports failure.
 class PacketReader {
 public:
     explicit PacketReader(std::span<const std::byte> packet) : packet_(packet) {}

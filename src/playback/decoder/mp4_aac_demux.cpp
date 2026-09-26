@@ -108,7 +108,6 @@ void Mp4AacDemuxer::pump() {
                 continue;
             }
             if (nextSample_ >= sampleSizes_.size()) {
-                // No more samples: drain the rest of mdat.
                 const size_t avail = buf_.size() - pos_;
                 const size_t take =
                     static_cast<size_t>(std::min(mdatRemaining_, static_cast<uint64_t>(avail)));
@@ -334,7 +333,7 @@ void Mp4AacDemuxer::parseEsds(std::span<const std::byte> body) {
             }
             return;
         }
-        q += len;  // unknown descriptor: skip its body
+        q += len;
     }
 }
 

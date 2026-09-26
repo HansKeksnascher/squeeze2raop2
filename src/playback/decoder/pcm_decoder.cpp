@@ -150,8 +150,6 @@ void PcmDecoder::feed(std::span<const std::byte> data) {
     buf_.insert(buf_.end(), data.begin(), data.end());
 }
 
-// Normalize buffered raw bytes into interleaved s16 stereo frames in
-// stage_ (at the source rate), pcm.c's conversion set.
 size_t PcmDecoder::normalizeMore() {
     const size_t have = buf_.size();
     const size_t inFrames = have / bytesPerFrame_;
@@ -221,9 +219,6 @@ void PcmDecoder::setSourceRate(double framesPerSecond) {
     if (wasEngaged && !rateEngaged_) resetRateStage();
 }
 
-// Emit up to out.size()/2 frames from stage_ at the target rate. Bypass
-// (step exactly 1) is a bit-exact move; the engaged stage is the same
-// two-point lerp the sender's resampler uses.
 size_t PcmDecoder::rateStageEmit(std::span<int16_t> out) {
     const size_t want = std::min(out.size() / 2, kChunkFrames);
     if (!want) return 0;

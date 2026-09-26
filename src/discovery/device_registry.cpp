@@ -162,7 +162,6 @@ void DeviceRegistry::onAirplayAdded(const std::string& instance, const std::stri
         if (auto it = txt.find(kTxtPassword); it != txt.end() && !d.pw)
             d.pw = (it->second == "true" || it->second == "1");
     });
-    // Notify without holding mutex_ (see onRaopAdded).
     log::info(log::Area::Mdns,
               "airplay record {}: {} name='{}' port={} features=0x{:x} pk={} pw={}",
               added ? "added" : "updated", snapshot.id, snapshot.name, port, snapshot.features,

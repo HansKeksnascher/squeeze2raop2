@@ -60,9 +60,8 @@ public:
     void updateTarget(RaopTarget target);
 
     void setInputRate(uint32_t rate);
-    // Drive the sender's non-blocking host from the caller's thread. pump()
-    // services sockets + one timer pass; pumpUntil() also blocks (paced) until
-    // the deadline; park()/unpark() start/stop the between-tracks keep-alive.
+    // Driver methods run on the caller's thread (see RaopPlayer::pump);
+    // park()/unpark() are the between-tracks keep-alive.
     void pump(std::chrono::milliseconds maxWait = std::chrono::milliseconds(0));
     void pumpUntil(std::chrono::steady_clock::time_point deadline);
     void park();
@@ -108,7 +107,7 @@ private:
     CredentialSink credSink_;
     std::function<void(double)> remoteVolumeSink_;
     int latencyMs_ = kDefaultAirplayLatencyMs;
-    mutable std::mutex mutex_;  // guards player_/target_/credSink_
+    mutable std::mutex mutex_;  // guards player_/target_/credSink_/remoteVolumeSink_
     std::shared_ptr<RaopPlayer> player_;
     std::atomic<bool> lost_{false};
     // Mono->stereo expansion scratch (push() only; stream-thread owned).

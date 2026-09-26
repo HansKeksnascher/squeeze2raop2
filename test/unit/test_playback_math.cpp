@@ -21,7 +21,6 @@ SQ2_TEST(playback_math, apply_gain16) {
     expect(applyGain16(1000, 0) == 0, "zero gain silences");
     expect(applyGain16(1000, kFixedOne / 2) == 500, "half gain halves");
     expect(applyGain16(1000, kFixedOne * 2) == 2000, "2x gain doubles");
-    // Boost past full scale saturates rather than wrapping.
     expect(applyGain16(30000, kFixedOne * 2) == 32767, "positive overflow saturates");
     expect(applyGain16(-30000, kFixedOne * 2) == -32768, "negative overflow saturates");
     // Attenuation: -6.02 dB ~ 0.5.

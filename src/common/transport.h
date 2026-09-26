@@ -38,7 +38,6 @@ public:
 
     // Resolve + connect; false with `error` set on failure.
     virtual bool connect(const std::string& host, uint16_t port, std::string& error) = 0;
-    // Write all bytes; false with `error` set on a real failure.
     virtual bool writeAll(std::span<const char> data, std::string& error) = 0;
     virtual Read read(std::span<char> buffer, uint32_t timeoutMs) = 0;
     // Concurrency-safe: unblocks a read() parked in a syscall.

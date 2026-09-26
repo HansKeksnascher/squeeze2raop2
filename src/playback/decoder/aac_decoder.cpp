@@ -54,7 +54,6 @@ struct AacDecoder::Xaac {
         for (void* block : blocks) std::free(block);
     }
 
-    // Allocate `size` bytes aligned to `align` (any positive alignment).
     void* alloc(size_t size, size_t align) {
         if (align == 0) align = 1;
         void* raw = std::malloc(size + align);

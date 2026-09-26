@@ -43,22 +43,16 @@ private:
     // Opaque libxaac state (API object + memory/table allocations); defined in
     // the .cpp so the third-party headers stay out of this header.
     struct Xaac;
-    // Allocate and initialise libxaac's API object, tables and memory.
     static bool initXaac(Xaac& x);
 
     // Lazily initialise the libxaac decoder. Returns true once initialised;
     // false when more input is needed or on failure.
     bool ensureInit();
-    // Decode as many frames as the buffered input allows into pcm_.
     void decodeMore();
-    // Pull the MP4 demuxer's output into buffer_, failing on demux errors.
     void drainDemuxed();
-    // Copy pending compressed bytes into the library's input buffer; returns
-    // the number copied.
     size_t fillInput();
     // End of the last complete ADTS frame in buffer_[consumed_..limit).
     size_t frameEnd(size_t limit) const;
-    // Append `bytes` of s16 from the library output buffer to pcm_.
     void appendPcm(size_t bytes);
 
     std::unique_ptr<Xaac> xaac_;

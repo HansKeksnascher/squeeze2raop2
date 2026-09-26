@@ -204,7 +204,6 @@ int TlsTransport::fdSnapshot() const {
 
 void TlsTransport::setError(std::string message) { impl_->error = std::move(message); }
 
-// 1 = ready, 0 = deadline reached, -1 = poll error (lastError() set).
 int TlsTransport::waitIo(bool wantRead, uint64_t deadline) {
     const int fd = fdSnapshot();
     if (fd < 0) {

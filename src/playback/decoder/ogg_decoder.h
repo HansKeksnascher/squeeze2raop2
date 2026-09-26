@@ -44,8 +44,8 @@ protected:
 private:
     void decodeMore();
 
-    stb_vorbis* vorbis_ = nullptr;  // stb_vorbis decoder state (opaque)
-    bool opened_ = false;           // header pass succeeded
+    stb_vorbis* vorbis_ = nullptr;
+    bool opened_ = false;  // header pass succeeded
     uint32_t sampleRate_ = 0;
     int channels_ = kDefaultChannels;
 };

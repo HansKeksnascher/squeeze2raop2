@@ -46,7 +46,7 @@ private:
     void parseEsds(std::span<const std::byte> body);
     void synthAdts(std::span<const std::byte> sample, std::vector<std::byte>& out);
 
-    std::vector<std::byte> buf_;     // unconsumed input bytes
+    std::vector<std::byte> buf_;
     size_t pos_ = 0;                 // parse position within buf_
     std::vector<std::byte> out_;     // synthesized ADTS frames awaiting drain
     std::vector<std::byte> sample_;  // current access unit being assembled

@@ -84,7 +84,6 @@ constexpr const char* kManagedKeys[] = {kKeyMac, kKeyCreds, kKeyName};
 constexpr const char* kTrueValues[] = {"on", "true", "yes", "1"};
 constexpr const char* kFalseValues[] = {"off", "false", "no", "0"};
 
-// Enum spellings.
 constexpr const char* kProtocolAp1 = "ap1";
 constexpr const char* kProtocolAp2 = "ap2";
 constexpr const char* kVolumeModeLms = "lms";
@@ -130,18 +129,15 @@ struct GlobalConfig {
 // field inherits from the level below (built-ins, then [default], then the
 // player). Identity and target keys are rejected in [default].
 struct PlayerConfig {
-    // identity
     std::optional<std::string> id;  // 12-hex mDNS device id
     std::optional<std::string> name;
     std::optional<std::array<uint8_t, 6>> mac;
 
-    // target
     std::optional<std::string> targetHost;
     std::optional<uint16_t> targetPort;
     std::optional<bool> airplay2;  // protocol ap2 (true) / ap1 (false)
     std::optional<std::string> password;
 
-    // behavior
     std::optional<bool> enabled;
     std::optional<VolumeMode> volumeMode;
     std::optional<std::string> volumeMap;

@@ -19,11 +19,7 @@ namespace detail {
 inline void onShutdownSignal(int) { g_run.store(false); }
 }  // namespace detail
 
-// SIGINT/SIGTERM flip g_run, the flag the run loops actually poll (a
-// main.cpp handler used to set a separate anonymous-namespace flag nobody
-// read, so the process ignored SIGTERM). SA_RESTART matches glibc's
-// signal() default; poll/select still return EINTR (they are never
-// restarted), which the read loops handle.
+// SIGINT/SIGTERM flip g_run, the flag the run loops poll.
 inline void installShutdownSignalHandlers() {
     struct sigaction sa{};
     sa.sa_handler = detail::onShutdownSignal;

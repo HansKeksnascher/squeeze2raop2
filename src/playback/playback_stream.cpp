@@ -239,8 +239,8 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
         if (rr.result == HttpStreamReader::ReadResult::Data && rr.bytes > 0) {
             const auto audio = std::as_bytes(std::span{buf}).first(rr.bytes);
             counters_.onReceived(rr.bytes);
-            ringEmptySinceMs_ = 0;  // data flowing: not an underrun window
-            lastDataMs_ = nowMs();  // source is alive
+            ringEmptySinceMs_ = 0;
+            lastDataMs_ = nowMs();
             if (!feed(st, audio, fmt, sink_.get())) {
                 decodeFailed = true;
                 break;
@@ -319,13 +319,10 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
         // cadence.
         if (paceRealtime_ && !prebuffering && !fadeOut_ && !(decoder_ && decoder_->regulating())) {
             const uint64_t timeline = counters_.fedSamples() * kMsPerSecond / fmt.sampleRate;
-            // Pace reads to playback time with a lead: keeps the sender's ring
-            // fed without running far ahead of the wire. The lead is the
-            // pass-through path's only jitter headroom (44.1 kHz PCM goes ring
-            // -> RTP packet with no staging, unlike the resampler's 8192-frame
-            // inBuf_); too small and any LMS proxy/transcode burst silence-pads
-            // RTP packets = crackle. Skipped while prebuffering: the gate wants
-            // the ring filled as fast as the source allows.
+            // Pace reads to playback time with a lead: keeps the sender's ring fed
+            // without running ahead of the wire. The lead is the pass-through
+            // path's only jitter headroom; too small and a proxy burst
+            // silence-pads RTP packets.
             if (timeline > activeMs_ + kPacerLeadMs) {
                 const uint64_t sleepMs =
                     std::min<uint64_t>(timeline - (activeMs_ + kPacerLeadMs), kPacerMaxSleepMs);

@@ -17,7 +17,6 @@ constexpr const char* kSenderIdentity = "iPhone14,3";
 constexpr const char* kSenderLogPrefix = "Cast: ";
 // Max single pump() wait so a setter thread never blocks long on the host.
 constexpr int kSenderPumpMaxWaitMs = 20;
-// Between-tracks keep-alive pump period.
 constexpr int kKeepAlivePeriodMs = 100;
 
 // One receiver to connect to, plus the credentials recovered from a previous

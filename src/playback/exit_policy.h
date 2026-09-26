@@ -10,7 +10,7 @@ enum class ExitAction : std::uint8_t {
     Retry,       // receiver-initiated loss, first time: recreate and resume
     GaveUp,      // receiver loss again after the one retry: report STMd
     EndedEof,    // natural end: STMd, drain the tail, STMu
-    EndedError,  // socket/decode error: report STMu
+    EndedError,  // socket error -> DSCO + STMn; reason-less error -> STMu
 };
 
 struct ExitInputs {

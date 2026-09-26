@@ -104,7 +104,6 @@ SQ2_TEST(transport, concurrent_send_during_reconnect) {
     client.stop();
     acceptor.join();
 
-    // sendStat() after stop() must be a safe no-op (socket already released).
     client.sendStat("STMt", StreamStats{});
     expect(true, "concurrent send during reconnect completed");
 }

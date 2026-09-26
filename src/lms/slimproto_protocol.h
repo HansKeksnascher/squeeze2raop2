@@ -158,7 +158,6 @@ constexpr uint16_t kHeloFlagReconnect = 0x4000;
 constexpr uint8_t kHeloDeviceId = 12;  // SqueezePlay player class (squeezelite parity)
 constexpr uint8_t kHeloRevision = 1;
 
-// BYE! reason byte for a normal shutdown.
 constexpr uint8_t kByeReasonNormal = 0;
 
 // 'strm s' autostart modes: 0 = decoder-ready ack (STMl), >= 2 = wait for a

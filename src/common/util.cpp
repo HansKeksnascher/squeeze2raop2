@@ -32,7 +32,6 @@ std::string toLower(std::string_view s) {
 }
 
 std::map<std::string, std::string> parseTxtKeyValues(std::string_view raw) {
-    // raw is TXT wire format: a sequence of (len byte, len-1 bytes of data)
     std::map<std::string, std::string> out;
     size_t idx = 0;
     while (idx < raw.size()) {

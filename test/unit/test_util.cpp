@@ -130,13 +130,10 @@ SQ2_TEST(util, clamp_air_volume_pct) {
     // exactly 0 keeps the -144 dB mute sentinel
     expect(clampAirVolumePct(0.0) == 0.0, "zero stays mute");
     expect(clampAirVolumePct(-3.0) == 0.0, "negative clamps to mute");
-    // tiny nonzero gains quantize near 0: clamp to the floor, never mute
     expect(clampAirVolumePct(0.001) == 0.05, "tiny gain floors, never mutes");
     expect(clampAirVolumePct(0.049) == 0.05, "below floor clamps up");
-    // in-range values pass through unchanged
     expect(clampAirVolumePct(0.05) == 0.05, "at floor unchanged");
     expect(clampAirVolumePct(50.22) == 50.22, "mid-range unchanged");
     expect(clampAirVolumePct(100.0) == 100.0, "full scale unchanged");
-    // overshoot clamps to full scale
     expect(clampAirVolumePct(123.0) == 100.0, "overshoot clamps to 100");
 }

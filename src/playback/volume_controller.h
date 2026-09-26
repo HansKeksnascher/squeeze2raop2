@@ -74,8 +74,8 @@ private:
     std::atomic<double> target_{0.0};
     std::atomic<int> dir_{0};  // -1 down, +1 up, 0 unset
     std::atomic<int> budget_{0};
-    std::atomic<uint64_t> lastStepMs_{0};  // pacing
-    std::atomic<double> lastLms_{0.0};     // stall detection
+    std::atomic<uint64_t> lastStepMs_{0};
+    std::atomic<double> lastLms_{0.0};  // stall detection
     std::atomic<int> stall_{0};
     std::mutex mutex_;
     // Signalled by onReceiverVolume(); the stepper blocks here instead of

@@ -117,7 +117,6 @@ double Decoder::regulateRate(uint64_t receivedBytes, size_t queued, uint64_t win
         log::info(log::Area::Dec, "pcm source rate nominal: pass-through");
         return pcmAppliedRate_;
     }
-    // Keep regulating; refresh the overdrive decision.
     const double target = fps / overdrive;
     if (std::abs(target - pcmAppliedRate_) > kRegulationRefresh) {
         pcmAppliedRate_ = target;

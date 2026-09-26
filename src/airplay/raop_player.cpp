@@ -83,8 +83,6 @@ RaopPlayer::~RaopPlayer() { stop(); }
 void RaopPlayer::start() {
     launched_.store(true);
     loop_.clearStopRequest();
-    // No pump thread: the caller (the track's stream thread) drives the sender
-    // through pump()/pumpUntil() from here on.
     std::lock_guard<std::mutex> lock(senderMutex_);
     sender_->start(target_.host, target_.port, name_);
 }
@@ -99,7 +97,6 @@ void RaopPlayer::stop() {
     loop_.requestStop();
 }
 
-// One non-blocking pass: deliver due socket events + tick the sender's timers.
 void RaopPlayer::pump(std::chrono::milliseconds maxWait) {
     std::lock_guard<std::mutex> lock(senderMutex_);
     if (sender_) loop_.pump(*sender_, maxWait);

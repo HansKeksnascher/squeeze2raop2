@@ -26,16 +26,15 @@ public:
     RaopPlayer(const RaopPlayer&) = delete;
     RaopPlayer& operator=(const RaopPlayer&) = delete;
 
-    // the sender drives `loop`; ownership covers both
     void setCredentialSink(CredentialSink sink) { onCredentials_ = std::move(sink); }
 
     void start();
     void stop();
 
-    // The sender is a sans-i/o state machine and its poll host is non-blocking,
-    // so there is no dedicated pump thread: whoever owns the audio lifecycle
-    // drives it from its own thread. pump() services sockets + one tick pass;
-    // pumpUntil() loops it until a deadline (also used as the pace wait).
+    // The sender is a sans-i/o state machine and its poll host is
+    // non-blocking, so there is no dedicated pump thread: whoever owns the
+    // audio lifecycle drives it from its own thread (pumpUntil() also serves
+    // as the pace wait).
     void pump(std::chrono::milliseconds maxWait = std::chrono::milliseconds(0));
     void pumpUntil(std::chrono::steady_clock::time_point deadline);
     // Coarse keep-alive driver for the between-tracks window, when the session
@@ -44,8 +43,9 @@ public:
     void stopKeepAlive();
 
     // Ring telemetry for the host: occupancy and capacity in interleaved
-    // samples, plus whether start() has ever run (a prepared-but-unlaunched
-    // player must not be recreated just because the receiver looks idle).
+    // samples, plus whether start() is currently in effect (cleared by stop();
+    // a prepared-but-unlaunched player must not be recreated just because the
+    // receiver looks idle).
     size_t availableRead() const { return ringStorage_->availableRead(); }
     size_t bufferCapacity() const { return ringStorage_->capacity(); }
     bool launched() const { return launched_.load(std::memory_order_relaxed); }

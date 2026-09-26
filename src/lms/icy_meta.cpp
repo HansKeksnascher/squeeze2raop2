@@ -32,7 +32,6 @@ uint32_t parseIcyMetaint(std::string_view headers) {
     while (p < lower.size() && (lower[p] == ' ' || lower[p] == '\t')) ++p;
     uint64_t v = 0;
     auto [ptr, ec] = std::from_chars(lower.data() + p, lower.data() + lower.size(), v);
-    // Absurd interval (or unparseable): treat as absent.
     if (ec != std::errc{} || v == 0 || v > (1u << 20)) return 0;
     return static_cast<uint32_t>(v);
 }

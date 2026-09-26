@@ -24,19 +24,17 @@ public:
     size_t pendingBytes() const override { return bufferedBytes(); }
 
 protected:
-    using Decoder::Decoder;  // inherit the (const PcmFormat&) constructor
+    using Decoder::Decoder;
 
     void fail(std::string_view why);
-    // Append raw compressed bytes to the window.
     void appendInput(std::span<const std::byte> data) {
         buffer_.insert(buffer_.end(), data.begin(), data.end());
     }
-    // Unconsumed compressed bytes still in the window.
     [[nodiscard]] size_t bufferedBytes() const { return buffer_.size() - consumed_; }
 
     std::vector<std::byte> buffer_;  // compressed window, prefix consumed_
     size_t consumed_ = 0;            // decoded/skipped prefix of buffer_
-    std::vector<int16_t> pcm_;       // decoded samples awaiting drain
+    std::vector<int16_t> pcm_;
     bool eof_ = false;
     bool failed_ = false;
 };

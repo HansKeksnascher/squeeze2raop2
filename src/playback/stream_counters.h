@@ -18,10 +18,10 @@ constexpr uint32_t kStreamBufferBytes = 1 << 20;
 // track's figures survive until the next stream resets them.
 class StreamCounters {
 public:
-    // Fresh stream: zero the byte/frame counters and adopt the input rate.
+    // Adopt the input rate for a fresh stream.
     void reset(uint32_t inputRate);
 
-    void onReceived(uint64_t bytes);  // bytes read from the source
+    void onReceived(uint64_t bytes);
     // Consumed prefix: `samples` interleaved s16 emitted, `pendingBytes` the
     // decoder's unemitted backlog (clamped so it cannot underflow).
     void onFed(size_t samples, size_t channels, uint64_t pendingBytes);

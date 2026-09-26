@@ -120,9 +120,7 @@ void VolumeController::onReceiverVolume(double unit) {
     if (!volumeFeedback_ || volumeMode_ != VolumeMode::Lms) return;
     unit = std::clamp(unit, 0.0, 1.0);
     const double airplayPct = unit * kAirplayPctMax;
-    // Ignore an echo of the volume we last pushed to the receiver (some
-    // receivers report it back on the event channel); only a real user change
-    // should move LMS.
+    // Ignore our own SET_PARAMETER echo (see kEchoTolerancePct).
     const double echoPct = lastLmsPct_.load(std::memory_order_relaxed);
     if (echoPct > 0.0 && std::abs(airplayPct - echoPct) <= kEchoTolerancePct) return;
     // Unit 0 is the receiver's mute/floor: LMS 0 is its mute, so map it there.
@@ -145,7 +143,6 @@ void VolumeController::onReceiverVolume(double unit) {
     lastStepMs_.store(0, std::memory_order_relaxed);  // first step may fire at once
     pending_.store(true, std::memory_order_relaxed);
     cv_.notify_one();
-    // The paced stepper thread sends the nudges.
 }
 
 // Start the AirPlay sender with the right initial volume. Volume must be
@@ -174,8 +171,6 @@ void VolumeController::pumpLocked() {
         return;
     }
 
-    // Fresh-press pacing: each nudge must be at least kStepMs after the
-    // previous one or LMS folds it into a held-button repeat.
     const uint64_t now = nowMs();
     const uint64_t lastStep = lastStepMs_.load(std::memory_order_relaxed);
     if (lastStep != 0 && now - lastStep < static_cast<uint64_t>(kStepMs)) return;

@@ -72,8 +72,6 @@ public:
 private:
     void run(std::stop_token st);
     bool connectOnce(bool reconnect);
-    // opcode must be a 4-character string literal (the array reference makes
-    // null/short opcodes unrepresentable at every call site).
     [[nodiscard]] bool sendPacket(const char (&opcode)[5], std::span<const std::byte> payload);
     [[nodiscard]] bool sendRaw(std::span<const std::byte> data);
     void sendHelo(bool reconnect);

@@ -54,7 +54,6 @@ public:
 
     void acceptConnection() {
         require(conn_ < 0, "one connection at a time");
-        // client connects immediately after start()
         pollfd pfd{fd_, POLLIN, 0};
         require(::poll(&pfd, 1, 5000) == 1, "client connects within 5s");
         conn_ = ::accept(fd_, nullptr, nullptr);
@@ -286,7 +285,7 @@ SQ2_TEST(wire, stream_start_event) {
     SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     // 28-byte strm s body (autostart=0, no stream thread in the test);
     // body offsets: command 4, autostart 5, format 6, serverPort 22..23
@@ -326,7 +325,7 @@ SQ2_TEST(wire, strm_start_tls_flag) {
     SlimProtoClient client(mac, "CanHTTPS=1,Model=squeezelite,mp3,pcm", std::move(events));
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     // 24-byte strm s body; flags is payload byte 11 (packet byte 15).
     // LMS sets 0x20 for a direct https URL when the player can do TLS, and
@@ -381,7 +380,7 @@ SQ2_TEST(wire, aude_power_event) {
     SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     // aude payload: enable_spdif, enable_dac.
     const unsigned char off[2] = {0, 0};
@@ -415,7 +414,7 @@ SQ2_TEST(wire, codc_event) {
     SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     // codc payload: format, size, rate, channels, endianness.
     const unsigned char codc[5] = {'m', '1', '3', '2', '0'};
@@ -438,7 +437,7 @@ SQ2_TEST(wire, setd_rename_and_query) {
     client.setPlayerName("Original");
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     // setd rename: id 0 + "Renamed" + NUL.
     const std::string rename = std::string("\0", 1) + "Renamed";
@@ -468,7 +467,7 @@ SQ2_TEST(wire, butn_volume_nudge) {
     SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", SlimProtoClient::Events{});
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     client.sendButton(0x7689807fu);  // volup
     const auto butn = server.readPacket();
@@ -498,7 +497,7 @@ SQ2_TEST(wire, dsco_framing) {
     SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", std::move(events));
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     client.sendDisco(2);  // REMOTE_DISCONNECT
     const auto dsco = server.readPacket();
@@ -529,7 +528,7 @@ SQ2_TEST(wire, flush_is_acknowledged_once) {
     clientPtr = &client;
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    server.readPacket();  // HELO
+    server.readPacket();
 
     const unsigned char flush = 'f';
     server.sendPacket("strm", std::span<const unsigned char>(&flush, 1));

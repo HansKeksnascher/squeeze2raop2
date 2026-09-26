@@ -64,7 +64,6 @@ inline constexpr const char* kDefaultVolumeMap = "-30:1, -23:16, -15:50, 0:100";
 inline constexpr double kAirplayFloorDb = -30.0;
 inline constexpr double kAirplayDbPerPct = 0.3;
 
-// AirPlay volume domain: pct 0..100, with 0 as the -144 dB mute sentinel.
 constexpr double kAirplayPctMin = 0.0;
 constexpr double kAirplayPctMax = 100.0;
 constexpr double kAirplayMutePct = 0.0;
@@ -85,7 +84,6 @@ inline double clampAirVolumePct(double pct) {
     return std::clamp(pct, kAirplayMinAudiblePct, kAirplayPctMax);
 }
 
-// AirPlay attenuation in dB for an AirPlay percent (0..100).
 double dbFromAirplayPct(double pct);
 
 class VolumeAnchors {

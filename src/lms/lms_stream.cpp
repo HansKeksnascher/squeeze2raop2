@@ -46,10 +46,9 @@ void HttpStreamReader::close() {
     resetLocked();
 }
 
-// The host (without port) from a request's Host header, for TLS SNI and
-// certificate verification, and for naming the source in logs. Empty when the
-// request has no Host header. LMS builds it from the URL it handed over, so on
-// a direct stream it is the station's hostname.
+// Used for TLS SNI/cert verification and for naming the source in logs. LMS
+// builds the Host header from the URL it handed over, so on a direct stream it
+// is the station's hostname.
 std::string requestHost(std::string_view request) {
     auto iequals = [](std::string_view a, std::string_view b) {
         if (a.size() != b.size()) return false;
@@ -171,8 +170,6 @@ bool HttpStreamReader::openBlocking(const std::string& host, uint16_t port,
     }
 }
 
-// Pull raw bytes from leftover_/transport: >0 = bytes, 0 = no data yet
-// (timeout), -1 = socket error, -2 = orderly EOF.
 ssize_t HttpStreamReader::pullRaw(std::span<char> dst, uint32_t timeoutMs) {
     if (!leftover_.empty()) {
         size_t n = std::min(leftover_.size(), dst.size());

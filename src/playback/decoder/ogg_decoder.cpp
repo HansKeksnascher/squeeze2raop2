@@ -85,8 +85,6 @@ void OggDecoder::decodeMore() {
         }
     }
 
-    // Frame loop: pull every complete frame off the window, advancing
-    // consumed_ by stb_vorbis's consumed count as it goes.
     for (;;) {
         const size_t remaining = buffer_.size() - consumed_;
         if (remaining == 0) break;
@@ -104,7 +102,6 @@ void OggDecoder::decodeMore() {
         }
         consumed_ += static_cast<size_t>(used);
         if (samples > 0 && channels > 0 && channels <= 2) {
-            // Interleave the per-channel float buffers into s16 PCM.
             const size_t base = pcm_.size();
             pcm_.resize(base + static_cast<size_t>(samples) * static_cast<size_t>(channels));
             for (int ch = 0; ch < channels; ++ch) {

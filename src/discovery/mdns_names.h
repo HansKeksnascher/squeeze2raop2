@@ -8,7 +8,6 @@ namespace squeeze2raop2 {
 // mDNS service types browsed for AirPlay receivers.
 constexpr std::string_view kRaopService = "_raop._tcp";
 constexpr std::string_view kAirplayService = "_airplay._tcp";
-// The mDNS local domain suffix.
 constexpr std::string_view kLocalSuffix = ".local";
 
 // Trims a trailing ".local" and the ".{serviceType}" suffix from an mDNS PTR

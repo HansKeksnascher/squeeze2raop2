@@ -44,7 +44,6 @@ template <Endian wire, std::unsigned_integral T>
     return detail::toWire(std::bit_cast<T>(bytes), wire);
 }
 
-// Write `value` as `sizeof(T)` bytes at `dst` in `wire` order.
 template <Endian wire, std::unsigned_integral T>
 constexpr void writeInt(std::byte* dst, T value) {
     const std::array<std::byte, sizeof(T)> bytes =

@@ -38,7 +38,7 @@ protected:
 private:
     void decodeMore();
 
-    mp3dec_t dec_{};  // minimp3 decoder state, embedded by value
+    mp3dec_t dec_{};
     uint32_t sampleRate_ = 0;
     int channels_ = kDefaultChannels;
 };

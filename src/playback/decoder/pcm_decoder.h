@@ -73,7 +73,7 @@ private:
     uint8_t srcChannels_ = kDefaultChannels;
     bool srcBigEndian_ = false;
     uint32_t srcRate_ = kDefaultSampleRate;
-    size_t bytesPerFrame_ = 4;    // source input frame size
+    size_t bytesPerFrame_ = 4;
     PcmFormat fmt_;               // OUTPUT format (post-adoption, post-rate)
     uint32_t outRate_ = 0;        // target output clock (0 = unregulated)
     std::vector<std::byte> buf_;  // raw input bytes pending normalization

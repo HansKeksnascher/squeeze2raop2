@@ -92,19 +92,17 @@ protected:
                          .bigEndian = false};
     }
 
-    // Move up to out.size() queued decoded samples out of `pcm` and drop them.
     static size_t takeSamples(std::span<int16_t> out, std::vector<int16_t>& pcm);
-    // Drop the decoded prefix of a compressed window once it is large enough.
+    // Drop the consumed prefix once kCompactThreshold bytes accumulate.
     static void compactConsumed(std::vector<std::byte>& buffer, size_t& consumed);
-    // Consumed-prefix size at which compactConsumed() drops the window prefix.
     static constexpr size_t kCompactThreshold = 1 << 16;
 
     const PcmFormat& inputFormat() const { return input_; }
 
 private:
     std::array<int16_t, 1152 * 2> chunk_{};
-    PcmFormat input_;             // fallback format until the decoder is valid
-    size_t inputFrameBytes_ = 4;  // raw input frame size (rate regulator)
+    PcmFormat input_;  // fallback format until the decoder is valid
+    size_t inputFrameBytes_ = 4;
     // PCM source-rate regulation.
     uint64_t pcmWindowReceivedBytes_ = 0;
     double pcmAppliedRate_ = 0.0;
@@ -147,7 +145,6 @@ struct CodecInfo {
 // enabled AAC/Ogg/Opus. Always contains at least Pcm and Mp3.
 std::span<const CodecInfo> supportedCodecs();
 
-// True when supportedCodecs() contains `format`.
 bool supportsFormat(StreamFormat format);
 
 }  // namespace squeeze2raop2

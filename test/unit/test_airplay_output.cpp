@@ -108,7 +108,7 @@ SQ2_TEST(airplay_output, pump_without_target) {
     expect(std::chrono::steady_clock::now() >= deadline, "pumpUntil still blocks without a sender");
 
     output.pump(std::chrono::milliseconds(0));  // no-op, must not crash
-    output.park();                              // no-op
-    output.unpark();                            // no-op
+    output.park();
+    output.unpark();
     output.stop(false);
 }

@@ -301,7 +301,7 @@ struct MdnsBrowser::Impl {
     }
 
     void resetTracker(ResolveTracker& t) {
-        t.srvQ = DNSQuestion{};  // value-init instead of memset
+        t.srvQ = DNSQuestion{};
         t.txtQ = DNSQuestion{};
         t.addrQ = DNSQuestion{};
         t.srvActive = t.txtActive = t.addrActive = false;

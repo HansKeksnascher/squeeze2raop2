@@ -100,15 +100,15 @@ void enableTcpKeepalive(int fd) {
     int one = 1;
     (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
 #if defined(TCP_KEEPIDLE)
-    int idle = 60;  // idle seconds before the first probe
+    int idle = 60;
     (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
 #endif
 #if defined(TCP_KEEPINTVL)
-    int intvl = 15;  // seconds between probes
+    int intvl = 15;
     (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
 #endif
 #if defined(TCP_KEEPCNT)
-    int cnt = 4;  // failed probes before the connection is dropped
+    int cnt = 4;
     (void)setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
 #endif
 }

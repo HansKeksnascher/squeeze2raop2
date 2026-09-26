@@ -534,7 +534,6 @@ bool Persistence::parse(const std::string& text, Settings& out, std::string& err
             continue;
         }
 
-        // [default] / [player]
         const bool isDefault = current == Kind::Default;
         PlayerConfig& pc = isDefault ? defaults_ : currentSection->config;
         if (!parsePlayerKey(keyRaw, valueText, lineNo, pc, currentSection, isDefault, error))
