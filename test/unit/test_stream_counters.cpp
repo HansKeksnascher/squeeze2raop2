@@ -11,7 +11,7 @@ using namespace squeeze2raop2::test;
 using squeeze2raop2::StreamCounters;
 using squeeze2raop2::StreamStats;
 
-SQ2_TEST(counters, accounting) {
+SQ2_TEST(stream_counters, accounting) {
     StreamCounters c;
     c.reset(44100);
 
@@ -46,4 +46,27 @@ SQ2_TEST(counters, accounting) {
     c.onFed(48000, 2, 0);
     s = c.stats();
     expect(s.elapsedMs == 500, "elapsed uses the adopted rate");
+}
+
+SQ2_TEST(stream_counters, accessors_and_output_rate) {
+    StreamCounters c;
+    c.reset(44100);
+    c.onReceived(1000);
+    c.onFed(100, 2, 0);
+    expect(c.bytesReceived() == 1000, "bytesReceived accessor");
+    expect(c.fedSamples() == 50, "fedSamples accessor counts frames");
+
+    // channels == 0 falls back to stereo rather than dividing by zero.
+    c.reset(44100);
+    c.onReceived(100);
+    c.onFed(100, 0, 0);
+    expect(c.fedSamples() == 50, "channels 0 treated as stereo");
+
+    // setOutputRate adopts a decoder format change for the elapsed clock.
+    c.reset(44100);
+    c.onReceived(88200);
+    c.onFed(88200, 2, 0);  // 44100 frames at the default rate = 1 s
+    expect(c.stats().elapsedMs == 1000, "elapsed at the reset rate");
+    c.setOutputRate(88200);
+    expect(c.stats().elapsedMs == 500, "elapsed follows setOutputRate");
 }

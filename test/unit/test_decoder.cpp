@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <span>
+#include <string>
 #include <vector>
 
 using namespace squeeze2raop2::test;
@@ -94,7 +95,9 @@ SQ2_TEST(decoder, mp3_decodes_frame_and_flushes_tail) {
     expect(dec->valid(), "header accepted");
     expect(dec->format().sampleRate == 44100, "detected rate");
     expect(dec->format().channels == 2, "detected channels");
-    expect(pcm.size() >= 1152, "at least one MPEG-1 frame of samples");
+    // The fixture is ~6 MPEG-1 frames (~6900 samples); requiring well over one
+    // frame proves the whole stream decoded and finish() flushed the tail.
+    expect(pcm.size() >= 6000, "every MPEG-1 frame decoded, tail flushed");
     expect(peak(pcm) > 0, "non-silent decode");
 }
 #endif  // SQUEEZE2RAOP2_WITH_MP3
@@ -120,21 +123,40 @@ SQ2_TEST(decoder, rate_regulation) {
 }
 
 SQ2_TEST(decoder, supported_codec_table_matches_factory) {
-    // The HELO caps, the strm guard and the factory all read this one list, so
-    // pin that every advertised entry actually builds a decoder and that
-    // formats outside it do not.
+    // The HELO caps, the strm guard and the factory all read this one list.
+    // Pin the exact cap tokens and their advertised order (the wire contract
+    // LMS sees), that every entry actually builds a decoder, and that formats
+    // outside the list have no factory.
     using squeeze2raop2::CodecInfo;
     using squeeze2raop2::supportedCodecs;
     using squeeze2raop2::supportsFormat;
 
-    expect(supportsFormat(StreamFormat::Pcm), "pcm always supported");
+    std::string expected = "pcm";
+#if defined(SQUEEZE2RAOP2_WITH_MP3)
+    expected += ",mp3";
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_AAC)
+    expected += ",aac";
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_OGG)
+    expected += ",ogg";
+#endif
+#if defined(SQUEEZE2RAOP2_WITH_OPUS)
+    expected += ",ops";
+#endif
+
+    std::string actual;
     for (const CodecInfo& codec : supportedCodecs()) {
         expect(codec.capToken != nullptr && codec.capToken[0] != '\0',
                "every codec has a caps token");
         expect(supportsFormat(codec.format), "table and predicate agree");
         const auto dec = Decoder::create(codec.format, PcmFormat{44100, 16, 2, false}, 0);
         expect(dec != nullptr, "every supported format has a factory");
+        if (!actual.empty()) actual += ",";
+        actual += codec.capToken;
     }
+    expect(actual == expected, "codec cap tokens and advertised order");
+
     // A format LMS can name but this bridge never decodes: no factory, not
     // advertised, so the strm guard rejects it.
     expect(!supportsFormat(StreamFormat::Flac), "flac not advertised");

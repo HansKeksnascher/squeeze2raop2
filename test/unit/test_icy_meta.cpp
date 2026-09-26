@@ -12,7 +12,7 @@ using squeeze2raop2::parseIcyMetaint;
 using squeeze2raop2::parseStreamTitle;
 using squeeze2raop2::withIcyRequestHeader;
 
-SQ2_TEST(icy, request_header) {
+SQ2_TEST(icy_meta, request_header) {
     // Already carries the header: unchanged.
     {
         const std::string req = "GET /x HTTP/1.0\r\nIcy-MetaData: 1\r\n\r\n";
@@ -39,7 +39,7 @@ SQ2_TEST(icy, request_header) {
     }
 }
 
-SQ2_TEST(icy, metaint) {
+SQ2_TEST(icy_meta, metaint) {
     expect(parseIcyMetaint("icy-metaint:8192\r\n") == 8192, "plain value");
     expect(parseIcyMetaint("ICY-METAINT: 4096\r\n") == 4096, "case-insensitive name");
     expect(parseIcyMetaint("Icy-MetaInt:\t 16000\r\n") == 16000, "leading whitespace");
@@ -47,9 +47,18 @@ SQ2_TEST(icy, metaint) {
     expect(parseIcyMetaint("icy-metaint: 0\r\n") == 0, "zero interval");
     expect(parseIcyMetaint("icy-metaint: 99999999\r\n") == 0, "absurd interval");
     expect(parseIcyMetaint("icy-metaint: abc\r\n") == 0, "non-numeric value");
+
+    // The value must be followed only by the line terminator / whitespace, not
+    // arbitrary junk (a bare from_chars would accept "8192abc" as 8192).
+    expect(parseIcyMetaint("icy-metaint: 8192abc\r\n") == 0, "trailing junk rejected");
+    expect(parseIcyMetaint("icy-metaint: 8192\r\nHost: h\r\n") == 8192,
+           "value before the next header line");
+    // Exact accepted upper bound (1 MiB) and one past it.
+    expect(parseIcyMetaint("icy-metaint: 1048576\r\n") == (1u << 20), "1 MiB accepted");
+    expect(parseIcyMetaint("icy-metaint: 1048577\r\n") == 0, "1 MiB + 1 rejected");
 }
 
-SQ2_TEST(icy, stream_title) {
+SQ2_TEST(icy_meta, stream_title) {
     expect(parseStreamTitle("StreamTitle='Hello';") == std::string("Hello"), "title parsed");
     expect(parseStreamTitle("x StreamTitle='A B' y") == std::string("A B"), "title with spaces");
     expect(!parseStreamTitle("StreamTitle='';").has_value(), "empty title");

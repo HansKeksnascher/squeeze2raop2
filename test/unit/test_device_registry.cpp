@@ -30,7 +30,7 @@ AirplayDevice registerAirplay(const std::map<std::string, std::string>& txt) {
 
 }  // namespace
 
-SQ2_TEST(registry, two_word_features) {
+SQ2_TEST(device_registry, two_word_features) {
     // HomePod (AudioAccessory5,1): low word first, both HK pairing bits set.
     AirplayDevice hp = registerAirplay({{"features", "0x4A7FCA00,0x3C354BD0"}});
     expect(hp.features == 0x3C354BD04A7FCA00ULL, "homepod features combine low|high<<32");
@@ -42,7 +42,7 @@ SQ2_TEST(registry, two_word_features) {
     expect(sonos.airplay2(), "sonos classified AP2");
 }
 
-SQ2_TEST(registry, prefix_and_case) {
+SQ2_TEST(device_registry, prefix_and_case) {
     AirplayDevice upper = registerAirplay({{"features", "0x4A7FCA00,0x3C354BD0"}});
     AirplayDevice lower = registerAirplay({{"features", "0x4a7fca00,0x3c354bd0"}});
     AirplayDevice bare = registerAirplay({{"features", "4a7fca00,3c354bd0"}});
@@ -50,7 +50,7 @@ SQ2_TEST(registry, prefix_and_case) {
     expect(upper.features == bare.features, "0x prefix optional");
 }
 
-SQ2_TEST(registry, single_word_and_garbage) {
+SQ2_TEST(device_registry, single_word_and_garbage) {
     // A lone low word carries no HK bits -> not AP2 (bit 38/48 live in the
     // high word).
     AirplayDevice one = registerAirplay({{"features", "0x4A7FCA00"}});
@@ -67,7 +67,7 @@ SQ2_TEST(registry, single_word_and_garbage) {
     expect(none.features == 0, "missing features stays 0");
 }
 
-SQ2_TEST(registry, raop_then_airplay_updates_transport) {
+SQ2_TEST(device_registry, raop_then_airplay_updates_transport) {
     // The two services of one receiver race. If the raop record lands first the
     // device is Added without features (not AP2); the airplay record must then
     // update it to AP2 and merge both services under one key.
@@ -89,7 +89,67 @@ SQ2_TEST(registry, raop_then_airplay_updates_transport) {
            "both services merged under one device");
 }
 
-SQ2_TEST(registry, transport_selection) {
+SQ2_TEST(device_registry, removal_lifecycle) {
+    DeviceRegistry registry;
+    std::vector<std::pair<DeviceRegistry::Event, AirplayDevice>> events;
+    registry.setCallback(
+        [&](DeviceRegistry::Event ev, const AirplayDevice& d) { events.push_back({ev, d}); });
+
+    const std::string inst = "6A329C251848@Küche";
+    registry.onRaopAdded(inst, "10.0.0.9", 7000, {{"am", "AudioAccessory5,1"}});
+    registry.onAirplayAdded(inst, "10.0.0.9", 7100, {{"features", "0x4A7FCA00,0x3C354BD0"}});
+
+    // The raop service disappearing while airplay remains is an update, not a
+    // removal, and must zero only the raop port.
+    registry.onRaopGone(inst);
+    require(events.size() == 3, "gone emitted an event");
+    expect(events.back().first == DeviceRegistry::Event::Updated, "one service gone is Updated");
+    expect(!events.back().second.hasRaopPort(), "raop port cleared");
+    expect(events.back().second.hasAirplayPort(), "airplay service remains");
+
+    // The last service gone removes the device.
+    registry.onAirplayGone(inst);
+    require(events.size() == 4, "last gone emitted an event");
+    expect(events.back().first == DeviceRegistry::Event::Removed, "last service gone is Removed");
+
+    // A gone for an unknown instance is a silent no-op (no callback).
+    registry.onRaopGone("never-seen");
+    registry.onAirplayGone("never-seen");
+    expect(events.size() == 4, "unknown gone emits nothing");
+
+    // Re-adding after removal is a fresh Added, not an Updated.
+    registry.onRaopAdded(inst, "10.0.0.9", 7000, {});
+    require(events.size() == 5, "re-add emitted an event");
+    expect(events.back().first == DeviceRegistry::Event::Added, "re-add after removal is Added");
+}
+
+SQ2_TEST(device_registry, deviceid_txt_merges_instances) {
+    // An airplay record whose instance is not hex can still merge with the
+    // raop record through the `deviceid` TXT key.
+    DeviceRegistry registry;
+    std::vector<std::pair<DeviceRegistry::Event, AirplayDevice>> events;
+    registry.setCallback(
+        [&](DeviceRegistry::Event ev, const AirplayDevice& d) { events.push_back({ev, d}); });
+
+    registry.onRaopAdded("AABBCCDDEEFF@Kitchen", "10.0.0.5", 7000, {});
+    registry.onAirplayAdded("Kitchen._airplay._tcp.local", "10.0.0.5", 7100,
+                            {{"deviceid", "AA:BB:CC:DD:EE:FF"}, {"features", "0x0,0x4000"}});
+
+    require(events.size() == 2, "two events");
+    expect(events[0].first == DeviceRegistry::Event::Added, "raop Added");
+    expect(events[1].first == DeviceRegistry::Event::Updated,
+           "deviceid merged the airplay record into the raop device");
+    expect(events[1].second.hasRaopPort() && events[1].second.hasAirplayPort(),
+           "both services under one device");
+}
+
+SQ2_TEST(device_registry, features_trailing_garbage) {
+    // strtoull semantics: leading hex digits parse, the rest is ignored.
+    AirplayDevice d = registerAirplay({{"features", "0x12zz"}});
+    expect(d.features == 0x12ULL, "trailing garbage after hex is ignored");
+}
+
+SQ2_TEST(device_registry, transport_selection) {
     // Pure helper coverage for the AP2/AP1 and port decision.
     AirplayDevice d;
     d.raopPort = 7000;

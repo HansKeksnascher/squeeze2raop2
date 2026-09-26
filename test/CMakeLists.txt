@@ -9,10 +9,10 @@ add_executable(squeeze2raop2_tests
   unit/test_persistence.cpp
   unit/test_debug_wav_sink.cpp
   unit/test_slimproto_wire.cpp
-  unit/test_transport.cpp
+  unit/test_lms_stream.cpp
   unit/test_volume_map.cpp
+  unit/test_volume_controller.cpp
   unit/test_remote_event.cpp
-  unit/test_remote_volume.cpp
   unit/test_device_registry.cpp
   unit/test_byte_order.cpp
   unit/test_pcm_decoder.cpp
@@ -23,10 +23,12 @@ add_executable(squeeze2raop2_tests
   unit/test_ring_telemetry.cpp
   unit/test_icy_meta.cpp
   unit/test_stream_counters.cpp
-  unit/test_session_exit.cpp
+  unit/test_exit_policy.cpp
+  unit/test_stream_coordinator.cpp
+  unit/test_slimproto_session.cpp
   unit/test_airplay_output.cpp
   unit/test_mdns_names.cpp
-  unit/test_playback_math.cpp
+  unit/test_playback_stream.cpp
   unit/test_log.cpp)
 target_link_libraries(squeeze2raop2_tests PRIVATE squeeze2raop2_core)
 target_include_directories(squeeze2raop2_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/framework)
@@ -36,9 +38,10 @@ add_test(NAME unit COMMAND squeeze2raop2_tests)
 set_tests_properties(unit PROPERTIES LABELS unit)
 
 # Per-suite cases for `ctest -j` / `-R`, all sharing the one binary.
-foreach(s util config persistence debug_wav wire transport volume registry
-          byte_order pcm decoder ring_telemetry icy counters session_exit mdns_names playback_math log aac ogg opus
-          remote_event remote_vol airplay_output)
+foreach(s util config persistence debug_wav_sink slimproto_wire lms_stream volume_map
+          volume_controller device_registry byte_order pcm_decoder decoder ring_telemetry icy_meta
+          stream_counters exit_policy mdns_names playback_stream log aac_decoder ogg_decoder
+          opus_decoder remote_event airplay_output stream_coordinator slimproto_session)
   add_test(NAME unit_${s} COMMAND squeeze2raop2_tests --filter ${s})
   set_tests_properties(unit_${s} PROPERTIES LABELS unit)
 endforeach()

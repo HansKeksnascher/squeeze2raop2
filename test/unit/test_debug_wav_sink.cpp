@@ -67,7 +67,7 @@ void expectTag(const std::vector<unsigned char>& b, size_t off, std::string_view
 }  // namespace
 
 // Pins the RIFF header layout, including the audit's dataSize+36 fix.
-SQ2_TEST(debug_wav, le_header_and_payload) {
+SQ2_TEST(debug_wav_sink, le_header_and_payload) {
     ScratchDir dir("le");
     const PcmFormat fmt{44100, 16, 2, false};
     const std::array<unsigned char, 8> payload{0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00};
@@ -100,7 +100,7 @@ SQ2_TEST(debug_wav, le_header_and_payload) {
 }
 
 // 16-bit big-endian input must be byte-swapped into the LE file.
-SQ2_TEST(debug_wav, be_swap) {
+SQ2_TEST(debug_wav_sink, be_swap) {
     ScratchDir dir("be");
     const PcmFormat fmt{44100, 16, 2, true};
     const std::array<unsigned char, 4> input{0x12, 0x34, 0xAB, 0xCD};
@@ -119,7 +119,7 @@ SQ2_TEST(debug_wav, be_swap) {
 
 // An incoming stream that already starts with a RIFF header gets its 44-byte
 // header stripped on the first feed (total_ == 0 gate).
-SQ2_TEST(debug_wav, riff_header_stripped) {
+SQ2_TEST(debug_wav_sink, riff_header_stripped) {
     ScratchDir dir("stripped");
     const PcmFormat fmt{44100, 16, 2, false};
     std::vector<unsigned char> incoming(44 + 6, 0x00);

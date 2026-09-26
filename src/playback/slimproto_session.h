@@ -59,6 +59,9 @@ public:
     bool alive() const { return client_ != nullptr; }
 
 private:
+    // Test-only seam: pins the advertised HELO caps against
+    // Decoder::supportedCodecs() without widening the public API.
+    friend struct SlimProtoSessionTestAccess;
     std::string buildCaps() const;
 
     const std::array<uint8_t, 6> mac_;

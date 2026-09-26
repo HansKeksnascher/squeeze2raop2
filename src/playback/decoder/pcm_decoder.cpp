@@ -189,10 +189,13 @@ size_t PcmDecoder::normalizeMore() {
         // Take the top 16 bits of each 24-bit sample (pcm.c).
         for (size_t n = frames * 2; n--;) {
             if (!srcBigEndian_) {
-                *op++ = int16_t((std::to_integer<uint8_t>(ip[1]) << 8) |
-                                std::to_integer<uint8_t>(ip[2]));
+                // LE bytes are [low, mid, high]; the top 16 bits are
+                // (high << 8) | mid.
+                *op++ = int16_t((std::to_integer<uint8_t>(ip[2]) << 8) |
+                                std::to_integer<uint8_t>(ip[1]));
                 ip += 3;
             } else {
+                // BE bytes are [high, mid, low].
                 *op++ = int16_t((std::to_integer<uint8_t>(ip[0]) << 8) |
                                 std::to_integer<uint8_t>(ip[1]));
                 ip += 3;

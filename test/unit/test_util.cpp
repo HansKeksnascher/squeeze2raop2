@@ -1,6 +1,5 @@
 #include "common/util.h"
-#include "lms/slimproto.h"
-#include "playback/volume_map.h"
+#include "lms/slimproto_protocol.h"
 
 #include "check.h"
 
@@ -48,44 +47,11 @@ SQ2_TEST(util, mac) {
     expect(!macFromString("aa:01:02:03:04:05junk", parsed), "trailing junk rejected");
     expect(!macFromString("100:01:02:03:04:05", parsed), "wide octet rejected");
     expect(!macFromString("aa:01", parsed), "short mac rejected");
-}
+    expect(!macFromString("aa:01:02:03:04:05:", parsed), "trailing colon rejected");
 
-// Regression guard for the process() bounds fixes: truncated LMS packets
-// must be ignored, never read past the buffer. Run under ASan to verify.
-SQ2_TEST(util, short_packets_ignored) {
-    int stops = 0, conts = 0, codcs = 0, switches = 0;
-    SlimProtoClient::Events events;
-    events.onStop = [&] { ++stops; };
-    events.onCont = [&](uint32_t) { ++conts; };
-    events.onCodc = [&](StreamFormat, const PcmParams&) { ++codcs; };
-    events.onServerSwitch = [&](uint32_t) { ++switches; };
-    SlimProtoClient client({}, "", std::move(events));
-
-    auto withFiller = [](std::string base, size_t total) {
-        base.resize(total, '\0');
-        return base;
-    };
-
-    client.process("");                       // < 4
-    client.process("strm");                   // opcode only
-    client.process("strmt");                  // t, 5 < 22 -> ignore
-    client.process(withFiller("strmt", 21));  // t, one byte short
-    client.process(withFiller("strmp", 21));  // p, one byte short
-    client.process(withFiller("strma", 21));  // a, one byte short
-    client.process(withFiller("strmu", 21));  // u, one byte short
-    client.process(withFiller("audg", 21));   // audg, old code read OOB
-    client.process(withFiller("cont", 7));    // cont, one byte short
-    client.process(withFiller("codc", 8));    // codc, one byte short (needs 9)
-    client.process(withFiller("serv", 7));    // serv, one byte short
-    client.process("strmq");                  // q -> onStop
-    client.process(withFiller("strmt", 22));  // t at exact bound
-    client.process(withFiller("cont", 8));    // cont -> onCont
-    client.process(withFiller("codc", 9));    // codc at exact bound -> onCodc
-    client.process(withFiller("serv", 8));    // serv -> onServerSwitch
-    expect(stops == 1, "one onStop");
-    expect(conts == 1, "one onCont");
-    expect(codcs == 1, "one onCodc");
-    expect(switches == 1, "one onServerSwitch");
+    std::array<uint8_t, 6> upper{};
+    expect(macFromString("AA:0A:BC:DE:F0:12", upper), "uppercase hex accepted");
+    expect(upper[0] == 0xAA && upper[5] == 0x12, "uppercase parsed byte-for-byte");
 }
 
 SQ2_TEST(util, url_decode) {
@@ -124,16 +90,4 @@ SQ2_TEST(util, parse_txt_key_values) {
     expect(txt.empty(), "truncated record stops");
     txt = parseTxtKeyValues(std::string("\x05", 1) + "ab=cd" + std::string("\xFF", 1) + "junk");
     expect(txt.size() == 1 && txt["ab"] == "cd", "stops before an oversized record");
-}
-
-SQ2_TEST(util, clamp_air_volume_pct) {
-    // exactly 0 keeps the -144 dB mute sentinel
-    expect(clampAirVolumePct(0.0) == 0.0, "zero stays mute");
-    expect(clampAirVolumePct(-3.0) == 0.0, "negative clamps to mute");
-    expect(clampAirVolumePct(0.001) == 0.05, "tiny gain floors, never mutes");
-    expect(clampAirVolumePct(0.049) == 0.05, "below floor clamps up");
-    expect(clampAirVolumePct(0.05) == 0.05, "at floor unchanged");
-    expect(clampAirVolumePct(50.22) == 50.22, "mid-range unchanged");
-    expect(clampAirVolumePct(100.0) == 100.0, "full scale unchanged");
-    expect(clampAirVolumePct(123.0) == 100.0, "overshoot clamps to 100");
 }

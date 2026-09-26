@@ -17,7 +17,7 @@ static_assert(decideExit({false, true, true, false}) == ExitAction::GaveUp);
 static_assert(decideExit({false, false, false, true}) == ExitAction::EndedEof);
 static_assert(decideExit({false, false, false, false}) == ExitAction::EndedError);
 
-SQ2_TEST(session_exit, policy) {
+SQ2_TEST(exit_policy, policy) {
     // A stop request always wins, whatever else is set.
     expect(decideExit({true, false, false, false}) == ExitAction::SilentStop, "stop -> silent");
     expect(decideExit({true, true, true, true}) == ExitAction::SilentStop, "stop beats all");

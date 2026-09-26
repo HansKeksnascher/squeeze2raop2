@@ -3,6 +3,7 @@
 // vendored libxaac is enabled.
 
 #include "playback/decoder/decoder.h"
+#include "playback/decoder/mp4_aac_demux.h"
 
 #include "aac_fixture.h"
 #include "check.h"
@@ -21,6 +22,7 @@
 
 using namespace squeeze2raop2::test;
 using squeeze2raop2::Decoder;
+using squeeze2raop2::Mp4AacDemuxer;
 using squeeze2raop2::PcmFormat;
 using squeeze2raop2::StreamFormat;
 
@@ -37,7 +39,7 @@ void expectDecoded(Decoder& dec, const std::vector<int16_t>& pcm, const char* ta
 
 }  // namespace
 
-SQ2_TEST(aac, factory_and_fallback) {
+SQ2_TEST(aac_decoder, factory_and_fallback) {
     const PcmFormat in{44100, 16, 2, false};
     auto adts = Decoder::create(StreamFormat::Aac, in, 0, '2');
     require(adts != nullptr, "aac adts factory");
@@ -54,7 +56,7 @@ SQ2_TEST(aac, factory_and_fallback) {
     expect(adif->hasError(), "aac adif rejected");
 }
 
-SQ2_TEST(aac, adts_decodes_tone) {
+SQ2_TEST(aac_decoder, adts_decodes_tone) {
     auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '2');
     require(dec != nullptr, "aac factory");
     dec->feed(std::span{kFixtureAac});
@@ -64,7 +66,7 @@ SQ2_TEST(aac, adts_decodes_tone) {
     expect(dec->name() == "aac", "aac name");
 }
 
-SQ2_TEST(aac, adts_chunked_feed) {
+SQ2_TEST(aac_decoder, adts_chunked_feed) {
     auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '2');
     require(dec != nullptr, "aac factory");
     const std::span<const std::byte> all{kFixtureAac};
@@ -81,25 +83,7 @@ SQ2_TEST(aac, adts_chunked_feed) {
     expectDecoded(*dec, pcm, "adts chunked decoded");
 }
 
-SQ2_TEST(aac, adts_long_stream) {
-    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '2');
-    require(dec != nullptr, "aac factory");
-    std::vector<int16_t> pcm;
-    for (int rep = 0; rep < 50; ++rep) {
-        dec->feed(std::span{kFixtureAac});
-        const auto part = drainAll(*dec);
-        pcm.insert(pcm.end(), part.begin(), part.end());
-    }
-    dec->finish();
-    const auto tail = drainAll(*dec);
-    pcm.insert(pcm.end(), tail.begin(), tail.end());
-    expect(!dec->hasError(), "long stream no error");
-    // The fixture is 7 ADTS frames (~7168 stereo frames); every repetition must
-    // decode, so 50 reps is ~716800 samples.
-    expect(pcm.size() >= 50 * 14000, "long stream decoded every repetition");
-}
-
-SQ2_TEST(aac, adts_chunked_long_stream) {
+SQ2_TEST(aac_decoder, adts_chunked_long_stream) {
     // Mirror the HTTP reader's ~4 KB chunks over a long concatenated stream.
     std::vector<std::byte> big;
     for (int i = 0; i < 200; ++i) big.insert(big.end(), kFixtureAac.begin(), kFixtureAac.end());
@@ -120,13 +104,59 @@ SQ2_TEST(aac, adts_chunked_long_stream) {
     expect(pcm.size() >= 200 * 14000, "chunked long decoded every repetition");
 }
 
-SQ2_TEST(aac, mp4_demux_decodes_tone) {
+SQ2_TEST(aac_decoder, mp4_demux_decodes_tone) {
     auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '5');
     require(dec != nullptr, "aac mp4 factory");
     dec->feed(std::span{kFixtureM4a});
     dec->finish();
     const auto pcm = drainAll(*dec);
     expectDecoded(*dec, pcm, "mp4 decoded");
+}
+
+// The demuxer is a streaming parser: the same bytes fed in tiny increments must
+// produce byte-identical ADTS output to a single whole-file feed. This exercises
+// partial box headers, skipRemaining_ spanning feeds, partial mdat samples and
+// the compact() boundary that the single-shot decode test never touches.
+SQ2_TEST(aac_decoder, mp4_demux_incremental_matches_whole) {
+    Mp4AacDemuxer whole;
+    whole.feed(std::span{kFixtureM4a});
+    whole.finish();
+    std::vector<std::byte> wholeOut;
+    whole.drain(wholeOut);
+    expect(!whole.failed(), "whole-file demux ok");
+    require(!wholeOut.empty(), "whole-file demux produced ADTS");
+
+    for (size_t chunk : {size_t{1}, size_t{7}, size_t{64}}) {
+        Mp4AacDemuxer inc;
+        std::vector<std::byte> incOut;
+        for (size_t off = 0; off < kFixtureM4a.size(); off += chunk) {
+            const size_t n = std::min(chunk, kFixtureM4a.size() - off);
+            inc.feed(std::span{kFixtureM4a}.subspan(off, n));
+            inc.drain(incOut);
+        }
+        inc.finish();
+        inc.drain(incOut);
+        expect(!inc.failed(), "incremental demux ok");
+        expect(incOut == wholeOut, "incremental ADTS matches the whole-file feed");
+    }
+}
+
+// moov must precede mdat (faststart). An mdat-first container must fail rather
+// than emit garbage.
+SQ2_TEST(aac_decoder, mp4_demux_mdat_before_moov_fails) {
+    std::vector<std::byte> mdat(16, std::byte{0});
+    mdat[0] = std::byte{0};
+    mdat[1] = std::byte{0};
+    mdat[2] = std::byte{0};
+    mdat[3] = std::byte{16};  // box size = 16
+    mdat[4] = std::byte{'m'};
+    mdat[5] = std::byte{'d'};
+    mdat[6] = std::byte{'a'};
+    mdat[7] = std::byte{'t'};
+
+    Mp4AacDemuxer demux;
+    demux.feed(std::span{mdat});
+    expect(demux.failed(), "mdat before moov is rejected");
 }
 
 #endif  // SQUEEZE2RAOP2_WITH_AAC

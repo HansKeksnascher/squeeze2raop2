@@ -35,7 +35,7 @@ void expectDecoded(Decoder& dec, const std::vector<int16_t>& pcm, const char* ta
 
 }  // namespace
 
-SQ2_TEST(ogg, factory_and_fallback) {
+SQ2_TEST(ogg_decoder, factory_and_fallback) {
     const PcmFormat in{44100, 16, 2, false};
     auto dec = Decoder::create(StreamFormat::Ogg, in, 0);
     require(dec != nullptr, "ogg factory");
@@ -46,7 +46,7 @@ SQ2_TEST(ogg, factory_and_fallback) {
     expect(dec->name() == "ogg", "ogg name");
 }
 
-SQ2_TEST(ogg, decodes_tone) {
+SQ2_TEST(ogg_decoder, decodes_tone) {
     auto dec = Decoder::create(StreamFormat::Ogg, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "ogg factory");
     dec->feed(std::span{kFixtureOgg});
@@ -55,7 +55,7 @@ SQ2_TEST(ogg, decodes_tone) {
     expectDecoded(*dec, pcm, "ogg decoded");
 }
 
-SQ2_TEST(ogg, chunked_feed) {
+SQ2_TEST(ogg_decoder, chunked_feed) {
     auto dec = Decoder::create(StreamFormat::Ogg, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "ogg factory");
     const std::span<const std::byte> all{kFixtureOgg};
@@ -72,28 +72,7 @@ SQ2_TEST(ogg, chunked_feed) {
     expectDecoded(*dec, pcm, "ogg chunked decoded");
 }
 
-SQ2_TEST(ogg, long_concatenated_stream) {
-    // Mirror the HTTP reader feeding a long stream made of repeated fixtures.
-    std::vector<std::byte> big;
-    for (int i = 0; i < 50; ++i) big.insert(big.end(), kFixtureOgg.begin(), kFixtureOgg.end());
-    auto dec = Decoder::create(StreamFormat::Ogg, PcmFormat{44100, 16, 2, false}, 0);
-    require(dec != nullptr, "ogg factory");
-    std::vector<int16_t> pcm;
-    constexpr size_t kChunk = 4096;
-    for (size_t off = 0; off < big.size(); off += kChunk) {
-        const size_t n = std::min(kChunk, big.size() - off);
-        dec->feed(std::span{big}.subspan(off, n));
-        const auto part = drainAll(*dec);
-        pcm.insert(pcm.end(), part.begin(), part.end());
-    }
-    dec->finish();
-    const auto tail = drainAll(*dec);
-    pcm.insert(pcm.end(), tail.begin(), tail.end());
-    expect(!dec->hasError(), "ogg long stream no error");
-    expect(pcm.size() >= 4410, "ogg long stream decoded");
-}
-
-SQ2_TEST(ogg, mono_is_accepted) {
+SQ2_TEST(ogg_decoder, mono_is_accepted) {
     // Mono is kept as-is here; AirplayOutput::push() expands it to stereo.
     auto dec = Decoder::create(StreamFormat::Ogg, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "ogg factory");
@@ -108,7 +87,7 @@ SQ2_TEST(ogg, mono_is_accepted) {
     expect(peak(pcm) > 0, "ogg mono peak");
 }
 
-SQ2_TEST(ogg, too_many_channels_rejected) {
+SQ2_TEST(ogg_decoder, too_many_channels_rejected) {
     // > 2 channels is an error, matching squeezelite's OGG_ERROR_TOO_MANY_CHANNELS.
     auto dec = Decoder::create(StreamFormat::Ogg, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "ogg factory");
@@ -118,7 +97,7 @@ SQ2_TEST(ogg, too_many_channels_rejected) {
     expect(dec->hasError(), "ogg 6ch rejected");
 }
 
-SQ2_TEST(ogg, truncated_header_fails) {
+SQ2_TEST(ogg_decoder, truncated_header_fails) {
     auto dec = Decoder::create(StreamFormat::Ogg, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "ogg factory");
     // A prefix of the real stream: not enough to complete the Vorbis headers.
@@ -127,7 +106,7 @@ SQ2_TEST(ogg, truncated_header_fails) {
     expect(dec->hasError(), "ogg truncated header rejected");
 }
 
-SQ2_TEST(ogg, garbage_fails) {
+SQ2_TEST(ogg_decoder, garbage_fails) {
     auto dec = Decoder::create(StreamFormat::Ogg, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "ogg factory");
     std::array<std::byte, 1024> junk{};

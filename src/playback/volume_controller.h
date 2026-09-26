@@ -49,6 +49,10 @@ public:
     double sliderPct() const { return lmsSliderPct_.load(std::memory_order_relaxed); }
 
 private:
+    // Test-only seam: lets the unit suite drive one paced step at a time and
+    // simulate elapsed time, so the chase branches are deterministic without
+    // depending on the stepper thread's wall clock.
+    friend struct VolumeControllerTestAccess;
     // One paced step toward target_. Caller holds mutex_.
     void pumpLocked();
 

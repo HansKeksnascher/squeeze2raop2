@@ -11,7 +11,9 @@ def body(c):
     c.wait_bridge(lambda t: "waiting for codc" in t, what="the bridge to await codc")
     c.wait_bridge(lambda t: "stream ended" in t, timeout=30.0,
                   what="the codc stream to end after the stop")
-    assert c.wav_files(), "a non-empty WAV was written under %s" % c.workdir
+    wavs = c.wav_files()
+    assert wavs, "a non-empty WAV was written under %s" % c.workdir
+    assert harness.wav_peak(wavs[-1]) > 0, "the codc-selected PCM stream is not silent"
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ void expectDecoded(Decoder& dec, const std::vector<int16_t>& pcm, const char* ta
 
 }  // namespace
 
-SQ2_TEST(opus, factory_and_fallback) {
+SQ2_TEST(opus_decoder, factory_and_fallback) {
     const PcmFormat in{44100, 16, 2, false};
     auto dec = Decoder::create(StreamFormat::Opus, in, 0);
     require(dec != nullptr, "opus factory");
@@ -48,18 +48,17 @@ SQ2_TEST(opus, factory_and_fallback) {
     expect(dec->name() == "opus", "opus name");
 }
 
-SQ2_TEST(opus, decodes_tone) {
+SQ2_TEST(opus_decoder, decodes_tone) {
     auto dec = Decoder::create(StreamFormat::Opus, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "opus factory");
     dec->feed(std::span{kFixtureOpus});
     dec->finish();
     const auto pcm = drainAll(*dec);
-    fprintf(stderr, "OPUSPCM samples=%zu frames=%zu\n", pcm.size(), pcm.size() / 2);
     expectDecoded(*dec, pcm, "opus decoded");
     expect(dec->format().channels == 2, "opus stereo");
 }
 
-SQ2_TEST(opus, chunked_feed) {
+SQ2_TEST(opus_decoder, chunked_feed) {
     auto dec = Decoder::create(StreamFormat::Opus, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "opus factory");
     const std::span<const std::byte> all{kFixtureOpus};
@@ -76,7 +75,7 @@ SQ2_TEST(opus, chunked_feed) {
     expectDecoded(*dec, pcm, "opus chunked decoded");
 }
 
-SQ2_TEST(opus, byte_at_a_time) {
+SQ2_TEST(opus_decoder, byte_at_a_time) {
     // One byte per feed stresses page reassembly across segment boundaries.
     auto dec = Decoder::create(StreamFormat::Opus, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "opus factory");
@@ -93,7 +92,7 @@ SQ2_TEST(opus, byte_at_a_time) {
     expectDecoded(*dec, pcm, "opus byte-at-a-time decoded");
 }
 
-SQ2_TEST(opus, mono_is_accepted) {
+SQ2_TEST(opus_decoder, mono_is_accepted) {
     // Mono is kept as-is here; AirplayOutput::push() expands it to stereo.
     auto dec = Decoder::create(StreamFormat::Opus, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "opus factory");
@@ -108,7 +107,7 @@ SQ2_TEST(opus, mono_is_accepted) {
     expect(peak(pcm) > 0, "opus mono peak");
 }
 
-SQ2_TEST(opus, too_many_channels_rejected) {
+SQ2_TEST(opus_decoder, too_many_channels_rejected) {
     // 6 channels is mapping family 1, which this decoder does not support.
     auto dec = Decoder::create(StreamFormat::Opus, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "opus factory");
@@ -118,7 +117,7 @@ SQ2_TEST(opus, too_many_channels_rejected) {
     expect(dec->hasError(), "opus 6ch rejected");
 }
 
-SQ2_TEST(opus, truncated_header_fails) {
+SQ2_TEST(opus_decoder, truncated_header_fails) {
     auto dec = Decoder::create(StreamFormat::Opus, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "opus factory");
     // A prefix of the real stream: not enough to complete the OpusHead.
@@ -127,7 +126,7 @@ SQ2_TEST(opus, truncated_header_fails) {
     expect(dec->hasError(), "opus truncated header rejected");
 }
 
-SQ2_TEST(opus, garbage_fails) {
+SQ2_TEST(opus_decoder, garbage_fails) {
     auto dec = Decoder::create(StreamFormat::Opus, PcmFormat{44100, 16, 2, false}, 0);
     require(dec != nullptr, "opus factory");
     // Valid Ogg framing around junk is not Opus; a plain junk blob is not even

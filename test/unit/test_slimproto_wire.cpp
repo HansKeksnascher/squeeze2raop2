@@ -162,7 +162,7 @@ std::string opcodeOf(const std::vector<unsigned char>& pkt) {
 
 }  // namespace
 
-SQ2_TEST(wire, helo_framing_and_stat_round_trip) {
+SQ2_TEST(slimproto_wire, helo_framing_and_stat_round_trip) {
     LoopbackServer server;
 
     std::atomic<bool> volumeSeen{false};
@@ -272,7 +272,7 @@ SQ2_TEST(wire, helo_framing_and_stat_round_trip) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, stream_start_event) {
+SQ2_TEST(slimproto_wire, stream_start_event) {
     LoopbackServer server;
     std::atomic<bool> startSeen{false};
     std::atomic<uint32_t> startPort{0};
@@ -310,7 +310,7 @@ SQ2_TEST(wire, stream_start_event) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, strm_start_tls_flag) {
+SQ2_TEST(slimproto_wire, strm_start_tls_flag) {
     LoopbackServer server;
     std::atomic<int> lastFlags{-1};
     std::atomic<bool> lastSsl{false};
@@ -367,7 +367,7 @@ SQ2_TEST(wire, strm_start_tls_flag) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, aude_power_event) {
+SQ2_TEST(slimproto_wire, aude_power_event) {
     LoopbackServer server;
     std::atomic<int> lastEnable{-1};
     std::atomic<int> count{0};
@@ -399,7 +399,7 @@ SQ2_TEST(wire, aude_power_event) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, codc_event) {
+SQ2_TEST(slimproto_wire, codc_event) {
     LoopbackServer server;
     std::atomic<int> fmt{-1};
     std::atomic<int> rateCode{-1};
@@ -429,7 +429,7 @@ SQ2_TEST(wire, codc_event) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, setd_rename_and_query) {
+SQ2_TEST(slimproto_wire, setd_rename_and_query) {
     LoopbackServer server;
     SlimProtoClient::Events events;
     const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x04};
@@ -461,7 +461,7 @@ SQ2_TEST(wire, setd_rename_and_query) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, butn_volume_nudge) {
+SQ2_TEST(slimproto_wire, butn_volume_nudge) {
     LoopbackServer server;
     const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x09};
     SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", SlimProtoClient::Events{});
@@ -490,7 +490,7 @@ SQ2_TEST(wire, butn_volume_nudge) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, dsco_framing) {
+SQ2_TEST(slimproto_wire, dsco_framing) {
     LoopbackServer server;
     SlimProtoClient::Events events;
     const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x05};
@@ -512,7 +512,7 @@ SQ2_TEST(wire, dsco_framing) {
     server.expectClosedByClient();
 }
 
-SQ2_TEST(wire, flush_is_acknowledged_once) {
+SQ2_TEST(slimproto_wire, flush_is_acknowledged_once) {
     LoopbackServer server;
     std::atomic<int> flushCalls{0};
     SlimProtoClient* clientPtr = nullptr;
@@ -551,19 +551,168 @@ SQ2_TEST(wire, flush_is_acknowledged_once) {
     client.stop();
 }
 
-SQ2_TEST(wire, server_silence_watchdog_reconnects) {
+SQ2_TEST(slimproto_wire, server_silence_watchdog_reconnects) {
     LoopbackServer server;
     const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x06};
     SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", SlimProtoClient::Events{});
     client.setServerTimeout(300);
     client.start("127.0.0.1", server.port());
     server.acceptConnection();
-    expect(opcodeOf(server.readPacket()) == "HELO", "first connection HELO");
+    const auto helo1 = server.readPacket();
+    expect(opcodeOf(helo1) == "HELO", "first connection HELO");
+    // First registration: reconnect flag clear (HELO flags at packet 32..33).
+    expect(helo1[32] == 0x00 && helo1[33] == 0x00, "first HELO has no reconnect flag");
 
     // Send nothing: the client must declare the connection dead and reconnect.
     server.acceptReconnect();
-    expect(opcodeOf(server.readPacket()) == "HELO", "reconnect sends a fresh HELO");
+    const auto helo2 = server.readPacket();
+    expect(opcodeOf(helo2) == "HELO", "reconnect sends a fresh HELO");
+    // kHeloFlagReconnect 0x4000 must be set, or LMS may treat it as a new player.
+    expect(helo2[32] == 0x40 && helo2[33] == 0x00, "reconnect HELO sets the reconnect flag");
 
     client.stop();
     server.expectClosedByClient();
+}
+
+// The STAT body is a fixed 53-byte layout with several same-width u32 fields;
+// a reordering would keep the length correct while breaking LMS's progress and
+// buffer display. Pin every field at its byte offset.
+SQ2_TEST(slimproto_wire, stat_field_layout) {
+    LoopbackServer server;
+    const std::array<unsigned char, 6> mac{0xaa, 0, 0, 0, 0, 0x08};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", SlimProtoClient::Events{});
+    client.start("127.0.0.1", server.port());
+    server.acceptConnection();
+    server.readPacket();  // HELO
+
+    StreamStats st;
+    st.streamBufferSize = 0x01020304u;
+    st.streamBufferFullness = 0x11121314u;
+    st.bytesReceived = 0x0000000200000003ULL;  // hi 2, lo 3 (64-bit split)
+    st.outputBufferSize = 0x21222324u;
+    st.outputBufferFullness = 0x31323334u;
+    st.elapsedMs = 123456u;
+    const uint32_t serverTimestamp = 0x41424344u;
+    client.sendStat("STMt", st, serverTimestamp);
+
+    const auto stat = server.readPacket();
+    require(opcodeOf(stat) == "STAT", "sendStat emits STAT");
+    auto u32 = [&stat](size_t off) {
+        return (static_cast<uint32_t>(stat[off]) << 24) |
+               (static_cast<uint32_t>(stat[off + 1]) << 16) |
+               (static_cast<uint32_t>(stat[off + 2]) << 8) | stat[off + 3];
+    };
+    auto u16 = [&stat](size_t off) {
+        return static_cast<uint16_t>((stat[off] << 8) | stat[off + 1]);
+    };
+    expect(std::string_view(reinterpret_cast<const char*>(stat.data() + 8), 4) == "STMt",
+           "event at body offset 0");
+    expect(u32(15) == st.streamBufferSize, "streamBufferSize at offset 15");
+    expect(u32(19) == st.streamBufferFullness, "streamBufferFullness at offset 19");
+    expect(u32(23) == 2u, "bytesReceived high word at offset 23");
+    expect(u32(27) == 3u, "bytesReceived low word at offset 27");
+    expect(u16(31) == 0xFFFF, "0xFFFF marker at offset 31");
+    expect(u32(37) == st.outputBufferSize, "outputBufferSize at offset 37");
+    expect(u32(41) == st.outputBufferFullness, "outputBufferFullness at offset 41");
+    expect(u32(45) == st.elapsedMs / 1000, "elapsed seconds at offset 45");
+    expect(u32(51) == st.elapsedMs, "elapsed ms at offset 51");
+    expect(u32(55) == serverTimestamp, "server timestamp at offset 55");
+
+    client.stop();
+}
+
+// Regression guard for the process() bounds fixes: truncated LMS packets must
+// be ignored, never read past the buffer. Run under ASan to verify.
+SQ2_TEST(slimproto_wire, short_packets_ignored) {
+    int stops = 0, conts = 0, codcs = 0, switches = 0;
+    SlimProtoClient::Events events;
+    events.onStop = [&] { ++stops; };
+    events.onCont = [&](uint32_t) { ++conts; };
+    events.onCodc = [&](StreamFormat, const PcmParams&) { ++codcs; };
+    events.onServerSwitch = [&](uint32_t) { ++switches; };
+    SlimProtoClient client({}, "", std::move(events));
+
+    auto withFiller = [](std::string base, size_t total) {
+        base.resize(total, '\0');
+        return base;
+    };
+
+    client.process("");                       // < 4
+    client.process("strm");                   // opcode only
+    client.process("strmt");                  // t, 5 < 22 -> ignore
+    client.process(withFiller("strmt", 21));  // t, one byte short
+    client.process(withFiller("strmp", 21));  // p, one byte short
+    client.process(withFiller("strma", 21));  // a, one byte short
+    client.process(withFiller("strmu", 21));  // u, one byte short
+    client.process(withFiller("audg", 21));   // audg, old code read OOB
+    client.process(withFiller("cont", 7));    // cont, one byte short
+    client.process(withFiller("codc", 8));    // codc, one byte short (needs 9)
+    client.process(withFiller("serv", 7));    // serv, one byte short
+    client.process("strmq");                  // q -> onStop
+    client.process(withFiller("strmt", 22));  // t at exact bound
+    client.process(withFiller("cont", 8));    // cont -> onCont
+    client.process(withFiller("codc", 9));    // codc at exact bound -> onCodc
+    client.process(withFiller("serv", 8));    // serv -> onServerSwitch
+    expect(stops == 1, "one onStop");
+    expect(conts == 1, "one onCont");
+    expect(codcs == 1, "one onCodc");
+    expect(switches == 1, "one onServerSwitch");
+}
+
+// A stream thread hammering sendStat() while the client reconnects must be
+// race-free (run under ThreadSanitizer); sendStat() after stop() must be a
+// harmless no-op. Accepts and immediately drops each connection.
+SQ2_TEST(slimproto_wire, concurrent_send_during_reconnect) {
+    const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(listener >= 0, "listener socket");
+    int one = 1;
+    (void)::setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    require(::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "bind");
+    require(::listen(listener, 8) == 0, "listen");
+    socklen_t alen = sizeof(addr);
+    require(::getsockname(listener, reinterpret_cast<sockaddr*>(&addr), &alen) == 0, "getsockname");
+    const uint16_t port = ntohs(addr.sin_port);
+
+    std::atomic<bool> run{true};
+    std::atomic<int> accepted{0};
+    std::thread acceptor([&] {
+        while (run.load()) {
+            pollfd pfd{listener, POLLIN, 0};
+            if (::poll(&pfd, 1, 100) != 1) continue;
+            const int conn = ::accept(listener, nullptr, nullptr);
+            if (conn < 0) continue;
+            accepted.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            ::shutdown(conn, SHUT_RDWR);
+            ::close(conn);
+        }
+    });
+
+    const std::array<uint8_t, 6> mac{0xaa, 0, 0, 0, 0, 0x02};
+    SlimProtoClient client(mac, "Model=squeezelite,mp3,pcm", SlimProtoClient::Events{});
+    client.start("127.0.0.1", port);
+
+    std::thread sender([&] {
+        for (int i = 0; i < 300 && run.load(); ++i) {
+            client.sendStat("STMt", StreamStats{});
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    run.store(false);
+    sender.join();
+    client.stop();
+    acceptor.join();
+
+    // sendStat() after stop() must be a safe no-op (socket already released).
+    client.sendStat("STMt", StreamStats{});
+    // Observable evidence the concurrent path actually ran: the client
+    // reconnected at least once while the sender hammered sendStat().
+    expect(accepted.load() >= 1, "client reconnected under concurrent sends");
+    ::close(listener);
 }

@@ -22,7 +22,9 @@ def body(c):
                what="the bridge to report DSCO to LMS")
     c.wait_lms(lambda t: "STAT STMn" in t, timeout=5.0,
                what="the bridge to report STMn to LMS")
-    assert c.wav_files(), "the pre-stall audio was written under %s" % c.workdir
+    wavs = c.wav_files()
+    assert wavs, "the pre-stall audio was written under %s" % c.workdir
+    assert harness.wav_peak(wavs[-1]) > 0, "the pre-stall audio is not silent"
 
 
 if __name__ == "__main__":

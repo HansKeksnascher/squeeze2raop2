@@ -17,6 +17,7 @@ def body(c):
                   what="the bridge to report the ended stream")
     wavs = c.wav_files()
     assert wavs, "a non-empty WAV was written under %s" % c.workdir
+    assert harness.wav_peak(wavs[-1]) > 0, "the decoded PCM stream is not silent"
 
 
 if __name__ == "__main__":

@@ -108,4 +108,25 @@ SQ2_TEST(config, parse_args) {
         expect(!args.has_value(), "--version exits without a config");
         expect(code == 0, "--version exit code 0");
     }
+    {
+        const char* argv[] = {"prog", "--config"};
+        int code = 0;
+        auto args = parseArgs(2, const_cast<char**>(argv), code);
+        expect(!args.has_value(), "--config without a path is rejected");
+        expect(code == 1, "missing path exit code");
+    }
+    {
+        const char* argv[] = {"prog", "-h"};
+        int code = 7;
+        auto args = parseArgs(2, const_cast<char**>(argv), code);
+        expect(!args.has_value(), "-h exits without a config");
+        expect(code == 0, "-h exit code 0");
+    }
+    {
+        const char* argv[] = {"prog", "--help"};
+        int code = 7;
+        auto args = parseArgs(2, const_cast<char**>(argv), code);
+        expect(!args.has_value(), "--help exits without a config");
+        expect(code == 0, "--help exit code 0");
+    }
 }

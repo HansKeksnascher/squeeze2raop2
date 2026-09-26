@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstdint>
 
+using namespace squeeze2raop2;
 using namespace squeeze2raop2::test;
+
 using squeeze2raop2::dbFromAirplayPct;
 using squeeze2raop2::kAirplayDbPerPct;
 using squeeze2raop2::kAirplayFloorDb;
@@ -24,7 +26,7 @@ uint32_t gainForDb(double db) {
 
 }  // namespace
 
-SQ2_TEST(volume, parse) {
+SQ2_TEST(volume_map, parse) {
     auto v = VolumeAnchors::parse(kDefaultVolumeMap);
     expect(v.has_value(), "default spec parses");
     expect(v->points().size() == 4, "four anchors");
@@ -46,6 +48,10 @@ SQ2_TEST(volume, parse) {
     expect(!VolumeAnchors::parse("5:50"), "positive dB rejected");
     expect(!VolumeAnchors::parse("-30:1, -23:1"), "duplicate pct rejected");
     expect(!VolumeAnchors::parse("-30:1, -23:16x"), "trailing junk rejected");
+    // The dB axis must be strictly increasing too: lmsPctFromDb assumes it, so
+    // a config that is louder at a lower slider step would invert wrongly.
+    expect(!VolumeAnchors::parse("-30:1, -20:50, -25:100"), "non-monotonic dB rejected");
+    expect(!VolumeAnchors::parse("-30:1, -30:50, 0:100"), "duplicate dB rejected");
 
     // unsorted input is accepted and sorted
     auto u = VolumeAnchors::parse("-15:50, -30:1, 0:100");
@@ -54,7 +60,7 @@ SQ2_TEST(volume, parse) {
     expect(near(u->dbAt(16.0), -25.41, 0.01), "single-segment interpolation");
 }
 
-SQ2_TEST(volume, chain) {
+SQ2_TEST(volume_map, chain) {
     auto v = VolumeAnchors::parse(kDefaultVolumeMap);
     expect(v.has_value(), "chain spec parses");
     expect(v->airplayPctFromLms(0.0) == 0.0, "LMS mute -> pct 0");
@@ -74,7 +80,7 @@ SQ2_TEST(volume, chain) {
     }
 }
 
-SQ2_TEST(volume, inverse) {
+SQ2_TEST(volume_map, inverse) {
     auto v = VolumeAnchors::parse(kDefaultVolumeMap);
     expect(v.has_value(), "inverse spec parses");
     expect(near(v->lmsPctFromDb(-30.0), 1.0, 1e-9), "-30 dB -> quiet-but-not-mute floor");
@@ -91,20 +97,98 @@ SQ2_TEST(volume, inverse) {
     }
 }
 
-SQ2_TEST(volume, airplay_db) {
+SQ2_TEST(volume_map, airplay_db) {
     // The wire domain shared by the forward and inverse receiver-volume paths.
     expect(near(dbFromAirplayPct(0.0), -30.0, 1e-9), "pct 0 -> floor");
     expect(near(dbFromAirplayPct(100.0), 0.0, 1e-9), "pct 100 -> 0 dB");
     expect(near(dbFromAirplayPct(23.333), -23.0, 0.01), "pct 23.333 -> -23 dB");
-
-    // dB -> pct -> dB round-trips the shared constants.
-    for (int p = 0; p <= 100; ++p) {
-        const double back = (dbFromAirplayPct(p) - kAirplayFloorDb) / kAirplayDbPerPct;
-        expect(near(back, p, 1e-9), "wire constants are mutually consistent");
-    }
+    // The floor/slope pair is a shared contract, not a self-derivation: pin both
+    // constants so the forward and inverse mappings cannot drift apart.
+    expect(near(kAirplayFloorDb, -30.0, 1e-9), "floor is -30 dB");
+    expect(near(kAirplayDbPerPct, 0.3, 1e-12), "slope is 0.3 dB per pct");
 }
 
-SQ2_TEST(volume, lms_curve) {
+SQ2_TEST(volume_map, clamp_air_volume_pct) {
+    // Exactly 0 keeps the -144 dB mute sentinel.
+    expect(clampAirVolumePct(0.0) == 0.0, "zero stays mute");
+    expect(clampAirVolumePct(-3.0) == 0.0, "negative clamps to mute");
+    expect(clampAirVolumePct(0.001) == 0.05, "tiny gain floors, never mutes");
+    expect(clampAirVolumePct(0.049) == 0.05, "below floor clamps up");
+    expect(clampAirVolumePct(0.05) == 0.05, "at floor unchanged");
+    expect(clampAirVolumePct(50.22) == 50.22, "mid-range unchanged");
+    expect(clampAirVolumePct(100.0) == 100.0, "full scale unchanged");
+    expect(clampAirVolumePct(123.0) == 100.0, "overshoot clamps to 100");
+}
+
+// --- 16.16 gain and fades (volume_map.h) -----------------------------------
+
+SQ2_TEST(volume_map, apply_gain16) {
+    expect(applyGain16(1000, kFixedOne) == 1000, "unity gain is identity");
+    expect(applyGain16(-2000, kFixedOne) == -2000, "unity keeps sign");
+    expect(applyGain16(1000, 0) == 0, "zero gain silences");
+    expect(applyGain16(1000, kFixedOne / 2) == 500, "half gain halves");
+    expect(applyGain16(1000, kFixedOne * 2) == 2000, "2x gain doubles");
+    expect(applyGain16(30000, kFixedOne * 2) == 32767, "positive overflow saturates");
+    expect(applyGain16(-30000, kFixedOne * 2) == -32768, "negative overflow saturates");
+    expect(applyGain16(32767, 0x8000) == 16383, "attenuation truncates toward zero");
+}
+
+SQ2_TEST(volume_map, fade_ramp) {
+    const uint32_t dur = 1000;
+    expect(fadeGain16(0, dur, true) == 0, "fade-in starts silent");
+    expect(fadeGain16(dur, dur, true) == kFixedOne, "fade-in ends at unity");
+    expect(fadeGain16(dur / 2, dur, true) == kFixedOne / 2, "fade-in midpoint is half");
+    expect(fadeGain16(0, dur, false) == kFixedOne, "fade-out starts at unity");
+    expect(fadeGain16(dur, dur, false) == 0, "fade-out ends silent");
+    expect(fadeGain16(dur / 2, dur, false) == kFixedOne / 2, "fade-out midpoint is half");
+    expect(fadeGain16(0, 0, false) == kFixedOne, "zero duration pins to unity");
+    expect(fadeGain16(5000, dur, true) == kFixedOne, "past-end clamps (up)");
+    expect(fadeGain16(5000, dur, false) == 0, "past-end clamps (down)");
+}
+
+// --- Receiver-volume chase step (volume_map.h) -----------------------------
+//
+// Pure per-step rule consumed by VolumeController; the paced stepper shell is
+// pinned in test_volume_controller.cpp.
+
+SQ2_TEST(volume_map, nudge_direction) {
+    expect(decideVolumeNudge(60.0, 50.0, 0, 10, 1.0) == VolumeNudge::Up,
+           "target above -> volume up");
+    expect(decideVolumeNudge(40.0, 50.0, 0, 10, 1.0) == VolumeNudge::Down,
+           "target below -> volume down");
+}
+
+SQ2_TEST(volume_map, nudge_convergence) {
+    expect(decideVolumeNudge(50.0, 50.0, 0, 10, 1.0) == VolumeNudge::Reached, "exact target stops");
+    expect(decideVolumeNudge(50.0, 50.5, 0, 10, 1.0) == VolumeNudge::Reached,
+           "within tolerance stops");
+    expect(decideVolumeNudge(50.5, 50.0, 0, 10, 1.0) == VolumeNudge::Reached,
+           "within tolerance stops (above)");
+}
+
+SQ2_TEST(volume_map, nudge_overshoot_guard) {
+    // Last step was up, but LMS is now past a lower target: stop, don't reverse
+    // and oscillate. The tolerance check uses the exact difference, so 2 pct
+    // is outside a 1 pct window.
+    expect(decideVolumeNudge(60.0, 62.0, 1, 10, 1.0) == VolumeNudge::Overshoot,
+           "stepped past an upward target");
+    expect(decideVolumeNudge(40.0, 38.0, -1, 10, 1.0) == VolumeNudge::Overshoot,
+           "stepped past a downward target");
+    // A reversal that is not an overshoot is allowed (lastDir reset to 0 by the
+    // caller on a fresh target) and simply steps back.
+    expect(decideVolumeNudge(30.0, 50.0, 0, 10, 1.0) == VolumeNudge::Down,
+           "fresh target may reverse direction");
+}
+
+SQ2_TEST(volume_map, nudge_budget) {
+    expect(decideVolumeNudge(90.0, 50.0, 1, 0, 1.0) == VolumeNudge::Exhausted,
+           "no steps left stops");
+    expect(decideVolumeNudge(90.0, 50.0, 0, 0, 1.0) == VolumeNudge::Exhausted,
+           "budget checked before direction");
+    expect(decideVolumeNudge(90.0, 50.0, 1, 1, 1.0) == VolumeNudge::Up, "one more step allowed");
+}
+
+SQ2_TEST(volume_map, lms_curve) {
     // LMS mute is an explicit zero gain.
     expect(lmsSliderPctFromGain(0) == 0.0, "zero gain -> mute");
 

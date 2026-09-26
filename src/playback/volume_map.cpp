@@ -65,11 +65,13 @@ std::optional<VolumeAnchors> VolumeAnchors::parse(std::string_view spec) {
     }
     if (!any) return std::nullopt;
     std::sort(out.points_.begin(), out.points_.end());
-    // duplicate slider positions make the interpolation ambiguous
-    if (std::adjacent_find(out.points_.begin(), out.points_.end(),
-                           [](const auto& a, const auto& b) { return a.first >= b.first; }) !=
-        out.points_.end())
-        return std::nullopt;
+    // Both axes must end up strictly increasing: duplicate slider positions
+    // make the forward interpolation ambiguous, and a non-monotonic dB axis
+    // silently breaks the receiver->slider inverse (lmsPctFromDb assumes it).
+    for (size_t i = 1; i < out.points_.size(); ++i) {
+        if (out.points_[i].first <= out.points_[i - 1].first) return std::nullopt;
+        if (out.points_[i].second <= out.points_[i - 1].second) return std::nullopt;
+    }
     return out;
 }
 

@@ -33,6 +33,11 @@ uint32_t parseIcyMetaint(std::string_view headers) {
     uint64_t v = 0;
     auto [ptr, ec] = std::from_chars(lower.data() + p, lower.data() + lower.size(), v);
     if (ec != std::errc{} || v == 0 || v > (1u << 20)) return 0;
+    // Reject trailing junk ("8192abc"): the value must end at the line
+    // terminator or whitespace (the headers string may carry more lines).
+    if (ptr != lower.data() + lower.size() && *ptr != '\r' && *ptr != '\n' && *ptr != ' ' &&
+        *ptr != '\t')
+        return 0;
     return static_cast<uint32_t>(v);
 }
 
