@@ -2,14 +2,16 @@
 // input-format fallback for a not-yet-valid decoder, and the PCM source-rate
 // regulator. Container-header adoption and normalization are pinned
 // separately in test_pcm_decoder.cpp. The MP3 case exercises the real minimp3
-// path (feed -> finish -> drain) over an embedded tone fixture.
+// path (feed -> finish -> drain) over an embedded tone fixture when built in.
 
 #include "playback/decoder/decoder.h"
 
 #include "check.h"
 #include "decoder_util.h"
 #include "lms/slimproto_protocol.h"
+#if defined(SQUEEZE2RAOP2_WITH_MP3)
 #include "mp3_fixture.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -70,6 +72,7 @@ SQ2_TEST(decoder, raw_pcm_mono_normalized) {
         expect(out[2 * i] == mono[i] && out[2 * i + 1] == mono[i], "mono duplicated");
 }
 
+#if defined(SQUEEZE2RAOP2_WITH_MP3)
 SQ2_TEST(decoder, mp3_format_fallback) {
     // Before its first frame an MP3 has no rate; format() falls back to the
     // strm-derived input format.
@@ -94,6 +97,7 @@ SQ2_TEST(decoder, mp3_decodes_frame_and_flushes_tail) {
     expect(pcm.size() >= 1152, "at least one MPEG-1 frame of samples");
     expect(peak(pcm) > 0, "non-silent decode");
 }
+#endif  // SQUEEZE2RAOP2_WITH_MP3
 
 SQ2_TEST(decoder, rate_regulation) {
     // 16-bit stereo => 4 bytes/frame. The regulator skips the first
@@ -124,7 +128,6 @@ SQ2_TEST(decoder, supported_codec_table_matches_factory) {
     using squeeze2raop2::supportsFormat;
 
     expect(supportsFormat(StreamFormat::Pcm), "pcm always supported");
-    expect(supportsFormat(StreamFormat::Mp3), "mp3 always supported");
     for (const CodecInfo& codec : supportedCodecs()) {
         expect(codec.capToken != nullptr && codec.capToken[0] != '\0',
                "every codec has a caps token");
@@ -138,6 +141,11 @@ SQ2_TEST(decoder, supported_codec_table_matches_factory) {
     expect(Decoder::create(StreamFormat::Flac, PcmFormat{44100, 16, 2, false}, 0) == nullptr,
            "flac has no factory");
 
+#if defined(SQUEEZE2RAOP2_WITH_MP3)
+    expect(supportsFormat(StreamFormat::Mp3), "mp3 built in");
+#else
+    expect(!supportsFormat(StreamFormat::Mp3), "mp3 not built in");
+#endif
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
     expect(supportsFormat(StreamFormat::Aac), "aac built in");
 #else

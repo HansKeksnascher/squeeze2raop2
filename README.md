@@ -114,10 +114,11 @@ sender, mbedTLS, mDNSResponder, minimp3, stb_vorbis, libxaac, libogg and libopus
 are all linked in statically, so there is **no** Avahi/D-Bus, ALSA/PulseAudio or
 external TLS library dependency. The `-static` artifact is a musl build, so it
 carries no runtime libraries at all. Any decoder can be dropped at configure
-time: `-DSQUEEZE2RAOP2_WITH_AAC=OFF`, `-DSQUEEZE2RAOP2_WITH_OGG=OFF` or
-`-DSQUEEZE2RAOP2_WITH_OPUS=OFF`; the HELO caps then advertise only the codecs
-that remain built in. Direct HTTPS streaming can be dropped with
-`-DSQUEEZE2RAOP2_WITH_HTTPS=OFF` (the caps then omit `CanHTTPS=1`).
+time: `-DSQUEEZE2RAOP2_WITH_MP3=OFF`, `-DSQUEEZE2RAOP2_WITH_AAC=OFF`,
+`-DSQUEEZE2RAOP2_WITH_OGG=OFF` or `-DSQUEEZE2RAOP2_WITH_OPUS=OFF`; the HELO caps
+then advertise only the codecs that remain built in. Direct HTTPS streaming can
+be dropped with `-DSQUEEZE2RAOP2_WITH_HTTPS=OFF` (the caps then omit
+`CanHTTPS=1`).
 
 One piece of *data* is needed for direct HTTPS: a CA bundle to verify station
 certificates (the system store is autodetected, or set `[global] tls-ca`). With

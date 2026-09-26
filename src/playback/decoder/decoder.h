@@ -19,7 +19,7 @@ namespace squeeze2raop2 {
 //     format() — the stream adopts it whenever it changes;
 //   - drain() returns the number of SAMPLES written (0 = idle); a drain
 //     returning 0 while hasError() is sticky aborts the stream;
-//   - finish() signals end of input so tail frames flush (MP3); the
+//   - finish() signals end of input so tail frames flush (e.g. MP3); the
 //     default is a no-op for formats with no decoder tail.
 // The base also carries the two pipeline-cadence pieces every decoder shares
 // and neither is format-specific: the 1152-frame chunk buffer behind
@@ -141,8 +141,8 @@ struct CodecInfo {
                                        uint8_t containerCode);
 };
 
-// Formats this build can decode, in advertised order: pcm, mp3, then any
-// enabled AAC/Ogg/Opus. Always contains at least Pcm and Mp3.
+// Formats this build can decode, in advertised order: pcm, then any enabled
+// MP3/AAC/Ogg/Opus. Always contains at least Pcm.
 std::span<const CodecInfo> supportedCodecs();
 
 bool supportsFormat(StreamFormat format);

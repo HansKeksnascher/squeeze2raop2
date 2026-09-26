@@ -2,8 +2,10 @@
 
 #include "common/log.h"
 #include "common/util.h"
-#include "playback/decoder/mp3_decoder.h"
 #include "playback/decoder/pcm_decoder.h"
+#if defined(SQUEEZE2RAOP2_WITH_MP3)
+#include "playback/decoder/mp3_decoder.h"
+#endif
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
 #include "playback/decoder/aac_decoder.h"
 #endif
@@ -26,9 +28,11 @@ namespace {
 std::unique_ptr<Decoder> makePcm(const PcmFormat& in, uint32_t outputRate, uint8_t) {
     return std::make_unique<PcmDecoder>(in, outputRate);
 }
+#if defined(SQUEEZE2RAOP2_WITH_MP3)
 std::unique_ptr<Decoder> makeMp3(const PcmFormat& in, uint32_t, uint8_t) {
     return std::make_unique<Mp3Decoder>(in);
 }
+#endif
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
 std::unique_ptr<Decoder> makeAac(const PcmFormat& in, uint32_t, uint8_t containerCode) {
     return std::make_unique<AacDecoder>(in, containerCode);
@@ -129,7 +133,10 @@ std::span<const CodecInfo> supportedCodecs() {
     // The one place codec enablement is decided. Order is the advertised HELO
     // caps order (pcm, mp3, aac, ogg, ops); keep it stable.
     static constexpr CodecInfo kCodecs[] = {
-        {StreamFormat::Pcm, kCodecCapPcm, &makePcm},    {StreamFormat::Mp3, kCodecCapMp3, &makeMp3},
+        {StreamFormat::Pcm, kCodecCapPcm, &makePcm},
+#if defined(SQUEEZE2RAOP2_WITH_MP3)
+        {StreamFormat::Mp3, kCodecCapMp3, &makeMp3},
+#endif
 #if defined(SQUEEZE2RAOP2_WITH_AAC)
         {StreamFormat::Aac, kCodecCapAac, &makeAac},
 #endif

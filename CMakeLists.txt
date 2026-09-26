@@ -55,6 +55,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(SQUEEZE2RAOP2_BUILD_TESTS "build squeeze2raop2 unit tests" ON)
+option(SQUEEZE2RAOP2_WITH_MP3 "integrate the vendored minimp3 MP3 decoder" ON)
 option(SQUEEZE2RAOP2_WITH_AAC "integrate the vendored libxaac AAC decoder" ON)
 option(SQUEEZE2RAOP2_WITH_OGG "integrate the vendored stb_vorbis Ogg decoder" ON)
 option(SQUEEZE2RAOP2_WITH_OPUS "integrate the vendored libogg/libopus Ogg Opus decoder" ON)
@@ -198,6 +199,17 @@ if(SQUEEZE2RAOP2_WITH_OGG)
   target_include_directories(squeeze2raop2_stb_vorbis PUBLIC third_party/stb)
 endif()
 
+# MP3 decoder sources, added to the core only when minimp3 is enabled.
+set(SQUEEZE2RAOP2_MP3_SOURCES "")
+if(SQUEEZE2RAOP2_WITH_MP3)
+  if(NOT EXISTS "${CMAKE_SOURCE_DIR}/third_party/minimp3/minimp3.h")
+    message(FATAL_ERROR
+      "SQUEEZE2RAOP2_WITH_MP3 is ON but third_party/minimp3 is missing. "
+      "Run: git submodule update --init --recursive")
+  endif()
+  set(SQUEEZE2RAOP2_MP3_SOURCES src/playback/decoder/mp3_decoder.cpp)
+endif()
+
 # AAC decoder sources, added to the core only when libxaac is enabled.
 set(SQUEEZE2RAOP2_AAC_SOURCES "")
 if(SQUEEZE2RAOP2_WITH_AAC)
@@ -262,17 +274,23 @@ add_library(squeeze2raop2_core STATIC
   # decoder
   src/playback/decoder/decoder.cpp
   src/playback/decoder/buffered_decoder.cpp
-  src/playback/decoder/mp3_decoder.cpp
   src/playback/decoder/pcm_decoder.cpp
+  ${SQUEEZE2RAOP2_MP3_SOURCES}
   ${SQUEEZE2RAOP2_AAC_SOURCES}
   ${SQUEEZE2RAOP2_OGG_SOURCES}
   ${SQUEEZE2RAOP2_OPUS_SOURCES}
 )
 target_include_directories(squeeze2raop2_core PUBLIC
-  ${CMAKE_BINARY_DIR}/generated src third_party/minimp3)
+  ${CMAKE_BINARY_DIR}/generated src)
+if(SQUEEZE2RAOP2_WITH_MP3)
+  target_include_directories(squeeze2raop2_core PUBLIC third_party/minimp3)
+endif()
 target_link_libraries(squeeze2raop2_core PUBLIC Threads::Threads squeeze2raop2_apple_mdns)
 squeeze2raop2_target_settings(squeeze2raop2_core)
 target_link_libraries(squeeze2raop2_core PUBLIC raop_sender)
+if(SQUEEZE2RAOP2_WITH_MP3)
+  target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_MP3=1)
+endif()
 if(SQUEEZE2RAOP2_WITH_AAC)
   target_link_libraries(squeeze2raop2_core PUBLIC libxaacdec)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_AAC=1)
