@@ -159,6 +159,12 @@ if(SQUEEZE2RAOP2_WITH_OPUS)
   add_subdirectory(cmake/opus EXCLUDE_FROM_ALL)
 endif()
 
+# libsamplerate: the AirPlay output-clock resampler. Required, not optional:
+# every decoder emits at its native rate and the pipeline resamples to 44100,
+# so a build without it cannot feed the sender. Built through
+# cmake/libsamplerate so its directory-scoped CMake state stays isolated.
+add_subdirectory(cmake/libsamplerate EXCLUDE_FROM_ALL)
+
 add_library(squeeze2raop2_apple_mdns STATIC
   third_party/mDNSResponder/mDNSPosix/mDNSPosix.c
   third_party/mDNSResponder/mDNSPosix/mDNSUNP.c
@@ -266,6 +272,7 @@ add_library(squeeze2raop2_core STATIC
   src/playback/volume_map.cpp
   src/playback/ring_telemetry.cpp
   src/playback/stream_counters.cpp
+  src/playback/resampler.cpp
   src/playback/volume_controller.cpp
   src/playback/playback_stream.cpp
   src/playback/slimproto_session.cpp
@@ -290,6 +297,7 @@ endif()
 target_link_libraries(squeeze2raop2_core PUBLIC Threads::Threads squeeze2raop2_apple_mdns)
 squeeze2raop2_target_settings(squeeze2raop2_core)
 target_link_libraries(squeeze2raop2_core PUBLIC raop_sender)
+target_link_libraries(squeeze2raop2_core PUBLIC squeeze2raop2_samplerate)
 if(SQUEEZE2RAOP2_WITH_MP3)
   target_compile_definitions(squeeze2raop2_core PUBLIC SQUEEZE2RAOP2_WITH_MP3=1)
 endif()

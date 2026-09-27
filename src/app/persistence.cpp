@@ -333,6 +333,17 @@ bool Persistence::parseGlobalKey(std::string_view key, std::string_view value, i
         global_.tlsVerify = b;
     } else if (key == kKeyTlsCa) {
         global_.tlsCaPath = std::string(value);
+    } else if (key == kKeyResamplerQuality) {
+        if (value == kResamplerBest)
+            global_.resamplerQuality = ResamplerQuality::Best;
+        else if (value == kResamplerMedium)
+            global_.resamplerQuality = ResamplerQuality::Medium;
+        else if (value == kResamplerFast)
+            global_.resamplerQuality = ResamplerQuality::Fast;
+        else if (value == kResamplerLinear)
+            global_.resamplerQuality = ResamplerQuality::Linear;
+        else
+            return set.fail("resampler-quality must be best, medium, fast or linear");
     } else if (key == kKeyLog) {
         if (value == "off")
             global_.logLevel = log::Level::Off;
@@ -583,6 +594,8 @@ void Persistence::writeTemplate() {
         << "\n"
            "# tls-verify = on\n"
            "# tls-ca = /etc/ssl/certs/ca-certificates.crt\n"
+        << "# " << kKeyResamplerQuality << " = " << kResamplerMedium
+        << "   (best|medium|fast|linear)\n"
         << kKeyLog << " = info\n"
         << kKeyAutoRegister << " = on\n"
         << "# " << kKeyVolumeFeedback

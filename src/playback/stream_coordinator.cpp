@@ -16,6 +16,7 @@ namespace squeeze2raop2 {
 StreamCoordinator::StreamCoordinator(AirplayOutput& output, StreamCounters& counters,
                                      SlimProtoSession& link, VolumeController& volume,
                                      uint32_t sourceTimeoutMs, bool paceRealtime,
+                                     ResamplerQuality resamplerQuality,
                                      std::optional<std::string> sinkPath)
     : output_(output),
       counters_(counters),
@@ -23,6 +24,7 @@ StreamCoordinator::StreamCoordinator(AirplayOutput& output, StreamCounters& coun
       volume_(volume),
       sourceTimeoutMs_(sourceTimeoutMs),
       paceRealtime_(paceRealtime),
+      resamplerQuality_(resamplerQuality),
       sinkPath_(std::move(sinkPath)) {}
 
 StreamCoordinator::~StreamCoordinator() { shutdown(); }
@@ -82,8 +84,8 @@ void StreamCoordinator::onStreamStart(const StrmStart& st) {
         log::info(log::Area::Ses, "stream GET {}:{} icy={}", host, port, icy);
     else
         log::info(log::Area::Ses, "stream GET {}:{} host={} icy={}", host, port, hostName, icy);
-    track_ = std::make_unique<PlaybackStream>(output_, counters_, paceRealtime_, sinkPath_,
-                                              sourceTimeoutMs_);
+    track_ = std::make_unique<PlaybackStream>(output_, counters_, paceRealtime_, resamplerQuality_,
+                                              sinkPath_, sourceTimeoutMs_);
     track_->setMetaForward([this](std::string_view block) { link_.meta(block); });
     track_->setDecoderReady([this] { onDecoderReady(); });
     track_->setUnderrun([this] { link_.stat(kStatUnderrun); });
@@ -196,8 +198,8 @@ void StreamCoordinator::maybeStartPump() {
 }
 
 // First decoded chunk: announce decoder readiness (STMl for autostart 0) and,
-// with no AirPlay target, the track start (STMs) since the prebuffer gate is
-// disabled.
+// with no AirPlay target, the track start (STMs) since there is nothing to
+// launch.
 void StreamCoordinator::onDecoderReady() {
     if (autostart_.load() == kAutostartDecoderReady && !sentStml_) {
         sentStml_ = true;
@@ -209,9 +211,9 @@ void StreamCoordinator::onDecoderReady() {
     }
 }
 
-// The prebuffer gate opened: the receiver output is about to start (STMs) and
-// the sender is launched with the current volume.
-void StreamCoordinator::onPrebufferReady() {
+// The first decoded audio reached the ring: the receiver output is about to
+// start (STMs) and the sender is launched with the current volume.
+void StreamCoordinator::onOutputReady() {
     if (!sentStms_) {
         sentStms_ = true;
         link_.stat(kStatStart);
@@ -247,18 +249,17 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
             streamActive_.store(false);
             return;
         }
-        // (input rate is applied inside prepare(); the only later setInputRate
-        // is the track's mid-stream format-adoption update)
+        // The pipeline output is always the 44.1 kHz AirPlay clock, applied
+        // inside prepare().
         if (fmt.channels != kDefaultChannels)
             log::warn(log::Area::Ses, "input is {}-channel; bridges Apple receivers expect stereo",
                       fmt.channels);
     }
 
     // Streaming phase: re-entered after a single transparent receiver-loss
-    // retry. Each pass re-arms the prebuffer gate because a retry creates a
-    // fresh ring.
+    // retry. Each pass re-arms the launch because a retry creates a fresh ring.
     for (;;) {
-        const PlaybackStream::End end = track_->run(st, [this] { onPrebufferReady(); });
+        const PlaybackStream::End end = track_->run(st, [this] { onOutputReady(); });
         if (end == PlaybackStream::End::DecodeError) link_.stat(kStatError);
 
         const bool keepSession = flushed_.exchange(false);
@@ -295,7 +296,7 @@ void StreamCoordinator::streamLoop(std::stop_token st) {
             if (output_.prepare(track_->format().sampleRate)) {
                 track_->reapplyNowPlaying();
                 // The HTTP source stays open across a receiver restart, so loop
-                // back into the read phase (with a fresh prebuffer).
+                // back into the read phase (with a fresh ring and launch).
                 log::info(log::Area::Ap, "receiver session re-established; resuming stream");
                 continue;
             }

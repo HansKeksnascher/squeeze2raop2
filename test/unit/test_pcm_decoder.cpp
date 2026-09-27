@@ -94,7 +94,7 @@ SQ2_TEST(pcm_decoder, wav_decode) {
     const std::vector<int16_t> samples{100, -200, 3000, -4000, 12345, -12345};
     auto wav = wavWithSamples(samples);
 
-    PcmDecoder dec(PcmFormat{}, 0);  // 0 = adopt the source rate
+    PcmDecoder dec(PcmFormat{});
     dec.feed(std::as_bytes(std::span{wav}));
     std::vector<int16_t> out(samples.size() * 2 + 8, 0);
     const size_t n = dec.drain(out);
@@ -119,7 +119,7 @@ SQ2_TEST(pcm_decoder, raw_s16_be_stereo) {
     raw[2] = static_cast<std::byte>(0xAB);
     raw[3] = static_cast<std::byte>(0xCD);
 
-    PcmDecoder dec(PcmFormat{44100, 16, 2, true}, 0);
+    PcmDecoder dec(PcmFormat{44100, 16, 2, true});
     dec.feed(std::as_bytes(std::span{raw}));
     std::vector<int16_t> out(kProbe, 0);
     const size_t n = dec.drain(out);
@@ -135,7 +135,7 @@ SQ2_TEST(pcm_decoder, raw_s16_be_mono) {
     raw[0] = static_cast<std::byte>(0x12);
     raw[1] = static_cast<std::byte>(0x34);
 
-    PcmDecoder dec(PcmFormat{44100, 16, 1, true}, 0);
+    PcmDecoder dec(PcmFormat{44100, 16, 1, true});
     dec.feed(std::as_bytes(std::span{raw}));
     std::vector<int16_t> out(kProbe, 0);
     dec.drain(out);
@@ -153,7 +153,7 @@ SQ2_TEST(pcm_decoder, raw_s24_le_stereo) {
     raw[4] = static_cast<std::byte>(0xCD);
     raw[5] = static_cast<std::byte>(0xAB);
 
-    PcmDecoder dec(PcmFormat{44100, 24, 2, false}, 0);
+    PcmDecoder dec(PcmFormat{44100, 24, 2, false});
     dec.feed(std::as_bytes(std::span{raw}));
     std::vector<int16_t> out(kProbe, 0);
     dec.drain(out);
@@ -173,7 +173,7 @@ SQ2_TEST(pcm_decoder, raw_s24_be_stereo) {
     raw[4] = static_cast<std::byte>(0xCD);
     raw[5] = static_cast<std::byte>(0xEF);
 
-    PcmDecoder dec(PcmFormat{44100, 24, 2, true}, 0);
+    PcmDecoder dec(PcmFormat{44100, 24, 2, true});
     dec.feed(std::as_bytes(std::span{raw}));
     std::vector<int16_t> out(kProbe, 0);
     dec.drain(out);
@@ -205,7 +205,7 @@ std::vector<std::byte> rawRamp(size_t frames) {
 SQ2_TEST(pcm_decoder, rate_stage_bypass_bit_exact) {
     constexpr size_t kFrames = 4000;
     const auto raw = rawRamp(kFrames);
-    PcmDecoder dec(PcmFormat{44100, 16, 2, false}, 44100);
+    PcmDecoder dec(PcmFormat{44100, 16, 2, false});
     dec.feed(std::as_bytes(std::span{raw}));
 
     std::vector<int16_t> out(kFrames * 2, 0);
@@ -218,54 +218,10 @@ SQ2_TEST(pcm_decoder, rate_stage_bypass_bit_exact) {
                "bypass passthrough");
 }
 
-// Engaged, the stage consumes rateStep_ source frames per output frame via
-// linear interpolation. Pin the output against an independent reference over
-// the whole run, which catches a broken phase/compaction across the internal
-// kChunkFrames boundaries.
-SQ2_TEST(pcm_decoder, rate_stage_interpolates) {
-    constexpr size_t kFrames = 4000;
-    const auto raw = rawRamp(kFrames);
-    PcmDecoder dec(PcmFormat{44100, 16, 2, false}, 44100);
-    dec.feed(std::as_bytes(std::span{raw}));
-    dec.setSourceRate(44100.0 * 1.01);
-    // Mirror PcmDecoder::setSourceRate's clamp so the reference phase matches
-    // the implementation bit-for-bit (1.01 is not exact in binary).
-    const double kStep = std::clamp(44100.0 * 1.01 / 44100.0, 0.99, 1.01);
-
-    std::vector<int16_t> out(kFrames * 2 + 4096, 0);
-    const size_t n = dec.drain(out);
-    expect(!dec.hasError(), "regulated no error");
-    require(n > 0, "regulated produced samples");
-
-    // Independent reference over the same interpolation. Phase accumulation is
-    // compared with a small tolerance: the implementation accumulates per
-    // kChunkFrames chunk (adding then subtracting the consumed integer part),
-    // which can differ from one running sum by an ulp and flip a truncation.
-    auto src0 = [](size_t k) { return static_cast<int16_t>(static_cast<int>(k) - 2000); };
-    size_t produced = 0;
-    double phase = 0.0;
-    while (static_cast<size_t>(phase) + 1 < kFrames && produced * 2 + 1 < n) {
-        const size_t i0 = static_cast<size_t>(phase);
-        const double frac = phase - static_cast<double>(i0);
-        const int16_t a0 = src0(i0), b0 = src0(i0 + 1);
-        const int16_t a1 = static_cast<int16_t>(-a0), b1 = static_cast<int16_t>(-b0);
-        const double e0 = a0 + (b0 - a0) * frac;
-        const double e1 = a1 + (b1 - a1) * frac;
-        expect(std::abs(out[produced * 2] - e0) <= 2.0, "regulated lerp ch0");
-        expect(std::abs(out[produced * 2 + 1] - e1) <= 2.0, "regulated lerp ch1");
-        ++produced;
-        phase += kStep;
-    }
-    // The output should shrink by ~1/step; allow a couple of frames of slack.
-    const size_t expected = static_cast<size_t>(static_cast<double>(kFrames - 1) / kStep) + 1;
-    expect(n / 2 + 2 >= expected && n / 2 <= expected + 2,
-           "regulated emits the interpolated count");
-}
-
 SQ2_TEST(pcm_decoder, aiff_header) {
     auto aiff = aiffHeader();
 
-    PcmDecoder dec(PcmFormat{}, 0);
+    PcmDecoder dec(PcmFormat{});
     dec.feed(std::as_bytes(std::span{aiff}));
     std::vector<int16_t> out(64, 0);
     (void)dec.drain(out);
@@ -289,7 +245,7 @@ SQ2_TEST(pcm_decoder, aiff_truncated_comm_fails_closed) {
     putBe32(buf.data() + 16, static_cast<uint32_t>(off - 20));  // 12 + len + 8 = off
     putTag(buf.data() + off, "COMM");
 
-    PcmDecoder dec(PcmFormat{}, 0);
+    PcmDecoder dec(PcmFormat{});
     dec.feed(std::as_bytes(std::span{buf}));
     std::vector<int16_t> out(64, 0);
     (void)dec.drain(out);

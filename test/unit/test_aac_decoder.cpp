@@ -41,23 +41,23 @@ void expectDecoded(Decoder& dec, const std::vector<int16_t>& pcm, const char* ta
 
 SQ2_TEST(aac_decoder, factory_and_fallback) {
     const PcmFormat in{44100, 16, 2, false};
-    auto adts = Decoder::create(StreamFormat::Aac, in, 0, '2');
+    auto adts = Decoder::create(StreamFormat::Aac, in, '2');
     require(adts != nullptr, "aac adts factory");
     // Before the first frame there is no decoded rate: fall back to the input.
     expect(adts->format().sampleRate == 44100, "aac pre-frame fallback");
     expect(!adts->valid(), "aac not valid before a frame");
 
-    auto mp4 = Decoder::create(StreamFormat::Aac, in, 0, '5');
+    auto mp4 = Decoder::create(StreamFormat::Aac, in, '5');
     require(mp4 != nullptr, "aac mp4 factory");
 
     // ADIF / LATM transports are not supported.
-    auto adif = Decoder::create(StreamFormat::Aac, in, 0, '1');
+    auto adif = Decoder::create(StreamFormat::Aac, in, '1');
     require(adif != nullptr, "aac adif factory constructs");
     expect(adif->hasError(), "aac adif rejected");
 }
 
 SQ2_TEST(aac_decoder, adts_decodes_tone) {
-    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '2');
+    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, '2');
     require(dec != nullptr, "aac factory");
     dec->feed(std::span{kFixtureAac});
     dec->finish();
@@ -67,7 +67,7 @@ SQ2_TEST(aac_decoder, adts_decodes_tone) {
 }
 
 SQ2_TEST(aac_decoder, adts_chunked_feed) {
-    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '2');
+    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, '2');
     require(dec != nullptr, "aac factory");
     const std::span<const std::byte> all{kFixtureAac};
     constexpr size_t kChunk = 137;  // deliberately not frame-aligned
@@ -87,7 +87,7 @@ SQ2_TEST(aac_decoder, adts_chunked_long_stream) {
     // Mirror the HTTP reader's ~4 KB chunks over a long concatenated stream.
     std::vector<std::byte> big;
     for (int i = 0; i < 200; ++i) big.insert(big.end(), kFixtureAac.begin(), kFixtureAac.end());
-    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '2');
+    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, '2');
     require(dec != nullptr, "aac factory");
     std::vector<int16_t> pcm;
     constexpr size_t kChunk = 4096;
@@ -105,7 +105,7 @@ SQ2_TEST(aac_decoder, adts_chunked_long_stream) {
 }
 
 SQ2_TEST(aac_decoder, mp4_demux_decodes_tone) {
-    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, 0, '5');
+    auto dec = Decoder::create(StreamFormat::Aac, PcmFormat{44100, 16, 2, false}, '5');
     require(dec != nullptr, "aac mp4 factory");
     dec->feed(std::span{kFixtureM4a});
     dec->finish();

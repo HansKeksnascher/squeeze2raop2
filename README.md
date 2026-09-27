@@ -54,7 +54,7 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
 Linux, CMake ≥ 3.16, C++20:
 
 ```sh
-git submodule update --init --recursive   # sender, mDNSResponder, mbedtls, minimp3, stb, libxaac, libogg, libopus
+git submodule update --init --recursive   # sender, mDNSResponder, mbedtls, minimp3, stb, libxaac, libogg, libopus, libsamplerate
 cmake -B build
 cmake --build build -j
 ```
@@ -88,6 +88,7 @@ log       = debug
 # source-timeout-ms = 15000     # end a stream silent for this long (0 = off)
 # tls-verify = on               # verify direct https stream certificates
 # tls-ca = /etc/ssl/certs/ca-certificates.crt   # override the trust store
+# resampler-quality = medium    # best|medium|fast|linear (decoders -> 44.1 kHz)
 
 [default]                       # inherited by every player, then overridden
 volume-map = -30:1, -23:16, -15:50, 0:100
@@ -116,7 +117,8 @@ credentials persist. The program rewrites only the machine-managed `mac`,
 ## Runtime requirements
 
 The dynamically linked binary needs only the GNU C/C++ runtime. The vendored
-sender, mbedTLS, mDNSResponder, minimp3, stb_vorbis, libxaac, libogg and libopus
+sender, mbedTLS, mDNSResponder, minimp3, stb_vorbis, libxaac, libogg, libopus
+and libsamplerate
 are all linked in statically, so there is **no** Avahi/D-Bus, ALSA/PulseAudio or
 external TLS library dependency. The `-static` artifact is a musl build, so it
 carries no runtime libraries at all. Any decoder can be dropped at configure
@@ -155,6 +157,7 @@ Vendored as git submodules under `third_party/`; each keeps its own license.
 | [libopus](https://github.com/xiph/opus) | Ogg Opus decoder | BSD-3-Clause |
 | [libxaac](https://github.com/ittiam-systems/libxaac) | AAC-LC/HE-AAC decoder (ADTS + MP4 demux) | Apache-2.0 |
 | [Mbed-TLS/mbedtls](https://github.com/Mbed-TLS/mbedtls) | crypto underneath the sender + the direct-stream HTTPS client | Apache-2.0 |
+| [libsndfile/libsamplerate](https://github.com/libsndfile/libsamplerate) | band-limited resampling of every decoder to the 44.1 kHz AirPlay clock | BSD-2-Clause |
 
 ## Credits
 

@@ -17,6 +17,7 @@ add_executable(squeeze2raop2_tests
   unit/test_byte_order.cpp
   unit/test_pcm_decoder.cpp
   unit/test_decoder.cpp
+  unit/test_resampler.cpp
   unit/test_aac_decoder.cpp
   unit/test_ogg_decoder.cpp
   unit/test_opus_decoder.cpp
@@ -40,7 +41,7 @@ set_tests_properties(unit PROPERTIES LABELS unit)
 
 # Per-suite cases for `ctest -j` / `-R`, all sharing the one binary.
 foreach(s util config persistence debug_wav_sink slimproto_wire lms_stream volume_map
-          volume_controller device_registry byte_order pcm_decoder decoder ring_telemetry icy_meta
+          volume_controller device_registry byte_order pcm_decoder decoder resampler ring_telemetry icy_meta
           stream_counters exit_policy mdns_names playback_stream log aac_decoder ogg_decoder
           opus_decoder remote_event airplay_output ptp stream_coordinator slimproto_session)
   add_test(NAME unit_${s} COMMAND squeeze2raop2_tests --filter ${s})

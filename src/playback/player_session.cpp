@@ -28,7 +28,7 @@ PlayerSession::PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig
         [this] { return slim_->alive(); }, [this](uint32_t code) { slim_->button(code); });
     stream_ = std::make_unique<StreamCoordinator>(*output_, counters_, *slim_, *volume_,
                                                   global.sourceTimeoutMs, cfg.paceRealtime,
-                                                  std::move(sinkPath));
+                                                  global.resamplerQuality, std::move(sinkPath));
 }
 
 PlayerSession::~PlayerSession() { stop(); }

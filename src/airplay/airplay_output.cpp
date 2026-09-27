@@ -88,11 +88,6 @@ void AirplayOutput::updateTarget(RaopTarget target) {
     target_ = std::move(target);
 }
 
-void AirplayOutput::setInputRate(uint32_t rate) {
-    auto player = snapshot();
-    if (player) player->setInputRate(rate);
-}
-
 void AirplayOutput::pump(std::chrono::milliseconds maxWait) {
     auto player = snapshot();
     if (player) player->pump(maxWait);

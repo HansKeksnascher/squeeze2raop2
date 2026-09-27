@@ -4,6 +4,7 @@
 #include "lms/lms_stream.h"
 #include "lms/slimproto_protocol.h"
 #include "playback/decoder/decoder.h"
+#include "playback/resampler.h"
 #include "playback/ring_telemetry.h"
 #include "playback/stream_counters.h"
 #include "playback/volume_map.h"
@@ -38,8 +39,8 @@ enum class DisconnectCode : std::uint8_t {
 };
 
 // One track's playback pipeline: HTTP source read + Decoder drive + optional
-// PCM sink, with the startup prebuffer gate, the pause drain, replay gain,
-// fades, skip-ahead and the realtime pacer. Mechanism only — the session owns
+// PCM sink, with the pause drain, replay gain, fades, skip-ahead and the
+// realtime pacer. Mechanism only — the session owns
 // the retry/flush policy and the LMS-facing STATs, and drives run() from its
 // stream thread. All methods run on the stream thread except
 // pause()/unpause()/skipAhead()/requestFadeOut()/interrupt().
@@ -56,7 +57,8 @@ public:
     };
 
     PlaybackStream(AirplayOutput& output, StreamCounters& counters, bool paceRealtime,
-                   std::optional<std::string> sinkPath, uint32_t sourceTimeoutMs = 0);
+                   ResamplerQuality resamplerQuality, std::optional<std::string> sinkPath,
+                   uint32_t sourceTimeoutMs = 0);
     ~PlaybackStream();
     PlaybackStream(const PlaybackStream&) = delete;
     PlaybackStream& operator=(const PlaybackStream&) = delete;
@@ -71,12 +73,12 @@ public:
     // from startStream() or, for 'codc' streams, from the codc handler.
     bool attachDecoder(StreamFormat format, const PcmParams& pcm, std::string& error);
 
-    // One pump pass: prebuffer gate, pause drain, read/decode/push, pacing.
-    // Returns when the track ends or a stop is requested, and is re-entered
-    // after a receiver-loss retry (the HTTP source stays open). The callback
-    // fires once the ring reaches half capacity, so the session can launch the
-    // sender and apply the volume.
-    End run(std::stop_token st, const std::function<void()>& onPrebufferReady);
+    // One pump pass: pause drain, read/decode/push, launch, pacing. Returns
+    // when the track ends or a stop is requested, and is re-entered after a
+    // receiver-loss retry (the HTTP source stays open). The callback fires once
+    // the first decoded audio is queued, so the session can launch the sender
+    // and apply the volume.
+    End run(std::stop_token st, const std::function<void()>& onOutputReady);
 
     // Set/clear a pause deadline (session callbacks, reader thread).
     void pause(uint32_t ms);
@@ -92,7 +94,9 @@ public:
     // Close the sink and the source (idempotent).
     void close();
 
-    // Decoder output format (defaults until the decoder is attached).
+    // Pipeline output format: the AirPlay clock (44100 Hz s16 stereo) once a
+    // decoder is attached; empty before that. The decoder's native rate is
+    // internal (the resampler input).
     PcmFormat format() const;
 
     DisconnectCode disconnectCode() const { return disconnect_; }
@@ -114,8 +118,12 @@ private:
               DebugWavSink* sink, bool toOutput = true);
     // Drop queued skip frames from one chunk; returns the played drop count.
     size_t consumeSkip(size_t frames);
-    // Apply replay gain + the active fade to an s16 chunk in scratch.
-    std::span<const int16_t> applyGainFade(std::span<const int16_t> chunk, const PcmFormat& fmt);
+    // Apply replay gain + the active fade to a float chunk in scratch.
+    std::span<const float> applyGainFade(std::span<const float> pcm, const PcmFormat& fmt);
+    // Round/saturate the float output to interleaved s16 in scratch.
+    std::span<const int16_t> clampToS16(std::span<const float> pcm);
+    // The fixed pipeline output format (AirPlay clock).
+    PcmFormat outputFormat() const;
     // Ring-occupancy telemetry + the 10 s source-rate regulation boundary.
     void sampleRingTelemetry();
 
@@ -126,7 +134,13 @@ private:
 
     HttpStreamReader reader_;
     std::unique_ptr<Decoder> decoder_;
+    std::unique_ptr<Resampler> resampler_;
     std::unique_ptr<DebugWavSink> sink_;
+    // Pipeline clock/quality: decoders emit at their native rate and the
+    // resampler converts to outputRate_ (the AirPlay clock).
+    ResamplerQuality resamplerQuality_ = ResamplerQuality::Medium;
+    uint32_t outputRate_ = kDefaultSampleRate;
+    uint32_t sourceRate_ = 0;  // decoder native rate feeding the resampler
     RingTelemetry ringTelemetry_;
     std::atomic<uint64_t> pauseUntilMs_{0};
     std::atomic<uint64_t> skipFrames_{0};
@@ -160,7 +174,8 @@ private:
     uint32_t fadeInDur_ = 0;
     uint64_t fadeOutFrames_ = 0;
     uint32_t fadeOutDur_ = 0;
-    std::vector<int16_t> gainScratch_;
+    std::vector<float> gainScratch_;
+    std::vector<int16_t> outScratch_;
 
     bool decoderReadyFired_ = false;
     bool underrunFired_ = false;
@@ -193,7 +208,6 @@ inline bool outputUnderrun(bool running, size_t queued) { return running && queu
 
 constexpr size_t kReadBufferBytes = 4096;     // source read buffer
 constexpr uint32_t kReadPollTimeoutMs = 150;  // HTTP read poll timeout
-constexpr size_t kPrebufferDivisor = 2;       // prebuffer gate = ring / N
 constexpr uint32_t kPauseSliceMs = 25;        // max pause-wait slice
 constexpr uint32_t kUnderrunWindowMs = 1000;  // sustained-empty window -> STMo
 constexpr uint32_t kPacerLeadMs = 60;         // pacer sleep headroom

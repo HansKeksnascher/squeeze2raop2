@@ -10,6 +10,7 @@
 #include "airplay/raop_types.h"
 #include "common/log.h"
 #include "lms/slimproto_protocol.h"
+#include "playback/resampler.h"
 #include "playback/volume_map.h"
 
 namespace squeeze2raop2 {
@@ -28,6 +29,7 @@ constexpr bool kDefaultDiscovery = true;
 constexpr bool kDefaultAutoRegister = true;
 constexpr bool kDefaultVolumeFeedback = true;
 constexpr bool kDefaultTlsVerify = true;
+constexpr ResamplerQuality kDefaultResamplerQuality = ResamplerQuality::Medium;
 constexpr const char* kDefaultConfigPath = "squeeze2raop2.conf";
 
 // Accepted ranges for persisted numeric settings.
@@ -59,6 +61,7 @@ constexpr const char* kKeyServerTimeoutMs = "server-timeout-ms";
 constexpr const char* kKeySourceTimeoutMs = "source-timeout-ms";
 constexpr const char* kKeyTlsVerify = "tls-verify";
 constexpr const char* kKeyTlsCa = "tls-ca";
+constexpr const char* kKeyResamplerQuality = "resampler-quality";
 constexpr const char* kKeyLog = "log";
 
 constexpr const char* kKeyId = "id";
@@ -94,6 +97,10 @@ constexpr const char* kVolumeModeLms = "lms";
 constexpr const char* kVolumeModeFixed = "fixed";
 constexpr const char* kPaceFast = "fast";
 constexpr const char* kPaceRealtime = "realtime";
+constexpr const char* kResamplerBest = "best";
+constexpr const char* kResamplerMedium = "medium";
+constexpr const char* kResamplerFast = "fast";
+constexpr const char* kResamplerLinear = "linear";
 
 enum class VolumeMode {
     Lms,    // follow the LMS slider: the AUDG-recovered slider percent passes
@@ -125,6 +132,8 @@ struct GlobalConfig {
     // Report receiver-initiated volume changes (HomePod/Sonos volume buttons)
     // back to LMS by nudging its volume mixer. Off disables the feedback.
     bool volumeFeedback = kDefaultVolumeFeedback;
+    // Quality of the decoders' native rate -> 44100 conversion.
+    ResamplerQuality resamplerQuality = kDefaultResamplerQuality;
 
     std::string configPath = kDefaultConfigPath;
 };

@@ -194,3 +194,18 @@ def wav_peak(path, skip_s=0.0, take_s=None, rate=44100, channels=2):
     a = array.array("h")
     a.frombytes(body)
     return max(abs(x) for x in a)
+
+
+def wav_sample_rate(path):
+    """Sample rate from a canonical 16-bit PCM WAV's fmt chunk (0 if absent).
+
+    The sink captures the pipeline output, so this must be the 44.1 kHz AirPlay
+    clock even when the source decoder ran at its native rate (e.g. 48k Opus).
+    """
+    import struct
+
+    data = Path(path).read_bytes()
+    idx = data.find(b"fmt ")
+    if idx < 0 or idx + 16 > len(data):
+        return 0
+    return struct.unpack_from("<I", data, idx + 12)[0]

@@ -21,9 +21,8 @@ namespace squeeze2raop2 {
 //     returning 0 while hasError() is sticky aborts the stream;
 //   - finish() signals end of input so tail frames flush (e.g. MP3); the
 //     default is a no-op for formats with no decoder tail.
-// The base also carries the two pipeline-cadence pieces every decoder shares
-// and neither is format-specific: the 1152-frame chunk buffer behind
-// nextChunk() and the PCM source-rate regulator (regulateRate()).
+// The base also carries the 1152-frame chunk buffer behind nextChunk(); the
+// rate conversion to the AirPlay output clock lives in playback/resampler.h.
 class Decoder {
 public:
     virtual ~Decoder() = default;
@@ -50,28 +49,14 @@ public:
     // still use drain() directly.
     std::span<const int16_t> nextChunk();
 
-    // PCM source-rate regulation, driven once per telemetry window with the
-    // source bytes received over it and the current output-ring occupancy.
-    // Returns the applied source rate (0 = pass-through). No-op for decoders
-    // without an active rate stage.
-    double regulateRate(uint64_t receivedBytes, size_t queued, uint64_t windowMs);
-    // True while the source-rate stage is stretching/shrinking (the emitted
-    // timeline then runs ahead of the source; the pacer stands down).
-    bool regulating() const { return pcmAppliedRate_ != 0.0; }
-
-    // Tell the decoder the measured real-time input rate (frames/s) so it can
-    // regulate its output to the pipeline's target clock. No-op for decoders
-    // without a rate stage.
-    virtual void setSourceRate(double framesPerSecond) { (void)framesPerSecond; }
-
     // Factory for the supported stream formats; nullptr for others (the
     // strm guard already rejects them, so this is a closed-world helper).
-    // `outputRate` is the pipeline's target output clock (0 = no rate
-    // regulation; the AirPlay pipeline passes 44100). `containerCode` is the
-    // LMS pcm_sample_size byte for AAC transports ('2' ADTS, '5' MP4) and is
-    // ignored by every other format.
+    // Decoders emit at their native rate; the pipeline resamples to the
+    // AirPlay output clock. `containerCode` is the LMS pcm_sample_size byte
+    // for AAC transports ('2' ADTS, '5' MP4) and is ignored by every other
+    // format.
     static std::unique_ptr<Decoder> create(StreamFormat format, const PcmFormat& in,
-                                           uint32_t outputRate, uint8_t containerCode = 0);
+                                           uint8_t containerCode = 0);
 
 protected:
     explicit Decoder(const PcmFormat& input);
@@ -80,8 +65,6 @@ protected:
 
     // The decoder's own output format (pre-fallback); subclasses implement it.
     virtual PcmFormat decodedFormat() const = 0;
-    // True for decoders with an active source-rate stage (PCM with a target).
-    virtual bool regulatesRate() const { return false; }
 
     // Interleaved s16 stereo at the decoder's decoded rate/channels — the
     // output shape every native decoder produces.
@@ -103,9 +86,6 @@ private:
     std::array<int16_t, 1152 * 2> chunk_{};
     PcmFormat input_;  // fallback format until the decoder is valid
     size_t inputFrameBytes_ = 4;
-    // PCM source-rate regulation.
-    uint64_t pcmWindowReceivedBytes_ = 0;
-    double pcmAppliedRate_ = 0.0;
 };
 
 // Codec HELO capability tokens (the LMS caps vocabulary).
@@ -115,20 +95,6 @@ constexpr const char* kCodecCapAac = "aac";
 constexpr const char* kCodecCapOgg = "ogg";
 constexpr const char* kCodecCapOpus = "ops";
 
-// PCM output-rate regulation thresholds (see Decoder::regulateRate): the
-// decoder measures the source fps and nudges a resample step so a source that
-// under/over-delivers cannot drain the AirPlay ring.
-constexpr double kRegulationNominalRate = 44100.0;
-constexpr double kRegulationMinWindowSec = 5.0;
-constexpr double kRegulationSanityLo = 0.95;  // reject a stall/burst measurement
-constexpr double kRegulationSanityHi = 1.05;
-constexpr size_t kRegulationPrebufferBytes = 131072;
-constexpr double kRegulationOverdrive = 1.002;
-constexpr double kRegulationEngage = 44.0;   // ~0.1% deviation: start regulating
-constexpr double kRegulationRelease = 20.0;  // ~0.045%: back to pass-through
-constexpr double kRegulationRefresh = 2.0;   // min target change before re-applying
-constexpr double kRegulationPpmScale = 1e6;  // fraction -> ppm for logs
-
 // One decodable stream format: its LMS HELO capability token and the factory
 // that builds its decoder for Decoder::create(). The list in decoder.cpp is
 // the single place a codec is enabled/disabled (build-gated): the factory, the
@@ -137,8 +103,7 @@ constexpr double kRegulationPpmScale = 1e6;  // fraction -> ppm for logs
 struct CodecInfo {
     StreamFormat format;
     const char* capToken;
-    std::unique_ptr<Decoder> (*create)(const PcmFormat& in, uint32_t outputRate,
-                                       uint8_t containerCode);
+    std::unique_ptr<Decoder> (*create)(const PcmFormat& in, uint8_t containerCode);
 };
 
 // Formats this build can decode, in advertised order: pcm, then any enabled

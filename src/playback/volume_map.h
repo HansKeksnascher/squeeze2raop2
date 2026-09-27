@@ -121,17 +121,16 @@ private:
 // --- 16.16 fixed-point gain and fades -------------------------------------
 //
 // The pump's replay-gain and fade math (squeezelite parity). Header-only so the
-// unit suite can pin the math without pulling in the pipeline.
+// unit suite can pin the math without pulling in the pipeline. Gain is applied
+// in float (the resampler's domain); the 16.16 representation is kept for the
+// envelope and for the LMS-supplied replay gain.
 
 inline constexpr int32_t kFixedOne = 0x10000;  // 1.0 in 16.16
 constexpr int kFixedShift = 16;                // fractional bits in 16.16
 
-// squeezelite's gain(): (gain * sample) >> 16. Applied to an s16 sample the
-// result is the scaled s16 (gain 0x10000 is unity); saturate instead of
-// wrapping if replay gain boosts past full scale.
-inline int16_t applyGain16(int16_t sample, int32_t gain) {
-    const int64_t res = (static_cast<int64_t>(gain) * static_cast<int64_t>(sample)) >> kFixedShift;
-    return static_cast<int16_t>(std::clamp<int64_t>(res, -32768, 32767));
+// 16.16 fixed-point -> float amplitude.
+inline float fixedToGain(int32_t gain) {
+    return static_cast<float>(gain) / static_cast<float>(kFixedOne);
 }
 
 // Linear amplitude ramp at frame `pos` of `dur`, in 16.16. up = 0->1,
@@ -141,6 +140,17 @@ inline int32_t fadeGain16(uint32_t pos, uint32_t dur, bool up) {
     if (pos >= dur) return up ? kFixedOne : 0;
     const int32_t g = static_cast<int32_t>((static_cast<int64_t>(pos) * kFixedOne) / dur);
     return up ? g : (kFixedOne - g);
+}
+
+// libsamplerate works in normalized float [-1, 1); the pipeline keeps that
+// convention through the gain stage. Round-to-nearest, saturating normalized
+// float -> s16, mirroring libsamplerate's src_float_to_short_array so a
+// bypassed 44.1 kHz source round-trips bit-exactly.
+inline int16_t floatToS16(float v) {
+    const float scaled = v * 32768.0F;
+    if (scaled >= 32767.0F) return 32767;
+    if (scaled <= -32768.0F) return -32768;
+    return static_cast<int16_t>(std::lrintf(scaled));
 }
 
 // --- Receiver-volume chase step -------------------------------------------

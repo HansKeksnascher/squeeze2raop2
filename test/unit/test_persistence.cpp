@@ -277,6 +277,30 @@ SQ2_TEST(persistence, source_timeout_global) {
     expect(!error.empty(), "rejection carries an error message");
 }
 
+SQ2_TEST(persistence, resampler_quality_global) {
+    ScratchDir dir("resamp_q");
+    Persistence p;
+    Settings s;
+    std::string error;
+    expect(p.open(dir.file("default.conf"), s, error), "fresh open");
+    expect(s.global.resamplerQuality == squeeze2raop2::ResamplerQuality::Medium,
+           "resampler-quality defaults to medium");
+
+    const std::string path = dir.file("resamp.conf");
+    writeFile(path, "[global]\nresampler-quality = best\n");
+    Persistence p2;
+    Settings s2;
+    expect(p2.open(path, s2, error), "open resampler-quality config");
+    expect(s2.global.resamplerQuality == squeeze2raop2::ResamplerQuality::Best,
+           "resampler-quality parsed");
+
+    const std::string bad = dir.file("bad.conf");
+    writeFile(bad, "[global]\nresampler-quality = ultra\n");
+    Persistence p3;
+    Settings s3;
+    expect(!p3.open(bad, s3, error), "unknown resampler-quality rejected");
+}
+
 SQ2_TEST(persistence, rename_persisted) {
     ScratchDir dir("rename");
     const std::string path = dir.file("rename.conf");

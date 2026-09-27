@@ -60,7 +60,6 @@ public:
     void launch(double volumePct);
     void updateTarget(RaopTarget target);
 
-    void setInputRate(uint32_t rate);
     // Driver methods run on the caller's thread (see RaopPlayer::pump);
     // park()/unpark() are the between-tracks keep-alive.
     void pump(std::chrono::milliseconds maxWait = std::chrono::milliseconds(0));

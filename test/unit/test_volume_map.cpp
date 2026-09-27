@@ -122,15 +122,32 @@ SQ2_TEST(volume_map, clamp_air_volume_pct) {
 
 // --- 16.16 gain and fades (volume_map.h) -----------------------------------
 
-SQ2_TEST(volume_map, apply_gain16) {
-    expect(applyGain16(1000, kFixedOne) == 1000, "unity gain is identity");
-    expect(applyGain16(-2000, kFixedOne) == -2000, "unity keeps sign");
-    expect(applyGain16(1000, 0) == 0, "zero gain silences");
-    expect(applyGain16(1000, kFixedOne / 2) == 500, "half gain halves");
-    expect(applyGain16(1000, kFixedOne * 2) == 2000, "2x gain doubles");
-    expect(applyGain16(30000, kFixedOne * 2) == 32767, "positive overflow saturates");
-    expect(applyGain16(-30000, kFixedOne * 2) == -32768, "negative overflow saturates");
-    expect(applyGain16(32767, 0x8000) == 16383, "attenuation truncates toward zero");
+SQ2_TEST(volume_map, fixed_to_gain) {
+    expect(fixedToGain(kFixedOne) == 1.0F, "unity");
+    expect(fixedToGain(0) == 0.0F, "zero");
+    expect(fixedToGain(kFixedOne / 2) == 0.5F, "half");
+    expect(fixedToGain(kFixedOne * 2) == 2.0F, "double");
+}
+
+SQ2_TEST(volume_map, float_to_s16) {
+    constexpr float kScale = 32768.0F;
+    expect(floatToS16(0.0F) == 0, "zero");
+    expect(floatToS16(1000.0F / kScale) == 1000, "positive integer is identity");
+    expect(floatToS16(-2000.0F / kScale) == -2000, "negative integer is identity");
+    expect(floatToS16(1.0F) == 32767, "positive full scale saturates");
+    expect(floatToS16(-1.0F) == -32768, "negative full scale");
+    expect(floatToS16(2.0F) == 32767, "positive overflow saturates");
+    expect(floatToS16(-2.0F) == -32768, "negative overflow saturates");
+    expect(floatToS16(0.4F / kScale) == 0, "rounds toward zero");
+    expect(floatToS16(0.6F / kScale) == 1, "rounds up");
+    expect(floatToS16(-0.6F / kScale) == -1, "rounds down (negative)");
+    // Every s16 value survives the normalized float round-trip bit-exactly:
+    // this is what makes the resampler bypass + identity gain bit-perfect at
+    // 44.1 kHz.
+    bool exact = true;
+    for (int v = -32768; v <= 32767; ++v)
+        if (floatToS16(static_cast<float>(v) / kScale) != static_cast<int16_t>(v)) exact = false;
+    expect(exact, "s16 -> normalized float -> s16 round-trip is exact");
 }
 
 SQ2_TEST(volume_map, fade_ramp) {

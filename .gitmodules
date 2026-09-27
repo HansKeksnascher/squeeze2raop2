@@ -24,3 +24,6 @@
 [submodule "third_party/opus"]
 	path = third_party/opus
 	url = https://github.com/xiph/opus
+[submodule "third_party/libsamplerate"]
+	path = third_party/libsamplerate
+	url = https://github.com/libsndfile/libsamplerate

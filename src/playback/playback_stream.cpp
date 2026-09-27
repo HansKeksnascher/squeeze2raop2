@@ -27,11 +27,13 @@ DisconnectCode mapOpenError(const std::string& error) {
 }  // namespace
 
 PlaybackStream::PlaybackStream(AirplayOutput& output, StreamCounters& counters, bool paceRealtime,
+                               ResamplerQuality resamplerQuality,
                                std::optional<std::string> sinkPath, uint32_t sourceTimeoutMs)
     : output_(output),
       counters_(counters),
       paceRealtime_(paceRealtime),
       sinkPath_(std::move(sinkPath)),
+      resamplerQuality_(resamplerQuality),
       sourceTimeoutMs_(sourceTimeoutMs) {}
 
 PlaybackStream::~PlaybackStream() { close(); }
@@ -71,18 +73,20 @@ std::optional<std::string> PlaybackStream::openSource(const StrmStart& st, const
 
 bool PlaybackStream::attachDecoder(StreamFormat format, const PcmParams& pcm, std::string& error) {
     const PcmFormat input = pcmFormat(pcm, kDefaultSampleRate);
-    // One decoder per stream format, one feed pipeline for both. PCM regulates
-    // to the AirPlay output clock (44100) so a source that under-delivers
-    // cannot drain the pipeline.
-    decoder_ = Decoder::create(format, input, kDefaultSampleRate, pcm.sampleSizeCode);
+    // One decoder per stream format, one feed pipeline for both. Decoders emit
+    // at their native rate; the resampler converts to the AirPlay output clock.
+    decoder_ = Decoder::create(format, input, pcm.sampleSizeCode);
     if (!decoder_) {
         error = "unsupported stream format";
         return false;
     }
+    // The STAT clock and the pacer run on the output clock, not the source rate.
+    counters_.setOutputRate(outputRate_);
     log::info(log::Area::Pb, "decoder: {} stream", decoder_->name());
     if (sinkPath_) {
         sink_ = std::make_unique<DebugWavSink>(*sinkPath_);
-        if (!sink_->open(decoder_->format(), error)) {
+        // The sink captures the wire signal: the pipeline output format.
+        if (!sink_->open(outputFormat(), error)) {
             sink_.reset();
             return false;
         }
@@ -133,7 +137,14 @@ void PlaybackStream::close() {
     reader_.close();
 }
 
-PcmFormat PlaybackStream::format() const { return decoder_ ? decoder_->format() : PcmFormat{}; }
+PcmFormat PlaybackStream::format() const { return decoder_ ? outputFormat() : PcmFormat{}; }
+
+PcmFormat PlaybackStream::outputFormat() const {
+    return PcmFormat{.sampleRate = outputRate_,
+                     .bitsPerSample = kDefaultBitsPerSample,
+                     .channels = static_cast<uint8_t>(kDefaultChannels),
+                     .bigEndian = false};
+}
 
 void PlaybackStream::reapplyNowPlaying() {
     if (!lastTitle_.empty()) output_.setNowPlaying(lastTitle_, "", "");
@@ -154,18 +165,12 @@ void PlaybackStream::onMeta(std::string_view block) {
 }
 
 PlaybackStream::End PlaybackStream::run(std::stop_token st,
-                                        const std::function<void()>& onPrebufferReady) {
-    // Startup fill gate: pump into the ring until it holds 50% of capacity
-    // (~1.5 s of audio at 44.1 kHz stereo) before the first RTP packet leaves,
-    // so playback launches from a deep reserve instead of a sender
-    // silence-padding its way into the session. Re-armed each pass: a retry
-    // creates a fresh ring.
+                                        const std::function<void()>& onOutputReady) {
+    // Launch the receiver as soon as the first decoded audio is queued: the
+    // sender's handshake then runs while the ring fills, so no deep startup
+    // fill is needed. A retry creates a fresh ring, so this re-arms per pass.
     const bool haveTarget = output_.hasTarget();
-    const size_t prebufferSamples = haveTarget ? output_.capacity() / kPrebufferDivisor : 0;
-    bool prebuffering = haveTarget && prebufferSamples != 0;
-    const uint64_t prebufferStartMs = nowMs();
-    if (prebuffering)
-        log::info(log::Area::Pb, "prebuffering {} samples (50% of ring)", prebufferSamples);
+    bool outputReady = !haveTarget;  // no target => nothing to launch
 
     PcmFormat fmt = format();
     char buf[kReadBufferBytes];
@@ -182,7 +187,6 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             fadeOutFrames_ = 0;
             const uint32_t rate = fmt.sampleRate ? fmt.sampleRate : kDefaultSampleRate;
             fadeOutDur_ = static_cast<uint32_t>(static_cast<uint64_t>(fadeSecs_) * rate);
-            prebuffering = false;
         }
         if (fadeDone_) return End::FadedOut;
 
@@ -194,7 +198,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             else
                 pauseUntilMs_.store(0, std::memory_order_relaxed);
         }
-        if (!paused && !prebuffering) sampleRingTelemetry();
+        if (!paused && outputReady) sampleRingTelemetry();
         if (paused && !fadeOut_) {
             // Do NOT read while paused. LMS streams local tracks as fast as the
             // client reads, so draining a paused stream consumes the whole
@@ -246,14 +250,9 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
                 break;
             }
             if (fadeDone_) return End::FadedOut;
-            if (prebuffering) {
-                const size_t avail = output_.queued();
-                if (avail >= prebufferSamples) {
-                    log::info(log::Area::Pb, "prebuffered {} samples in {} ms; launching", avail,
-                              nowMs() - prebufferStartMs);
-                    prebuffering = false;
-                    onPrebufferReady();
-                }
+            if (!outputReady && output_.queued() > 0) {
+                outputReady = true;
+                onOutputReady();
             }
             // The pacing clock must include the feed cost, not just the read:
             // the ring push can block on backpressure and an under-counted
@@ -311,13 +310,9 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             break;
         }
 
-        // Pacing must stand down while the rate stage regulates: the decoder
-        // intentionally emits ahead of the source (stretching), so an
-        // emitted-timeline pacer would throttle the reads, starve the
-        // measurement, and spiral the step down. LMS paces the source anyway;
-        // without regulation (step 1.0) the pacing keeps the baseline read
-        // cadence.
-        if (paceRealtime_ && !prebuffering && !fadeOut_ && !(decoder_ && decoder_->regulating())) {
+        // Pace reads to playback time: keeps the sender's ring fed without
+        // running ahead of the wire.
+        if (paceRealtime_ && !fadeOut_) {
             const uint64_t timeline = counters_.fedSamples() * kMsPerSecond / fmt.sampleRate;
             // Pace reads to playback time with a lead: keeps the sender's ring fed
             // without running ahead of the wire. The lead is the pass-through
@@ -354,14 +349,15 @@ size_t PlaybackStream::consumeSkip(size_t frames) {
     return drop;
 }
 
-// Replay gain * active fade, applied in place into gainScratch_. Returns the
-// original chunk when neither applies.
-std::span<const int16_t> PlaybackStream::applyGainFade(std::span<const int16_t> chunk,
-                                                       const PcmFormat& fmt) {
+// Replay gain * active fade, applied in float into gainScratch_. Returns the
+// original chunk when neither applies. The envelope is generated in 16.16
+// (squeezelite parity, pinned by test_volume_map) and converted to float.
+std::span<const float> PlaybackStream::applyGainFade(std::span<const float> pcm,
+                                                     const PcmFormat& fmt) {
     const bool haveReplay = replayGain_ != 0 && replayGain_ != kFixedOne;
     const uint32_t rate = fmt.sampleRate ? fmt.sampleRate : kDefaultSampleRate;
     const size_t channels = fmt.channels ? fmt.channels : kDefaultChannels;
-    const uint64_t frames = chunk.size() / channels;
+    const uint64_t frames = pcm.size() / channels;
 
     // Start the initial fade-in on the first emitted chunk (once per stream).
     if (!fadeIn_ && !fadeInDone_ && !fadeOut_ && fadeSecs_ > 0 &&
@@ -371,43 +367,49 @@ std::span<const int16_t> PlaybackStream::applyGainFade(std::span<const int16_t> 
         fadeInDur_ = static_cast<uint32_t>(static_cast<uint64_t>(fadeSecs_) * rate);
     }
 
-    int32_t fadeInGain = kFixedOne;
+    float fadeInGain = 1.0F;
     if (fadeIn_) {
-        fadeInGain =
-            fadeGain16(static_cast<uint32_t>(std::min<uint64_t>(fadeInFrames_, fadeInDur_)),
-                       fadeInDur_, /*up=*/true);
+        fadeInGain = fixedToGain(fadeGain16(
+            static_cast<uint32_t>(std::min<uint64_t>(fadeInFrames_, fadeInDur_)), fadeInDur_,
+            /*up=*/true));
         fadeInFrames_ += frames;
         if (fadeInFrames_ >= fadeInDur_) {
             fadeIn_ = false;
             fadeInDone_ = true;
         }
     }
-    int32_t fadeOutGain = kFixedOne;
+    float fadeOutGain = 1.0F;
     if (fadeOut_ && !fadeDone_) {
-        fadeOutGain =
-            fadeGain16(static_cast<uint32_t>(std::min<uint64_t>(fadeOutFrames_, fadeOutDur_)),
-                       fadeOutDur_, /*up=*/false);
+        fadeOutGain = fixedToGain(fadeGain16(
+            static_cast<uint32_t>(std::min<uint64_t>(fadeOutFrames_, fadeOutDur_)), fadeOutDur_,
+            /*up=*/false));
         fadeOutFrames_ += frames;
         if (fadeOutFrames_ >= fadeOutDur_) fadeDone_ = true;
     }
 
-    const bool fadeActive =
-        fadeIn_ || fadeOut_ || fadeInGain != kFixedOne || fadeOutGain != kFixedOne;
-    if (!haveReplay && !fadeActive) return chunk;
+    const bool fadeActive = fadeIn_ || fadeOut_ || fadeInGain != 1.0F || fadeOutGain != 1.0F;
+    if (!haveReplay && !fadeActive) return pcm;
 
-    gainScratch_.resize(chunk.size());
-    const int32_t fade =
-        static_cast<int32_t>((static_cast<int64_t>(fadeInGain) * fadeOutGain) >> kFixedShift);
-    const int32_t base = haveReplay ? replayGain_ : kFixedOne;
-    const int32_t gain = static_cast<int32_t>((static_cast<int64_t>(base) * fade) >> kFixedShift);
-    std::transform(chunk.begin(), chunk.end(), gainScratch_.begin(),
-                   [gain](int16_t s) { return applyGain16(s, gain); });
-    return std::span<const int16_t>(gainScratch_);
+    const float base = haveReplay ? fixedToGain(replayGain_) : 1.0F;
+    const float gain = base * fadeInGain * fadeOutGain;
+    gainScratch_.resize(pcm.size());
+    std::transform(pcm.begin(), pcm.end(), gainScratch_.begin(),
+                   [gain](float s) { return s * gain; });
+    return std::span<const float>(gainScratch_);
+}
+
+// The single int16 boundary: round + saturate the float output.
+std::span<const int16_t> PlaybackStream::clampToS16(std::span<const float> pcm) {
+    outScratch_.resize(pcm.size());
+    std::transform(pcm.begin(), pcm.end(), outScratch_.begin(),
+                   [](float v) { return floatToS16(v); });
+    return std::span<const int16_t>(outScratch_);
 }
 
 // One pipeline for every stream format: bytes go through the stream's Decoder
 // (mp3 decode / pcm header-skip + s16 stereo normalization) and are drained in
-// the same 1152-frame chunks. Returns false when the decoder failed.
+// the same 1152-frame chunks, resampled to the 44.1 kHz AirPlay clock, then
+// gain/fade + clamp to s16. Returns false when the decoder failed.
 bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
                           DebugWavSink* sink, bool toOutput) {
     if (!decoder_) return true;
@@ -416,7 +418,7 @@ bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, P
     };
     decoder_->feed(data);
     for (;;) {
-        std::span<const int16_t> chunk = decoder_->nextChunk();
+        const std::span<const int16_t> chunk = decoder_->nextChunk();
         if (chunk.empty()) {
             if (decoder_->hasError()) {
                 log::error(log::Area::Pb, "{} decode failed; dropping stream", decoder_->name());
@@ -424,33 +426,43 @@ bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, P
             }
             break;
         }
-        const PcmFormat norm = decoder_->format();
-        if (norm.sampleRate != 0 && fmt != norm) {
-            fmt = norm;
-            counters_.setOutputRate(fmt.sampleRate);
-            output_.setInputRate(fmt.sampleRate);
-            log::info(log::Area::Pb, "{} audio: {} Hz, {} ch", decoder_->name(), fmt.sampleRate,
-                      fmt.channels);
+
+        // Decoders emit at their native rate; the resampler converts to the
+        // AirPlay output clock. Rebuild it whenever the native rate changes
+        // (MP3 has no rate until its first frame).
+        const PcmFormat native = decoder_->format();
+        if (native.sampleRate != 0 && (native.sampleRate != sourceRate_ || !resampler_)) {
+            sourceRate_ = native.sampleRate;
+            resampler_ = std::make_unique<Resampler>(sourceRate_, outputRate_, resamplerQuality_);
+            if (!resampler_->valid())
+                log::warn(log::Area::Pb, "resampler unavailable; audio is not rate-corrected");
+            log::info(log::Area::Pb, "{} audio: {} Hz, {} ch", decoder_->name(), native.sampleRate,
+                      native.channels);
         }
         if (!decoderReadyFired_) {
             decoderReadyFired_ = true;
             if (decoderReady_) decoderReady_();
         }
 
+        if (!resampler_) continue;  // no native rate yet
+        std::span<const float> pcm = resampler_->process(chunk);
+        if (pcm.empty()) continue;
+
         const size_t channels = fmt.channels ? fmt.channels : kDefaultChannels;
 
-        // Skip-ahead (strm a): drop whole frames, counting them as played so
-        // the elapsed clock advances as in squeezelite.
-        const size_t droppedFrames = consumeSkip(chunk.size() / channels);
+        // Skip-ahead (strm a): drop whole output frames, counting them as
+        // played so the elapsed clock advances as in squeezelite.
+        const size_t droppedFrames = consumeSkip(pcm.size() / channels);
         if (droppedFrames) {
             const size_t droppedSamples = droppedFrames * channels;
             counters_.onFed(droppedSamples, channels, decoder_->pendingBytes());
-            chunk = chunk.subspan(droppedSamples);
+            pcm = pcm.subspan(droppedSamples);
         }
-        if (chunk.empty()) continue;
+        if (pcm.empty()) continue;
         if (!toOutput) continue;  // paused drain: decode, discard
 
-        const std::span<const int16_t> out = applyGainFade(chunk, fmt);
+        const std::span<const float> gained = applyGainFade(pcm, fmt);
+        const std::span<const int16_t> out = clampToS16(gained);
         if (sink) sink->feed(std::as_bytes(out), fmt);
         output_.push(out, channels, abort);
         counters_.onFed(out.size(), channels, decoder_->pendingBytes());
@@ -466,11 +478,8 @@ void PlaybackStream::sampleRingTelemetry() {
     if (!output_.hasPlayer()) return;
     const size_t avail = output_.queued();
     counters_.setQueued(avail);
-    if (!decoder_) return;
-    // Ring-health summary every 10 s; on the boundary, let the decoder
-    // regulate its source rate to the output clock.
-    if (const auto window = ringTelemetry_.observe(avail, nowMs()))
-        decoder_->regulateRate(counters_.bytesReceived(), avail, *window);
+    // Ring-health summary every 10 s and the starvation warn/recover pair.
+    (void)ringTelemetry_.observe(avail, nowMs());
 }
 
 }  // namespace squeeze2raop2

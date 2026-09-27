@@ -18,6 +18,9 @@ def body(c):
     wavs = c.wav_files()
     assert wavs, "a non-empty WAV was written under %s" % c.workdir
     assert harness.wav_peak(wavs[-1]) > 0, "the decoded Opus stream is not silent"
+    # Opus decodes at 48 kHz; the sink captures the wire signal, so the header
+    # must be the 44.1 kHz AirPlay clock the resampler targets.
+    assert harness.wav_sample_rate(wavs[-1]) == 44100, "the sink is the 44.1 kHz wire signal"
 
 
 if __name__ == "__main__":

@@ -25,8 +25,7 @@ constexpr size_t kStageMaxFrames = 8192;
 
 }  // namespace
 
-PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
-    : Decoder(in), outRate_(outputRate) {
+PcmDecoder::PcmDecoder(const PcmFormat& in) : Decoder(in) {
     // Source layouts the reference converts: 16-bit mono/stereo and 24-bit
     // stereo (pcm.c's conversion set). The container header may override
     // rate/channels/size; endian is decided per conversion. Output is
@@ -41,11 +40,8 @@ PcmDecoder::PcmDecoder(const PcmFormat& in, uint32_t outputRate)
         failed_ = true;
     }
     bytesPerFrame_ = size_t(srcChannels_) * (srcBits_ / 8);
-    fmt_ = PcmFormat{.sampleRate = outRate_ ? outRate_ : srcRate_,
-                     .bitsPerSample = 16,
-                     .channels = 2,
-                     .bigEndian = false};
-    rateStep_ = 1.0;
+    fmt_ =
+        PcmFormat{.sampleRate = srcRate_, .bitsPerSample = 16, .channels = 2, .bigEndian = false};
 }
 
 std::optional<size_t> PcmDecoder::checkHeader() {
@@ -71,7 +67,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
             return size_t{0};
         }
         bytesPerFrame_ = size_t(srcChannels_) * (srcBits_ / 8);
-        fmt_.sampleRate = outRate_ ? outRate_ : srcRate_;
+        fmt_.sampleRate = srcRate_;
         // pcm.c's skip arithmetic: RIFF hdr + fmt chunk + data chunk hdr
         // (28 + fmtSize == 44 for the standard 16-byte fmt chunk).
         return size_t{28} + fmtSize;
@@ -127,7 +123,7 @@ std::optional<size_t> PcmDecoder::checkHeader() {
                 } else {
                     bytesPerFrame_ = size_t(srcChannels_) * (srcBits_ / 8);
                 }
-                fmt_.sampleRate = outRate_ ? outRate_ : srcRate_;
+                fmt_.sampleRate = srcRate_;
                 return skip;
             }
             const uint32_t len = readInt<Endian::Big, uint32_t>(p + off + 4);
@@ -206,63 +202,14 @@ size_t PcmDecoder::normalizeMore() {
     return frames;
 }
 
-void PcmDecoder::setSourceRate(double framesPerSecond) {
-    if (failed_ || outRate_ == 0) return;
-    const double lo = 0.9 * outRate_, hi = 1.1 * outRate_;
-    if (!(framesPerSecond >= lo && framesPerSecond <= hi)) return;  // hold
-    // Defense in depth: never let a measurement glitch push the pitch
-    // beyond ±1% (the real-world deficits this regulates are ≲0.3%).
-    const double step = std::clamp(framesPerSecond / outRate_, 0.99, 1.01);
-    if (std::abs(step - rateStep_) < 1e-6) return;
-    const bool wasEngaged = rateEngaged_;
-    rateStep_ = step;
-    rateEngaged_ = step != 1.0;
-    log::info(log::Area::Dec, "source rate {} fps -> step {:.6f} ({})", framesPerSecond, rateStep_,
-              rateEngaged_ ? "resampling" : "pass-through");
-    if (wasEngaged && !rateEngaged_) resetRateStage();
-}
-
-size_t PcmDecoder::rateStageEmit(std::span<int16_t> out) {
+size_t PcmDecoder::stageEmit(std::span<int16_t> out) {
     const size_t want = std::min(out.size() / 2, kChunkFrames);
     if (!want) return 0;
-    const size_t stageFrames = stage_.size() / 2;
-
-    if (!rateEngaged_) {
-        const size_t frames = std::min({stageFrames, want, kChunkFrames});
-        if (!frames) return 0;
-        std::memcpy(out.data(), stage_.data(), frames * 4);
-        stage_.erase(stage_.begin(), stage_.begin() + std::ptrdiff_t(frames * 2));
-        return frames * 2;
-    }
-
-    size_t produced = 0;
-    while (produced < want) {
-        const size_t i0 = size_t(stagePhase_);
-        if (i0 + 1 >= stageFrames) break;  // need i0 and i0+1, starved
-        const double frac = stagePhase_ - double(i0);
-        const int16_t* a = stage_.data() + i0 * 2;
-        const int16_t* b = a + 2;
-        out[produced * 2 + 0] = int16_t(a[0] + (b[0] - a[0]) * frac);
-        out[produced * 2 + 1] = int16_t(a[1] + (b[1] - a[1]) * frac);
-        stagePhase_ += rateStep_;
-        ++produced;
-    }
-    // Compact: drop fully consumed frames, keep the lerp's left neighbour.
-    const size_t keepFrom = size_t(stagePhase_);
-    if (keepFrom > 0) {
-        const size_t drop = std::min(keepFrom, stageFrames);
-        stage_.erase(stage_.begin(), stage_.begin() + std::ptrdiff_t(drop * 2));
-        stagePhase_ -= double(drop);
-    }
-    return produced * 2;
-}
-
-void PcmDecoder::resetRateStage() {
-    // Disengaging: the stage buffer holds source-rate frames; flush them
-    // bit-exact (they were produced for the target clock only approximately).
-    stagePhase_ = 0.0;
-    rateStep_ = 1.0;
-    rateEngaged_ = false;
+    const size_t frames = std::min(stage_.size() / 2, want);
+    if (!frames) return 0;
+    std::memcpy(out.data(), stage_.data(), frames * 4);
+    stage_.erase(stage_.begin(), stage_.begin() + std::ptrdiff_t(frames * 2));
+    return frames * 2;
 }
 
 size_t PcmDecoder::drain(std::span<int16_t> out) {
@@ -283,7 +230,7 @@ size_t PcmDecoder::drain(std::span<int16_t> out) {
 
     size_t totalSamples = 0;
     for (;;) {
-        const size_t got = rateStageEmit(out.subspan(totalSamples));
+        const size_t got = stageEmit(out.subspan(totalSamples));
         totalSamples += got;
         if (totalSamples >= out.size()) break;        // caller buffer full
         if (got == 0 && normalizeMore() == 0) break;  // starved

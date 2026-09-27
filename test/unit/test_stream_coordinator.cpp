@@ -1,6 +1,6 @@
 // Pins StreamCoordinator's null-track robustness and its played-time STAT
 // snapshot (stream_coordinator.cpp). The full stream loop — decoder attach,
-// prebuffer gating, EOF/error/retry exit paths — needs a live HTTP source and
+// launch, EOF/error/retry exit paths — needs a live HTTP source and
 // receiver and is exercised end-to-end by the integration scenarios
 // (single_player_stream, queue_advance, stream_stall, pause_resume, ...); the
 // pure exit decision it applies is pinned in test_exit_policy.cpp.
@@ -49,7 +49,7 @@ struct Harness {
             [] { return true; }, [](uint32_t) {});
         sc = std::make_unique<StreamCoordinator>(output, counters, *link, *volume,
                                                  /*sourceTimeoutMs=*/15000, /*paceRealtime=*/true,
-                                                 std::nullopt);
+                                                 global.resamplerQuality, std::nullopt);
     }
 };
 
