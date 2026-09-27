@@ -35,6 +35,7 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
         t.storedCreds = persistence_.credsFor(cfg.key).value_or(std::string());
         t.timing = cfg.timing;
         t.receiverSupportsPtp = dev.supportsPtp();
+        t.needsAuthSetup = dev.isSonosDevice();
         return t;
     };
 

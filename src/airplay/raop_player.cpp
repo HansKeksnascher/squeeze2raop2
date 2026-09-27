@@ -84,6 +84,7 @@ RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget 
     sender_->setInputFormat(kDefaultSampleRate);
     sender_->setAuth(authFor(target_), target_.airplay2, identity_, target_.storedCreds,
                      target_.password);
+    sender_->setAuthSetupFirst(target_.needsAuthSetup);
 }
 
 RaopPlayer::~RaopPlayer() { stop(); }

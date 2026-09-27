@@ -67,6 +67,22 @@ SQ2_TEST(device_registry, single_word_and_garbage) {
     expect(none.features == 0, "missing features stays 0");
 }
 
+SQ2_TEST(device_registry, sonos_manufacturer) {
+    // Live Sonos `_airplay._tcp` TXT: model=Bookshelf, manufacturer=Sonos.
+    AirplayDevice sonos = registerAirplay({{"model", "Bookshelf"}, {"manufacturer", "Sonos"}});
+    expect(sonos.model == "Bookshelf", "model parsed");
+    expect(sonos.manufacturer == "Sonos", "manufacturer parsed");
+    expect(sonos.isSonosDevice(), "Sonos-class by manufacturer");
+
+    AirplayDevice lower = registerAirplay({{"manufacturer", "sonos"}});
+    expect(lower.isSonosDevice(), "manufacturer match is case-insensitive");
+
+    // HomePod advertises no `manufacturer`; AudioAccessory model is not Sonos.
+    AirplayDevice hp = registerAirplay({{"model", "AudioAccessory5,1"}});
+    expect(hp.manufacturer.empty(), "HomePod has no manufacturer");
+    expect(!hp.isSonosDevice(), "HomePod is not Sonos-class");
+}
+
 SQ2_TEST(device_registry, raop_then_airplay_updates_transport) {
     // The two services of one receiver race. If the raop record lands first the
     // device is Added without features (not AP2); the airplay record must then

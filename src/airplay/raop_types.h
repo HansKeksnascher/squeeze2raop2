@@ -33,6 +33,9 @@ struct RaopTarget {
     std::string storedCreds;
     TimingMode timing = TimingMode::Auto;
     bool receiverSupportsPtp = false;
+    // Sonos receivers want a preliminary POST /auth-setup before the
+    // AirPlay 2 handshake.
+    bool needsAuthSetup = false;
 };
 
 // Reports long-term pairing credentials recovered by the sender, so the bridge

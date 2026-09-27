@@ -68,6 +68,13 @@ std::string DeviceRegistry::keyFor(const std::string& instance) {
     return instance;
 }
 
+bool AirplayDevice::isSonosDevice() const {
+    auto has = [](const std::string& s) {
+        return !s.empty() && toLower(s).find("sonos") != std::string::npos;
+    };
+    return has(manufacturer) || has(model);
+}
+
 void DeviceRegistry::notify(Event ev, const AirplayDevice& d) const {
     if (cb_) cb_(ev, d);
 }
@@ -159,13 +166,17 @@ void DeviceRegistry::onAirplayAdded(const std::string& instance, const std::stri
         if (auto it = txt.find(kTxtPublicKey); it != txt.end()) d.pk = it->second;
         if (auto it = txt.find(kTxtModelAlt); it != txt.end() && d.model.empty())
             d.model = it->second;
+        if (auto it = txt.find(kTxtManufacturer); it != txt.end() && !it->second.empty())
+            d.manufacturer = it->second;
         if (auto it = txt.find(kTxtPassword); it != txt.end() && !d.pw)
             d.pw = (it->second == "true" || it->second == "1");
     });
     log::info(log::Area::Mdns,
-              "airplay record {}: {} name='{}' port={} features=0x{:x} pk={} pw={}",
+              "airplay record {}: {} name='{}' port={} features=0x{:x} pk={} pw={} "
+              "model={} manufacturer={}",
               added ? "added" : "updated", snapshot.id, snapshot.name, port, snapshot.features,
-              snapshot.pk.empty() ? "-" : "present", snapshot.pw);
+              snapshot.pk.empty() ? "-" : "present", snapshot.pw, snapshot.model,
+              snapshot.manufacturer);
     notify(added ? Event::Added : Event::Updated, snapshot);
 }
 

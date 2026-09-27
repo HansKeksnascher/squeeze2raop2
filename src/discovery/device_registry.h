@@ -13,6 +13,7 @@ namespace squeeze2raop2 {
 // AirPlay mDNS TXT record keys (airsync/RAOP TXT vocabulary).
 constexpr const char* kTxtModel = "am";
 constexpr const char* kTxtModelAlt = "model";
+constexpr const char* kTxtManufacturer = "manufacturer";
 constexpr const char* kTxtPassword = "pw";
 constexpr const char* kTxtStatusFlags = "sf";
 constexpr const char* kTxtEncryptionType = "et";
@@ -32,6 +33,7 @@ struct AirplayDevice {
     uint64_t features = 0;
     std::string pk;
     std::string model;
+    std::string manufacturer;
     bool pw = false;
     bool encrypted = false;
 
@@ -45,6 +47,10 @@ struct AirplayDevice {
     bool airplay2() const { return (features & kAirPlay2Features) != 0; }
     // Feature bit 41: the receiver can run gPTP (UDP 319/320) timing.
     bool supportsPtp() const { return (features & (1ULL << 41)) != 0; }
+    // Sonos receiver (TXT `manufacturer=Sonos`). These want a preliminary
+    // POST /auth-setup before the AirPlay 2 handshake. Case-insensitive,
+    // falls back to the model string.
+    bool isSonosDevice() const;
     // Native AirPlay 2 only when the `_airplay._tcp` record is present AND
     // advertises the HK bits; otherwise classic RAOP (squeeze2raop2 prefers
     // AirPlay 2 and falls back).
