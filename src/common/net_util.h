@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 
 #include <cstddef>
+#include <optional>
 #include <string>
 
 namespace squeeze2raop2 {
@@ -14,6 +15,13 @@ std::string ipv4ToString(const in_addr& addr);
 // produces from a wire field): the integer's most significant octet is the
 // first dotted-quad component.
 std::string ipv4ToString(uint32_t hostOrder);
+
+// Resolve `host` (a dotted-quad or a name) to an AF_INET address, returning
+// nullopt when it cannot be resolved. A literal address bypasses getaddrinfo.
+std::optional<in_addr> resolveIpv4(const std::string& host);
+
+// Local (bound) port of `fd`, or 0 when it is unknown or not a socket.
+uint16_t localPort(int fd);
 
 // Sole-owner RAII wrapper for a POSIX file descriptor. Movable, non-copyable.
 //

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "airplay/ptp_clock.h"
 #include "airplay/raop_types.h"
 
 #include <atomic>
@@ -37,7 +38,7 @@ public:
     using Abort = std::function<bool()>;
 
     AirplayOutput(std::string name, std::string identity, std::optional<RaopTarget> target,
-                  CredentialSink credSink, int latencyMs);
+                  std::shared_ptr<PtpClock> ptp, CredentialSink credSink, int latencyMs);
     ~AirplayOutput();
     AirplayOutput(const AirplayOutput&) = delete;
     AirplayOutput& operator=(const AirplayOutput&) = delete;
@@ -104,6 +105,7 @@ private:
     std::string name_;
     std::string identity_;
     std::optional<RaopTarget> target_;
+    std::shared_ptr<PtpClock> ptp_;
     CredentialSink credSink_;
     std::function<void(double)> remoteVolumeSink_;
     int latencyMs_ = kDefaultAirplayLatencyMs;

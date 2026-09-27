@@ -27,6 +27,7 @@ add_executable(squeeze2raop2_tests
   unit/test_stream_coordinator.cpp
   unit/test_slimproto_session.cpp
   unit/test_airplay_output.cpp
+  unit/test_ptp.cpp
   unit/test_mdns_names.cpp
   unit/test_playback_stream.cpp
   unit/test_log.cpp)
@@ -41,7 +42,7 @@ set_tests_properties(unit PROPERTIES LABELS unit)
 foreach(s util config persistence debug_wav_sink slimproto_wire lms_stream volume_map
           volume_controller device_registry byte_order pcm_decoder decoder ring_telemetry icy_meta
           stream_counters exit_policy mdns_names playback_stream log aac_decoder ogg_decoder
-          opus_decoder remote_event airplay_output stream_coordinator slimproto_session)
+          opus_decoder remote_event airplay_output ptp stream_coordinator slimproto_session)
   add_test(NAME unit_${s} COMMAND squeeze2raop2_tests --filter ${s})
   set_tests_properties(unit_${s} PROPERTIES LABELS unit)
 endforeach()

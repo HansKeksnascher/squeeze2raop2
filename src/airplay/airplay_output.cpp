@@ -11,11 +11,12 @@
 namespace squeeze2raop2 {
 
 AirplayOutput::AirplayOutput(std::string name, std::string identity,
-                             std::optional<RaopTarget> target, CredentialSink credSink,
-                             int latencyMs)
+                             std::optional<RaopTarget> target, std::shared_ptr<PtpClock> ptp,
+                             CredentialSink credSink, int latencyMs)
     : name_(std::move(name)),
       identity_(std::move(identity)),
       target_(std::move(target)),
+      ptp_(std::move(ptp)),
       credSink_(std::move(credSink)),
       latencyMs_(latencyMs) {}
 
@@ -59,7 +60,7 @@ bool AirplayOutput::prepare(uint32_t sampleRate) {
     lost_.store(false, std::memory_order_relaxed);
     if (!target_) return false;
     CredentialSink sink = credSink_;
-    player_ = std::make_shared<RaopPlayer>(name_, identity_, *target_);
+    player_ = std::make_shared<RaopPlayer>(name_, identity_, *target_, ptp_);
     player_->setCredentialSink(std::move(sink));
     player_->setClosedCallback([this] { onClosed(); });
     if (remoteVolumeSink_) player_->setRemoteVolumeCallback(remoteVolumeSink_);

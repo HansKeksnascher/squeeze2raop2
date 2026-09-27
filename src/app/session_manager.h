@@ -1,5 +1,6 @@
 #pragma once
 
+#include "airplay/ptp_clock.h"
 #include "app/config.h"
 #include "app/persistence.h"
 #include "discovery/device_registry.h"
@@ -20,7 +21,8 @@ namespace squeeze2raop2 {
 // thread and the mutex_ serializes it against concurrent registry events.
 class SessionManager {
 public:
-    SessionManager(const Settings& settings, Persistence& persistence);
+    SessionManager(const Settings& settings, Persistence& persistence,
+                   std::shared_ptr<PtpClock> ptp);
 
     void onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevice& dev);
 
@@ -29,6 +31,7 @@ private:
 
     const Settings& settings_;
     Persistence& persistence_;
+    std::shared_ptr<PtpClock> ptp_;
     std::mutex mutex_;
     std::map<std::string, std::unique_ptr<PlayerSession>> sessions_;
 };

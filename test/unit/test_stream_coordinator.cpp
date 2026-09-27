@@ -31,7 +31,7 @@ struct StubDelegate : SlimProtoSession::Delegate {
 };
 
 struct Harness {
-    AirplayOutput output{"test", "AABBCCDDEEFF", std::nullopt, CredentialSink{}, 50};
+    AirplayOutput output{"test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50};
     StreamCounters counters;
     StubDelegate delegate;
     std::unique_ptr<SlimProtoSession> link;

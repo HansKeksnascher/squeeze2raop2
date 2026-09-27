@@ -3,6 +3,7 @@
 // device registry and mDNS discovery. Per-device streaming lives in
 // playback/player_session.cpp; session lifecycle in app/session_manager.cpp.
 
+#include "airplay/ptp_clock.h"
 #include "app/config.h"
 #include "app/persistence.h"
 #include "app/session_manager.h"
@@ -14,6 +15,7 @@
 #include "discovery/mdns_names.h"
 
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -38,8 +40,21 @@ void runBridge(const Settings& settings, Persistence& persistence) {
         }
     }
 
+    // The PTP clock is a process-wide service on UDP 319/320. Start it before
+    // discovery so availability is known up front; any session that cannot use
+    // it (or a receiver that does not advertise PTP) keeps NTP timing.
+    auto ptp = std::make_shared<PtpClock>();
+    PtpClock::Config ptpConfig;
+    ptpConfig.iface = settings.global.mdnsIface;
+    if (ptp->start(ptpConfig)) {
+        log::info(log::Area::Ap, "PTP timing available (clockID={:016x}, iface={})", ptp->clockId(),
+                  ptpConfig.iface.empty() ? "all" : ptpConfig.iface);
+    } else {
+        log::warn(log::Area::Ap, "PTP timing unavailable ({}); using NTP", ptp->error());
+    }
+
     DeviceRegistry registry;
-    SessionManager manager(settings, persistence);
+    SessionManager manager(settings, persistence, ptp);
     registry.setCallback([&manager](DeviceRegistry::Event ev, const AirplayDevice& dev) {
         manager.onRegistryEvent(ev, dev);
     });

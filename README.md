@@ -23,7 +23,12 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
   prefers AirPlay 2, falling back to classic AirPlay; or point it at one fixed
   receiver for a static player.
 - **AirPlay 2 streaming** — native, encrypted AirPlay 2 with pairing,
-  retransmission and timing.
+  retransmission and timing. Receivers that advertise PTP are synchronized over
+  gPTP (IEEE 1588, UDP 319/320) instead of classic NTP, which is what
+  multi-room accuracy needs: it is used automatically, a process-wide clock
+  serves every concurrent player, and it falls back to NTP when the ports are
+  unavailable. Force it per player with `timing = ptp` or disable with
+  `timing = ntp`.
 - **Volume stays in sync** — the LMS volume slider drives the speaker, and
   volume changes made on the speaker itself (HomePod/Sonos buttons) are
   mirrored back to LMS. On by default; disable with `volume-feedback = off`.
@@ -87,6 +92,7 @@ log       = debug
 [default]                       # inherited by every player, then overridden
 volume-map = -30:1, -23:16, -15:50, 0:100
 latency-ms = 500
+timing = auto                   # auto|ntp|ptp; auto uses PTP when the receiver supports it
 
 [player "Kueche15"]
 id     = 542a1b5cc9e2            # optional 12-hex mDNS device id

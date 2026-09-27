@@ -54,7 +54,7 @@ std::string capsWithoutTarget(AirplayOutput& output, StubDelegate& delegate) {
 }  // namespace
 
 SQ2_TEST(slimproto_session, caps_codec_tokens_and_order) {
-    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, CredentialSink{}, 50);
+    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50);
     StubDelegate delegate;
     const std::string caps = capsWithoutTarget(output, delegate);
 
@@ -92,7 +92,7 @@ SQ2_TEST(slimproto_session, caps_codec_tokens_and_order) {
 }
 
 SQ2_TEST(slimproto_session, caps_model_and_https) {
-    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, CredentialSink{}, 50);
+    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50);
     StubDelegate delegate;
     const std::string caps = capsWithoutTarget(output, delegate);
 
@@ -109,7 +109,7 @@ SQ2_TEST(slimproto_session, caps_model_and_https) {
 }
 
 SQ2_TEST(slimproto_session, caps_model_name_by_transport) {
-    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, CredentialSink{}, 50);
+    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50);
     StubDelegate delegate;
 
     RaopTarget target;

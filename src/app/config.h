@@ -66,6 +66,7 @@ constexpr const char* kKeyMac = "mac";
 constexpr const char* kKeyName = "name";
 constexpr const char* kKeyTarget = "target";
 constexpr const char* kKeyProtocol = "protocol";
+constexpr const char* kKeyTiming = "timing";
 constexpr const char* kKeyPassword = "password";
 constexpr const char* kKeyEnabled = "enabled";
 constexpr const char* kKeyVolume = "volume";
@@ -86,6 +87,9 @@ constexpr const char* kFalseValues[] = {"off", "false", "no", "0"};
 
 constexpr const char* kProtocolAp1 = "ap1";
 constexpr const char* kProtocolAp2 = "ap2";
+constexpr const char* kTimingAuto = "auto";
+constexpr const char* kTimingNtp = "ntp";
+constexpr const char* kTimingPtp = "ptp";
 constexpr const char* kVolumeModeLms = "lms";
 constexpr const char* kVolumeModeFixed = "fixed";
 constexpr const char* kPaceFast = "fast";
@@ -135,7 +139,8 @@ struct PlayerConfig {
 
     std::optional<std::string> targetHost;
     std::optional<uint16_t> targetPort;
-    std::optional<bool> airplay2;  // protocol ap2 (true) / ap1 (false)
+    std::optional<bool> airplay2;      // protocol ap2 (true) / ap1 (false)
+    std::optional<TimingMode> timing;  // auto / ntp / ptp
     std::optional<std::string> password;
 
     std::optional<bool> enabled;
@@ -164,6 +169,7 @@ struct ResolvedPlayerConfig {
     bool autoRegistered = false;
     std::optional<std::pair<std::string, uint16_t>> target;  // static target
     bool airplay2 = true;
+    TimingMode timing = TimingMode::Auto;
     std::string password;
     VolumeMode volumeMode = VolumeMode::Lms;
     std::string volumeMap = kDefaultVolumeMap;

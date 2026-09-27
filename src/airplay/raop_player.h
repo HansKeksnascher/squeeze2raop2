@@ -1,5 +1,6 @@
 #pragma once
 
+#include "airplay/ptp_clock.h"
 #include "airplay/raop_types.h"
 #include "common/util.h"
 #include "lms/slimproto_protocol.h"
@@ -21,7 +22,8 @@ namespace squeeze2raop2 {
 
 class RaopPlayer {
 public:
-    RaopPlayer(std::string deviceName, std::string identity, RaopTarget target);
+    RaopPlayer(std::string deviceName, std::string identity, RaopTarget target,
+               std::shared_ptr<PtpClock> ptp);
     ~RaopPlayer();
     RaopPlayer(const RaopPlayer&) = delete;
     RaopPlayer& operator=(const RaopPlayer&) = delete;
@@ -88,6 +90,8 @@ private:
     std::string name_;
     std::string identity_;
     RaopTarget target_;
+    std::shared_ptr<PtpClock> ptp_;
+    std::string ptpPeerIp_;
 
     // Destruction order matters: sender_ holds a RaopIo& to loop_, so loop_
     // (and ringStorage_) must outlive sender_ — i.e. be declared BEFORE it.

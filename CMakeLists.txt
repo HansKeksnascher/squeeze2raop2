@@ -260,6 +260,8 @@ add_library(squeeze2raop2_core STATIC
   # airplay
   src/airplay/raop_player.cpp
   src/airplay/airplay_output.cpp
+  src/airplay/ptp_packets.cpp
+  src/airplay/ptp_clock.cpp
   # playback
   src/playback/volume_map.cpp
   src/playback/ring_telemetry.cpp

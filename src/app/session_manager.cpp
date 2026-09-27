@@ -9,8 +9,9 @@
 
 namespace squeeze2raop2 {
 
-SessionManager::SessionManager(const Settings& settings, Persistence& persistence)
-    : settings_(settings), persistence_(persistence) {}
+SessionManager::SessionManager(const Settings& settings, Persistence& persistence,
+                               std::shared_ptr<PtpClock> ptp)
+    : settings_(settings), persistence_(persistence), ptp_(std::move(ptp)) {}
 
 VolumeAnchors SessionManager::anchorsFor(const ResolvedPlayerConfig& cfg) const {
     // The loader already validated the spec; the fallback keeps programmatic
@@ -32,6 +33,8 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
         t.airplay2 = airplay2;
         t.password = cfg.password;
         t.storedCreds = persistence_.credsFor(cfg.key).value_or(std::string());
+        t.timing = cfg.timing;
+        t.receiverSupportsPtp = dev.supportsPtp();
         return t;
     };
 
@@ -112,7 +115,7 @@ void SessionManager::onRegistryEvent(DeviceRegistry::Event ev, const AirplayDevi
 
     const std::string key = resolved->key;
     auto session = std::make_unique<PlayerSession>(
-        *resolved, settings_.global, anchorsFor(*resolved), sinkPath, raopTarget,
+        *resolved, settings_.global, anchorsFor(*resolved), sinkPath, raopTarget, ptp_,
         [this, key](const std::string& deviceId, const std::string& creds) {
             (void)deviceId;
             persistence_.saveCreds(key, creds);

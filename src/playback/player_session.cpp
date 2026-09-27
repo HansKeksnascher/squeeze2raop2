@@ -10,8 +10,8 @@ namespace squeeze2raop2 {
 
 PlayerSession::PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig& global,
                              VolumeAnchors anchors, std::optional<std::string> sinkPath,
-                             std::optional<RaopTarget> raopTarget, CredentialSink credSink,
-                             NameSink nameSink) {
+                             std::optional<RaopTarget> raopTarget, std::shared_ptr<PtpClock> ptp,
+                             CredentialSink credSink, NameSink nameSink) {
     // Compute the receiver identity before any thread exists (the sender reads
     // it): uppercase hex MAC with the separators removed.
     std::string identity = macToString(cfg.mac);
@@ -19,7 +19,7 @@ PlayerSession::PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig
                            [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     std::erase(identity, ':');
     output_ = std::make_unique<AirplayOutput>(cfg.name, std::move(identity), std::move(raopTarget),
-                                              std::move(credSink), cfg.latencyMs);
+                                              std::move(ptp), std::move(credSink), cfg.latencyMs);
     slim_ = std::make_unique<SlimProtoSession>(cfg, global, *output_, std::move(nameSink), *this);
     // Volume mapping and the receiver-initiated chase; the chaser's button
     // presses go out on the slimproto client (created in start()).

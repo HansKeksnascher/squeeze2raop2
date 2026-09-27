@@ -19,6 +19,10 @@ constexpr const char* kSenderLogPrefix = "Cast: ";
 constexpr int kSenderPumpMaxWaitMs = 20;
 constexpr int kKeepAlivePeriodMs = 100;
 
+// How the bridge synchronizes the receiver's clock. Auto picks PTP for a
+// receiver that advertises SupportsPTP (feature bit 41) and NTP otherwise.
+enum class TimingMode { Auto, Ntp, Ptp };
+
 // One receiver to connect to, plus the credentials recovered from a previous
 // pairing (the storedCreds JSON drives the HAP pin flow).
 struct RaopTarget {
@@ -27,6 +31,8 @@ struct RaopTarget {
     bool airplay2 = true;
     std::string password;
     std::string storedCreds;
+    TimingMode timing = TimingMode::Auto;
+    bool receiverSupportsPtp = false;
 };
 
 // Reports long-term pairing credentials recovered by the sender, so the bridge

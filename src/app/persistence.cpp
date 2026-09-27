@@ -392,6 +392,15 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
             pc.airplay2 = true;
         else
             return set.fail("protocol must be ap1|ap2");
+    } else if (key == kKeyTiming) {
+        if (value == kTimingAuto)
+            pc.timing = TimingMode::Auto;
+        else if (value == kTimingNtp)
+            pc.timing = TimingMode::Ntp;
+        else if (value == kTimingPtp)
+            pc.timing = TimingMode::Ptp;
+        else
+            return set.fail("timing must be auto|ntp|ptp");
     } else if (key == kKeyPassword) {
         pc.password = std::string(value);
     } else if (key == kKeyEnabled) {
@@ -580,7 +589,8 @@ void Persistence::writeTemplate() {
         << " = on\n"
            "\n["
         << kSectionDefault << "]\n"
-        << kKeyProtocol << " = " << kProtocolAp2
+        << kKeyProtocol << " = " << kProtocolAp2 << "\n"
+        << kKeyTiming << " = " << kTimingAuto
         << "\n"
            "# password =\n"
         << kKeyEnabled << " = on\n"

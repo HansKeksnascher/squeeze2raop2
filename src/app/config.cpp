@@ -18,7 +18,7 @@ void printHelp() {
         "  [global]\n"
         "    lms = <host[:port]>   connect to this LMS (omit for UDP discovery)\n"
         "    discovery = on|off    spawn sessions for discovered devices\n"
-        "    iface = <name>        mdns network interface (default: all)\n"
+        "    iface = <name>        mdns + PTP network interface (default: all)\n"
         "    mdns-debug = on|off   browse-only mDNS debug mode\n"
         "    server-timeout-ms = N  reconnect after N ms of LMS silence (1000-600000)\n"
         "    source-timeout-ms = N  end a stream silent for N ms (0 = off)\n"
@@ -29,6 +29,7 @@ void printHelp() {
         "    volume-feedback = on|off  mirror receiver volume buttons back to LMS\n\n"
         "  [default]               defaults inherited by every [player]\n"
         "    protocol = ap2|ap1    target platform (default ap2)\n"
+        "    timing = auto|ntp|ptp  clock sync (default auto: PTP when supported)\n"
         "    password = <pw>       RTSP digest password for pw=true receivers\n"
         "    enabled = on|off\n"
         "    volume = lms|fixed    follow the LMS slider or play at volume-pct\n"
@@ -73,6 +74,7 @@ ResolvedPlayerConfig resolvePlayer(const PlayerConfig& defaults, const PlayerCon
 
     r.enabled = pick(player.enabled, defaults.enabled, true);
     r.airplay2 = pick(player.airplay2, defaults.airplay2, true);
+    r.timing = pick(player.timing, defaults.timing, TimingMode::Auto);
     r.password = pick(player.password, defaults.password, std::string());
     r.volumeMode = pick(player.volumeMode, defaults.volumeMode, VolumeMode::Lms);
     r.volumeMap = pick(player.volumeMap, defaults.volumeMap, std::string(kDefaultVolumeMap));

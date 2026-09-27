@@ -43,6 +43,8 @@ struct AirplayDevice {
     bool hasRaopPort() const { return raopPort != 0; }
     bool hasAirplayPort() const { return airplayPort != 0; }
     bool airplay2() const { return (features & kAirPlay2Features) != 0; }
+    // Feature bit 41: the receiver can run gPTP (UDP 319/320) timing.
+    bool supportsPtp() const { return (features & (1ULL << 41)) != 0; }
     // Native AirPlay 2 only when the `_airplay._tcp` record is present AND
     // advertises the HK bits; otherwise classic RAOP (squeeze2raop2 prefers
     // AirPlay 2 and falls back).

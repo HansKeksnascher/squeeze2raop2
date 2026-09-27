@@ -1,5 +1,6 @@
 #pragma once
 
+#include "airplay/ptp_clock.h"
 #include "airplay/raop_types.h"
 #include "app/config.h"
 #include "playback/slimproto_session.h"
@@ -23,7 +24,8 @@ class PlayerSession final : public SlimProtoSession::Delegate {
 public:
     PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig& global,
                   VolumeAnchors anchors, std::optional<std::string> sinkPath,
-                  std::optional<RaopTarget> raopTarget, CredentialSink credSink, NameSink nameSink);
+                  std::optional<RaopTarget> raopTarget, std::shared_ptr<PtpClock> ptp,
+                  CredentialSink credSink, NameSink nameSink);
     ~PlayerSession();
     PlayerSession(const PlayerSession&) = delete;
     PlayerSession& operator=(const PlayerSession&) = delete;

@@ -69,7 +69,7 @@ struct ButtonLog {
 };
 
 struct Harness {
-    AirplayOutput output{"test", "AABBCCDDEEFF", std::nullopt, CredentialSink{}, 50};
+    AirplayOutput output{"test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50};
     VolumeAnchors anchors = *VolumeAnchors::parse(kDefaultVolumeMap);
     ButtonLog buttons;
     std::atomic<bool> alive{true};

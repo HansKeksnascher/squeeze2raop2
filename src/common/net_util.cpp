@@ -46,25 +46,43 @@ std::string ipv4ToString(uint32_t hostOrder) {
     return ipv4ToString(a);
 }
 
+std::optional<in_addr> resolveIpv4(const std::string& host) {
+    in_addr a{};
+    if (inet_pton(AF_INET, host.c_str(), &a) == 1) return a;
+    // getaddrinfo instead of gethostbyname2: the latter returns a thread-unsafe
+    // static hostent, and sessions resolve concurrently.
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    addrinfo* res = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || res == nullptr)
+        return std::nullopt;
+    std::optional<in_addr> out;
+    if (res->ai_addr != nullptr && res->ai_addr->sa_family == AF_INET) {
+        const auto* sin = reinterpret_cast<const sockaddr_in*>(res->ai_addr);
+        out = sin->sin_addr;
+    }
+    freeaddrinfo(res);
+    return out;
+}
+
+uint16_t localPort(int fd) {
+    sockaddr_in sa{};
+    socklen_t len = sizeof(sa);
+    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&sa), &len) != 0) return 0;
+    return ntohs(sa.sin_port);
+}
+
 int connectTcp(const std::string& host, uint16_t port, std::string& errorOut) {
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
     sa.sin_port = htons(port);
-    if (inet_pton(AF_INET, host.c_str(), &sa.sin_addr) != 1) {
-        // getaddrinfo instead of gethostbyname2: the latter returns a
-        // thread-unsafe static hostent, and sessions resolve concurrently.
-        addrinfo hints{};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        addrinfo* res = nullptr;
-        if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || !res) {
-            errorOut = std::string("cannot resolve ") + host;
-            return -1;
-        }
-        const auto* ai = reinterpret_cast<const sockaddr_in*>(res->ai_addr);
-        sa.sin_addr = ai->sin_addr;
-        freeaddrinfo(res);
+    const auto addr = resolveIpv4(host);
+    if (!addr) {
+        errorOut = std::string("cannot resolve ") + host;
+        return -1;
     }
+    sa.sin_addr = *addr;
     UniqueFd fd{::socket(AF_INET, SOCK_STREAM, 0)};
     if (!fd) {
         errorOut = std::string("socket: ") + errnoMessage(errno);

@@ -55,7 +55,7 @@ SQ2_TEST(airplay_output, lifecycle_without_receiver) {
     target.port = port;
     target.airplay2 = false;  // classic RAOP: no HAP pairing needed to reach TCP
 
-    AirplayOutput output("test", "AABBCCDDEEFF", target, CredentialSink{}, 50);
+    AirplayOutput output("test", "AABBCCDDEEFF", target, nullptr, CredentialSink{}, 50);
 
     expect(output.prepare(44100), "prepare builds a live sender");
     expect(output.hasPlayer(), "a player exists after prepare");
@@ -99,7 +99,7 @@ SQ2_TEST(airplay_output, pump_without_target) {
     // No target: prepare() is a no-op, but the pacer's pumpUntil must still
     // block until the deadline (otherwise realtime pacing would stop working
     // for the WAV-sink path).
-    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, CredentialSink{}, 50);
+    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50);
     expect(!output.prepare(44100), "prepare fails without a target");
     expect(!output.hasPlayer(), "no player without a target");
 

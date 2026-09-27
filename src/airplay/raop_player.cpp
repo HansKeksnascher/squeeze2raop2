@@ -1,11 +1,15 @@
 #include "airplay/raop_player.h"
 
+#include "airplay/ptp_packets.h"
 #include "common/log.h"
 #include "common/util.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <memory>
+#include <string>
 
 namespace squeeze2raop2 {
 
@@ -35,8 +39,12 @@ void forwardSenderLog(fxchain::RaopLogLevel level, const std::string& msg) {
 
 }  // namespace
 
-RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget target)
-    : name_(std::move(deviceName)), identity_(std::move(identity)), target_(std::move(target)) {
+RaopPlayer::RaopPlayer(std::string deviceName, std::string identity, RaopTarget target,
+                       std::shared_ptr<PtpClock> ptp)
+    : name_(std::move(deviceName)),
+      identity_(std::move(identity)),
+      target_(std::move(target)),
+      ptp_(std::move(ptp)) {
     ringStorage_ = std::make_unique<fxchain::RingBuffer<int16_t>>(kRingCapacitySamples);
 
     fxchain::RaopEvents events;
@@ -84,6 +92,40 @@ void RaopPlayer::start() {
     launched_.store(true);
     loop_.clearStopRequest();
     std::lock_guard<std::mutex> lock(senderMutex_);
+
+    // Timing transport for this session. PTP needs the shared process clock to
+    // be up and the receiver to advertise support (or the user to force it).
+    fxchain::RaopTiming timing;  // default: classic NTP
+    const bool wantPtp = target_.airplay2 && ptp_ && ptp_->available() &&
+                         (target_.timing == TimingMode::Ptp ||
+                          (target_.timing == TimingMode::Auto && target_.receiverSupportsPtp));
+    if (wantPtp) {
+        const std::string peer = ptp_->addPeer(target_.host);
+        ptpPeerIp_ = peer;
+        timing.protocol = "PTP";
+        timing.port = ptp::kEventPort;
+        timing.clockId = ptp_->clockId();
+        if (!ptp_->localAddress().empty()) timing.localAddresses.push_back(ptp_->localAddress());
+        auto seq = std::make_shared<uint16_t>(0);
+        timing.buildSyncPacket = [ptp = ptp_, peer, seq](uint32_t headRtp, uint32_t latencyFrames,
+                                                         bool first) {
+            // Apple's PT=0xD7 packet maps the RTP that is PLAYING NOW onto the
+            // receiver's current PTP time, and carries the write head (newest
+            // packet, one latency ahead) in the next-rtp field. `headRtp` is the
+            // write head (rtptime32_ = latency + framesSent), so the playout
+            // timestamp is headRtp - latencyFrames.
+            const uint64_t now = ptp->nowNs(peer);
+            const uint16_t s = (*seq)++;
+            return ptp::buildSyncPacket(s, headRtp - latencyFrames, now, headRtp,
+                                        ptp->peerClockId(peer), first);
+        };
+        log::info(log::Area::Ap, "{} using PTP timing (clockID={:016x})", name_, timing.clockId);
+    } else if (ptp_ && target_.airplay2 && target_.timing == TimingMode::Ptp &&
+               !ptp_->available()) {
+        log::warn(log::Area::Ap, "{} PTP requested but unavailable ({}); using NTP", name_,
+                  ptp_->error());
+    }
+    sender_->setTiming(std::move(timing));
     sender_->start(target_.host, target_.port, name_);
 }
 
@@ -94,6 +136,10 @@ void RaopPlayer::stop() {
     stopKeepAlive();
     std::lock_guard<std::mutex> lock(senderMutex_);
     if (sender_) sender_->stop();
+    if (ptp_ && !ptpPeerIp_.empty()) {
+        ptp_->removePeer(ptpPeerIp_);
+        ptpPeerIp_.clear();
+    }
     loop_.requestStop();
 }
 
