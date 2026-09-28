@@ -138,8 +138,8 @@ bool PlaybackStream::gateOpen() {
 bool PlaybackStream::prefillReached() const {
     // Ring occupancy is interleaved stereo samples; buffer ~kStartGatePrefillMs
     // before idling so the scheduled start has something to send.
-    const uint64_t want = static_cast<uint64_t>(outputRate_) * kStartGatePrefillMs /
-                          kMsPerSecond * kDefaultChannels;
+    const uint64_t want =
+        static_cast<uint64_t>(outputRate_) * kStartGatePrefillMs / kMsPerSecond * kDefaultChannels;
     return output_.queued() >= want;
 }
 

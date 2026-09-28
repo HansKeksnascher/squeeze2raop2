@@ -250,9 +250,9 @@ constexpr uint32_t kStartGatePrefillMs = 1000;
 // Ring throttle: how long to service the sender before re-checking the ring
 // level; the slice bounds how long a stop request waits to be noticed.
 constexpr uint32_t kRingThrottleSliceMs = 50;
-constexpr uint32_t kDrainTimeoutMs = 5000;    // bound on the end-of-track drain
-constexpr uint32_t kDrainPumpMs = 20;         // sender pump slice while draining
-constexpr uint32_t kRetryDelayMs = 2000;      // receiver-loss retry delay
+constexpr uint32_t kDrainTimeoutMs = 5000;  // bound on the end-of-track drain
+constexpr uint32_t kDrainPumpMs = 20;       // sender pump slice while draining
+constexpr uint32_t kRetryDelayMs = 2000;    // receiver-loss retry delay
 
 // LMS 'strm s' transition types (Squeezebox.pm). Cross (1) is unsupported and
 // mapped to no fade.

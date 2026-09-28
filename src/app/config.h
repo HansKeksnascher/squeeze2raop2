@@ -45,7 +45,7 @@ constexpr float kVolumePctMin = 0.5f;
 constexpr float kVolumePctMax = 100.f;
 constexpr int kLatencyMinMs = 250;
 constexpr int kLatencyMaxMs = 2000;
-constexpr int kBufferMinMs = 0;     // 0 disables the ring-level throttle
+constexpr int kBufferMinMs = 0;  // 0 disables the ring-level throttle
 constexpr int kBufferMaxMs = 5000;
 
 // --- Config file surface ---------------------------------------------------

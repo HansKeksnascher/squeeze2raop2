@@ -26,10 +26,9 @@ PlayerSession::PlayerSession(const ResolvedPlayerConfig& cfg, const GlobalConfig
     volume_ = std::make_unique<VolumeController>(
         *output_, std::move(anchors), cfg.volumeMode, cfg.volPct, global.volumeFeedback,
         [this] { return slim_->alive(); }, [this](uint32_t code) { slim_->button(code); });
-    stream_ = std::make_unique<StreamCoordinator>(*output_, counters_, *slim_, *volume_,
-                                                  global.sourceTimeoutMs, cfg.paceRealtime,
-                                                  global.resamplerQuality, std::move(sinkPath),
-                                                  cfg.bufferMs);
+    stream_ = std::make_unique<StreamCoordinator>(
+        *output_, counters_, *slim_, *volume_, global.sourceTimeoutMs, cfg.paceRealtime,
+        global.resamplerQuality, std::move(sinkPath), cfg.bufferMs);
 }
 
 PlayerSession::~PlayerSession() { stop(); }

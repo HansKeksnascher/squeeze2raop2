@@ -616,8 +616,7 @@ void Persistence::writeTemplate() {
         << kKeyVolume << " = " << kVolumeModeLms << "\n"
         << kKeyVolumeMap << " = " << kDefaultVolumeMap << "\n"
         << kKeyVolumePct << " = " << kDefaultVolumePct << "\n"
-        << kKeyLatencyMs << " = " << kDefaultLatencyMs
-        << "\n"
+        << kKeyLatencyMs << " = " << kDefaultLatencyMs << "\n"
         << kKeyBufferMs << " = " << kDefaultBufferMs
         << "\n"
            "# sink =\n"
