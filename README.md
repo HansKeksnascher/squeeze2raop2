@@ -32,6 +32,9 @@ pair-verify, encrypted RTSP/RTP) from scratch, using **GLM-5.3-Flash** and
 - **Volume stays in sync** — the LMS volume slider drives the speaker, and
   volume changes made on the speaker itself (HomePod/Sonos buttons) are
   mirrored back to LMS. On by default; disable with `volume-feedback = off`.
+- **Joins LMS sync groups** — synchronized playback with other players: it
+  starts on the server's schedule, reports its true played position (AirPlay
+  latency compensated) and applies LMS's skip-ahead / pause corrections.
 - **Now-playing info** — the current track or stream title is shown on the
   receiver and in LMS.
 - **Clean start and stop** — pausing or stopping flushes the speaker's buffer
@@ -92,7 +95,8 @@ log       = debug
 
 [default]                       # inherited by every player, then overridden
 volume-map = -30:1, -23:16, -15:50, 0:100
-latency-ms = 500
+latency-ms = 500                # AirPlay latency; 250-500 for tight multiroom sync
+buffer-ms = 500                 # cap on buffered not-yet-sent audio (0 = off)
 timing = auto                   # auto|ntp|ptp; auto uses PTP when the receiver supports it
 
 [player "Kueche15"]

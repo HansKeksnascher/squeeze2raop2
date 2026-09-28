@@ -87,6 +87,10 @@ public:
     size_t queuedBytes() const { return queued() * sizeof(int16_t); }
     size_t capacityBytes() const { return capacity() * sizeof(int16_t); }
 
+    // The scheduled AirPlay latency converted to 44.1 kHz frames (the STAT
+    // played-time seed: frames still in flight are not yet audible).
+    uint32_t latencyFrames() const;
+
     // FLUSH the receiver's buffered audio and drop our ring, keeping the
     // session (pause / track flush).
     void silence();

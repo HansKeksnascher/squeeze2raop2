@@ -441,6 +441,12 @@ bool Persistence::parsePlayerKey(std::string_view key, std::string_view value, i
                            "250-2000 (receiver latencyMin..Max)"))
             return false;
         pc.latencyMs = parsed;
+    } else if (key == kKeyBufferMs) {
+        int parsed = 0;
+        if (!set.numberKey(value, parsed, kBufferMinMs, kBufferMaxMs, kKeyBufferMs,
+                           "0-5000 ms (0 = off)"))
+            return false;
+        pc.bufferMs = parsed;
     } else if (key == kKeySink) {
         pc.sinkPath = std::string(value);
     } else if (key == kKeyPace) {
@@ -611,6 +617,8 @@ void Persistence::writeTemplate() {
         << kKeyVolumeMap << " = " << kDefaultVolumeMap << "\n"
         << kKeyVolumePct << " = " << kDefaultVolumePct << "\n"
         << kKeyLatencyMs << " = " << kDefaultLatencyMs
+        << "\n"
+        << kKeyBufferMs << " = " << kDefaultBufferMs
         << "\n"
            "# sink =\n"
         << kKeyPace << " = " << kPaceRealtime << "\n";

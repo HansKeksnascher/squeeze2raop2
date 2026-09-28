@@ -55,7 +55,7 @@ class Case:
     """One integration scenario: fake LMS + bridge + behavioural waits."""
 
     def __init__(self, name, lms_args=None, players=None, default_sink=None,
-                 log_level="info", server_timeout_ms=None, global_lines=None):
+                 log_level="info", server_timeout_ms=None, global_lines=None, pace="fast"):
         self.name = name
         self.lms_args = list(lms_args or [])
         self.players = list(players or [])
@@ -63,6 +63,7 @@ class Case:
         self.log_level = log_level
         self.server_timeout_ms = server_timeout_ms
         self.global_lines = list(global_lines or [])
+        self.pace = pace
 
         self.workdir = Path(tempfile.mkdtemp(prefix="sq2_" + name + "_"))
         self.lms_log = self.workdir / (name + "_lms.log")
@@ -97,7 +98,8 @@ class Case:
         lines += self.global_lines
         lines += ["log = %s" % self.log_level, ""]
         if self.default_sink is not None:
-            lines += ["[default]", "sink = %s" % self.default_sink, "pace = fast", ""]
+            lines += ["[default]", "sink = %s" % self.default_sink,
+                      "pace = %s" % self.pace, ""]
         for player in self.players:
             lines += ['[player "%s"]' % player, ""]
         self.config_path.write_text("\n".join(lines))

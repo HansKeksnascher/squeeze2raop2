@@ -86,6 +86,7 @@ SQ2_TEST(persistence, parse_and_inheritance) {
               "volume = fixed\n"
               "volume-pct = 40\n"
               "latency-ms = 1000\n"
+              "buffer-ms = 250\n"
               "pace = fast\n"
               "\n"
               "[player \"Kueche15\"]\n"
@@ -107,6 +108,7 @@ SQ2_TEST(persistence, parse_and_inheritance) {
     expect(r.volumeMode == squeeze2raop2::VolumeMode::Fixed, "inherits volume mode");
     expect(r.volPct == 55.0f, "overrides volume-pct");
     expect(r.latencyMs == 1000, "inherits latency");
+    expect(r.bufferMs == 250, "inherits buffer-ms");
     expect(!r.paceRealtime, "inherits pace fast");
     expect(r.target.has_value() && r.target->first == "192.168.1.157", "target parsed");
 }

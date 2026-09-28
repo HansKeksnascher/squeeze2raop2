@@ -36,6 +36,9 @@ void printHelp() {
         "    volume-map = \"<db:pct, ...>\"  LMS slider percent -> AirPlay dBFS\n"
         "    volume-pct = <N>      AirPlay volume percent 0.5-100\n"
         "    latency-ms = <N>      scheduled AirPlay latency 250-2000 ms\n"
+        "                          (use 250-500 for tight multiroom sync)\n"
+        "    buffer-ms = <N>       cap on buffered not-yet-sent audio 0-5000 ms\n"
+        "                          (0 = off; lower makes sync corrections prompt)\n"
         "    sink = <file>         dump stream PCM to file\n"
         "    pace = realtime|fast  pace sink consumption to play time\n\n"
         "  [player \"Name\"]         one player; identity/target:\n"
@@ -80,6 +83,7 @@ ResolvedPlayerConfig resolvePlayer(const PlayerConfig& defaults, const PlayerCon
     r.volumeMap = pick(player.volumeMap, defaults.volumeMap, std::string(kDefaultVolumeMap));
     r.volPct = pick(player.volPct, defaults.volPct, kDefaultVolumePct);
     r.latencyMs = pick(player.latencyMs, defaults.latencyMs, kDefaultLatencyMs);
+    r.bufferMs = pick(player.bufferMs, defaults.bufferMs, kDefaultBufferMs);
     r.paceRealtime = pick(player.paceRealtime, defaults.paceRealtime, true);
     r.sinkPath = player.sinkPath ? player.sinkPath : defaults.sinkPath;
 

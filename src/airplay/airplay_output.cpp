@@ -180,6 +180,11 @@ size_t AirplayOutput::capacity() const {
     return player ? player->bufferCapacity() : 0;
 }
 
+uint32_t AirplayOutput::latencyFrames() const {
+    return static_cast<uint32_t>(static_cast<int64_t>(latencyMs_) * kDefaultSampleRate /
+                                 kMsPerSecond);
+}
+
 void AirplayOutput::silence() {
     auto player = snapshot();
     if (!player) return;

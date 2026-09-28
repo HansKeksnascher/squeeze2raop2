@@ -17,7 +17,7 @@ StreamCoordinator::StreamCoordinator(AirplayOutput& output, StreamCounters& coun
                                      SlimProtoSession& link, VolumeController& volume,
                                      uint32_t sourceTimeoutMs, bool paceRealtime,
                                      ResamplerQuality resamplerQuality,
-                                     std::optional<std::string> sinkPath)
+                                     std::optional<std::string> sinkPath, int bufferMs)
     : output_(output),
       counters_(counters),
       link_(link),
@@ -25,7 +25,8 @@ StreamCoordinator::StreamCoordinator(AirplayOutput& output, StreamCounters& coun
       sourceTimeoutMs_(sourceTimeoutMs),
       paceRealtime_(paceRealtime),
       resamplerQuality_(resamplerQuality),
-      sinkPath_(std::move(sinkPath)) {}
+      sinkPath_(std::move(sinkPath)),
+      bufferMs_(bufferMs) {}
 
 StreamCoordinator::~StreamCoordinator() { shutdown(); }
 
@@ -35,6 +36,20 @@ StreamStats StreamCoordinator::currentStats() {
     // (squeezelite reports the output buffer the same way).
     st.outputBufferSize = static_cast<uint32_t>(output_.capacityBytes());
     st.outputBufferFullness = static_cast<uint32_t>(output_.queuedBytes());
+    // Hybrid played-time: the configured AirPlay latency seeds the constant
+    // (frames the receiver still holds are not yet audible) and the live
+    // sender ring is read every STAT, so the position is derived dynamically
+    // and cannot lag a stale occupancy snapshot. Skipped frames are counted as
+    // fed, so a `strm a` correction moves the position forward (as LMS expects)
+    // and a pause stalls it once the buffered tail has drained.
+    const uint64_t queuedFrames = output_.queued() / kDefaultChannels;
+    uint64_t playedFrames = counters_.fedSamples();
+    playedFrames = playedFrames > queuedFrames ? playedFrames - queuedFrames : 0;
+    if (output_.hasTarget()) {
+        const uint64_t latency = output_.latencyFrames();
+        playedFrames = playedFrames > latency ? playedFrames - latency : 0;
+    }
+    st.elapsedMs = static_cast<uint32_t>(playedFrames * kMsPerSecond / kDefaultSampleRate);
     return st;
 }
 
@@ -85,10 +100,14 @@ void StreamCoordinator::onStreamStart(const StrmStart& st) {
     else
         log::info(log::Area::Ses, "stream GET {}:{} host={} icy={}", host, port, hostName, icy);
     track_ = std::make_unique<PlaybackStream>(output_, counters_, paceRealtime_, resamplerQuality_,
-                                              sinkPath_, sourceTimeoutMs_);
+                                              sinkPath_, sourceTimeoutMs_, bufferMs_);
     track_->setMetaForward([this](std::string_view block) { link_.meta(block); });
     track_->setDecoderReady([this] { onDecoderReady(); });
     track_->setUnderrun([this] { link_.stat(kStatUnderrun); });
+    // autostart 0: LMS starts the stream paused (a synchronized start, or a
+    // user pause) and sends `strm u` when output may begin. Decode/fill and
+    // report STMl, but hold the receiver launch until then (squeezelite parity).
+    if (st.autostart == kAutostartDecoderReady) track_->holdStart();
 
     std::string error;
     const std::optional<std::string> headers = track_->openSource(st, host, port, error);
@@ -152,21 +171,26 @@ void StreamCoordinator::flush() {
 void StreamCoordinator::pause(uint32_t ms) {
     // The deadline lives in the track's pump loop.
     if (track_) track_->pause(ms);
-    output_.silence();
+    // A timed pause ('p N', N>0) is LMS's sync correction (`pauseForInterval`)
+    // or a transition gap: keep the receiver buffer and the sender ring so the
+    // correction is non-destructive. Only an indefinite pause ('p 0', the user
+    // pause) flushes the speaker clean.
+    if (ms == 0) output_.silence();
     log::debug(log::Area::Ses, "pause requested: interval={} ms", ms);
     // STMp is sent by the slimproto 'p' handler (squeezelite parity);
     // sending it here too duplicates the event.
 }
 
-void StreamCoordinator::unpause(uint32_t) {
-    if (track_) track_->unpause();
+void StreamCoordinator::unpause(uint32_t jiffies) {
+    // `jiffies` (LMS `strm u`) schedules the output start; 0 resumes now.
+    if (track_) track_->unpause(jiffies);
 }
 
 void StreamCoordinator::skipAhead(uint32_t ms) {
     // squeezelite drops the skipped frames from the output buffer; the bridge
-    // drops them from the decoded stream after flushing the ring.
+    // drops them from the decoded stream. Do NOT flush the receiver: a sync
+    // correction ('strm a') must not discard the buffered timeline.
     if (!track_) return;
-    output_.silence();
     track_->skipAhead(ms);
 }
 

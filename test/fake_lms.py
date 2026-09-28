@@ -57,7 +57,8 @@ class FakeLms:
                  skip_ms=0, send_aude_off=False, codc_codec=None, stall_after=0.0,
                  silent=False, pause_after=0.0, pause_for=0.0, aac_fixture=None,
                  container="adts", aac_reps=0, ogg_fixture=None, opus_fixture=None,
-                 https_cert=None, https_key=None):
+                 https_cert=None, https_key=None, sync=False, sync_start_ms=400,
+                 sync_skip_ms=200, sync_pause_ms=150):
         self.tcp_port = tcp_port
         self.http_port = http_port
         self.stream_seconds = stream_seconds
@@ -93,6 +94,17 @@ class FakeLms:
         self.pause_time = 0.0
         self.skip_sent = False
         self.aude_sent = False
+        # Sync-group emulation: start the stream paused (autostart 0), wait for
+        # the player's STMl, then send a scheduled strm-u (a start time in the
+        # player's own jiffies clock) and later sync corrections (strm-a/-p).
+        self.sync = sync
+        self.sync_start_ms = sync_start_ms
+        self.sync_skip_ms = sync_skip_ms
+        self.sync_pause_ms = sync_pause_ms
+        self.sync_scheduled = False
+        self.sync_started = False
+        self.sync_skip_sent = False
+        self.sync_pause_sent = False
 
     def handle_http(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -315,6 +327,10 @@ class FakeLms:
                     )
                     self.tracks_sent = 1
                     if not self.silent:
+                        if self.sync:
+                            # A synchronized start: LMS begins the stream paused
+                            # and schedules the actual start with strm-u.
+                            self.autostart = 0
                         self.send_strm_start(sock)
                 elif opcode == b"RESP":
                     report("RESP %s" % payload[:96].decode(errors="replace"))
@@ -343,6 +359,27 @@ class FakeLms:
                             self.tracks_sent += 1
                             report("advancing to track %d" % self.tracks_sent)
                             self.send_strm_start(sock)
+                    if self.sync:
+                        # Synced playback: wait for the decoder (STMl), schedule
+                        # the start in the player's own jiffies clock, then run
+                        # the periodic skip/pause corrections _CheckSync would.
+                        if event == "STMl" and not self.sync_scheduled:
+                            self.sync_scheduled = True
+                            sched = (jiffies + self.sync_start_ms) & 0xFFFFFFFF
+                            report("sync: STMl jiffies=%d -> strm-u at %d (+%d ms)"
+                                   % (jiffies, sched, self.sync_start_ms))
+                            self.send_strm_u(sock, sched)
+                        if event == "STMs" and not self.sync_started:
+                            self.sync_started = True
+                            report("sync: first STMs (output running)")
+                        if self.sync_started and not self.sync_skip_sent and elapsed >= 500:
+                            self.sync_skip_sent = True
+                            report("sync: correction strm-a")
+                            self.send_strm_a(sock, self.sync_skip_ms)
+                        if self.sync_started and not self.sync_pause_sent and elapsed >= 1500:
+                            self.sync_pause_sent = True
+                            report("sync: correction strm-p")
+                            self.send_strm_p(sock, self.sync_pause_ms)
                     if self.volume_pct > 0 and not volume_done and event in ("STMs",) and elapsed >= 0:
                         volume_done = True
                         self.send_audg(sock, self.volume_pct)
@@ -426,6 +463,15 @@ def main():
                         help="serve the stream over TLS with this certificate")
     parser.add_argument("--https-key", default=None,
                         help="private key for --https-cert")
+    parser.add_argument("--sync", action="store_true",
+                        help="emulate a sync-group start: autostart 0, wait for STMl, send a "
+                             "scheduled strm-u, then strm-a/strm-p corrections")
+    parser.add_argument("--sync-start-ms", type=int, default=400,
+                        help="strm-u lead over the STMl jiffies (sync mode)")
+    parser.add_argument("--sync-skip-ms", type=int, default=200,
+                        help="strm-a correction interval (sync mode)")
+    parser.add_argument("--sync-pause-ms", type=int, default=150,
+                        help="strm-p correction interval (sync mode)")
     args = parser.parse_args()
     lms = FakeLms(
         args.tcp_port,
@@ -453,6 +499,10 @@ def main():
         opus_fixture=args.opus_fixture,
         https_cert=args.https_cert,
         https_key=args.https_key,
+        sync=args.sync,
+        sync_start_ms=args.sync_start_ms,
+        sync_skip_ms=args.sync_skip_ms,
+        sync_pause_ms=args.sync_pause_ms,
     )
     lms.run()
 

@@ -26,7 +26,8 @@ class StreamCoordinator {
 public:
     StreamCoordinator(AirplayOutput& output, StreamCounters& counters, SlimProtoSession& link,
                       VolumeController& volume, uint32_t sourceTimeoutMs, bool paceRealtime,
-                      ResamplerQuality resamplerQuality, std::optional<std::string> sinkPath);
+                      ResamplerQuality resamplerQuality, std::optional<std::string> sinkPath,
+                      int bufferMs);
     ~StreamCoordinator();
     StreamCoordinator(const StreamCoordinator&) = delete;
     StreamCoordinator& operator=(const StreamCoordinator&) = delete;
@@ -64,6 +65,7 @@ private:
     const bool paceRealtime_;
     const ResamplerQuality resamplerQuality_;
     const std::optional<std::string> sinkPath_;
+    const int bufferMs_;
 
     // The current track's pipeline; replaced per stream, closed by shutdown().
     std::unique_ptr<PlaybackStream> track_;

@@ -11,6 +11,7 @@
 #include "check.h"
 
 #include <memory>
+#include <optional>
 
 using namespace squeeze2raop2;
 using namespace squeeze2raop2::test;
@@ -31,14 +32,15 @@ struct StubDelegate : SlimProtoSession::Delegate {
 };
 
 struct Harness {
-    AirplayOutput output{"test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50};
+    AirplayOutput output;
     StreamCounters counters;
     StubDelegate delegate;
     std::unique_ptr<SlimProtoSession> link;
     std::unique_ptr<VolumeController> volume;
     std::unique_ptr<StreamCoordinator> sc;
 
-    Harness() {
+    explicit Harness(int latencyMs = 50, std::optional<RaopTarget> target = std::nullopt)
+        : output("test", "AABBCCDDEEFF", std::move(target), nullptr, CredentialSink{}, latencyMs) {
         ResolvedPlayerConfig cfg;
         cfg.name = "Kitchen";
         cfg.mac = {0xaa, 0, 0, 0, 0, 0x01};
@@ -49,7 +51,8 @@ struct Harness {
             [] { return true; }, [](uint32_t) {});
         sc = std::make_unique<StreamCoordinator>(output, counters, *link, *volume,
                                                  /*sourceTimeoutMs=*/15000, /*paceRealtime=*/true,
-                                                 global.resamplerQuality, std::nullopt);
+                                                 global.resamplerQuality, std::nullopt,
+                                                 /*bufferMs=*/0);
     }
 };
 
@@ -103,4 +106,28 @@ SQ2_TEST(stream_coordinator, aude_off_stops_output) {
     Harness h;
     h.sc->audeOff();
     expect(h.output.state() == AirplayOutput::State::Absent, "power off tears the output down");
+}
+
+// Hybrid played-time: with a receiver the configured AirPlay latency is
+// subtracted (frames still in flight are not audible), from the live fed/ring
+// figures. The seed uses the configured value; the ring is read per STAT.
+SQ2_TEST(stream_coordinator, played_time_subtracts_latency) {
+    RaopTarget target;
+    target.host = "127.0.0.1";
+    target.port = 5000;  // never connected: hasTarget() is what matters here
+    target.airplay2 = false;
+    Harness h(/*latencyMs=*/500, target);
+
+    h.counters.reset(44100);
+    h.counters.onReceived(44100 * 4);
+    h.counters.onFed(/*samples=*/88200, /*channels=*/2, /*pendingBytes=*/0);  // 1 s
+
+    // 1 s fed, empty ring, 500 ms in flight -> 500 ms audible.
+    expect(h.sc->currentStats().elapsedMs == 500, "configured latency subtracted");
+
+    // Without a receiver there is no scheduled latency: the full second shows.
+    Harness plain(/*latencyMs=*/500);
+    plain.counters.reset(44100);
+    plain.counters.onFed(88200, 2, 0);
+    expect(plain.sc->currentStats().elapsedMs == 1000, "no latency without a target");
 }

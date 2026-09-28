@@ -28,13 +28,15 @@ DisconnectCode mapOpenError(const std::string& error) {
 
 PlaybackStream::PlaybackStream(AirplayOutput& output, StreamCounters& counters, bool paceRealtime,
                                ResamplerQuality resamplerQuality,
-                               std::optional<std::string> sinkPath, uint32_t sourceTimeoutMs)
+                               std::optional<std::string> sinkPath, uint32_t sourceTimeoutMs,
+                               int bufferMs)
     : output_(output),
       counters_(counters),
       paceRealtime_(paceRealtime),
       sinkPath_(std::move(sinkPath)),
       resamplerQuality_(resamplerQuality),
-      sourceTimeoutMs_(sourceTimeoutMs) {}
+      sourceTimeoutMs_(sourceTimeoutMs),
+      bufferMs_(bufferMs) {}
 
 PlaybackStream::~PlaybackStream() { close(); }
 
@@ -106,12 +108,66 @@ void PlaybackStream::pause(uint32_t ms) {
     pauseCv_.notify_all();
 }
 
-void PlaybackStream::unpause() {
+void PlaybackStream::unpause(uint32_t jiffies) {
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         pauseUntilMs_.store(0, std::memory_order_relaxed);
     }
+    // A `strm u` payload is the player-local 1 kHz clock value at which output
+    // must begin (LMS computes it from the jiffies we report, so it is directly
+    // comparable to nowMs()). A zero/past value starts immediately; the signed
+    // 32-bit difference absorbs the u32 wrap.
+    outputGateUntilMs_.store(gateDeadlineFromJiffies(jiffies, nowMs()), std::memory_order_relaxed);
     pauseCv_.notify_all();
+}
+
+void PlaybackStream::holdStart() {
+    outputGateUntilMs_.store(std::numeric_limits<uint64_t>::max(), std::memory_order_relaxed);
+}
+
+// 0 = open, UINT64_MAX = closed until strm u, otherwise open at the deadline.
+bool PlaybackStream::gateOpen() {
+    const uint64_t until = outputGateUntilMs_.load(std::memory_order_relaxed);
+    if (until == 0) return true;
+    if (until == std::numeric_limits<uint64_t>::max()) return false;
+    if (nowMs() < until) return false;
+    outputGateUntilMs_.store(0, std::memory_order_relaxed);
+    return true;
+}
+
+bool PlaybackStream::prefillReached() const {
+    // Ring occupancy is interleaved stereo samples; buffer ~kStartGatePrefillMs
+    // before idling so the scheduled start has something to send.
+    const uint64_t want = static_cast<uint64_t>(outputRate_) * kStartGatePrefillMs /
+                          kMsPerSecond * kDefaultChannels;
+    return output_.queued() >= want;
+}
+
+// Target cap on not-yet-sent (ring) audio, in interleaved samples. 0 disables
+// the throttle (pure backpressure pacing).
+uint64_t PlaybackStream::ringTargetSamples() const {
+    if (bufferMs_ <= 0) return 0;
+    return static_cast<uint64_t>(bufferMs_) * outputRate_ / kMsPerSecond * kDefaultChannels;
+}
+
+void PlaybackStream::waitForGate(std::stop_token st) {
+    lastDataMs_ = nowMs();  // a scheduled start wait is not a source stall
+    std::unique_lock<std::mutex> lock(pauseMutex_);
+    for (;;) {
+        if (st.stop_requested()) break;
+        if (gateOpen()) break;
+        if (output_.lost()) break;
+        const uint64_t until = outputGateUntilMs_.load(std::memory_order_relaxed);
+        uint64_t sliceMs = kPauseSliceMs;
+        if (until != 0 && until != std::numeric_limits<uint64_t>::max()) {
+            const uint64_t now = nowMs();
+            if (until > now) sliceMs = std::min<uint64_t>(until - now, kPauseSliceMs);
+        }
+        const auto changed = [this, until] {
+            return outputGateUntilMs_.load(std::memory_order_relaxed) != until;
+        };
+        pauseCv_.wait_for(lock, st, std::chrono::milliseconds(sliceMs), changed);
+    }
 }
 
 void PlaybackStream::skipAhead(uint32_t ms) {
@@ -237,6 +293,52 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             continue;
         }
 
+        // Scheduled start gate (strm s autostart 0 held it closed until a
+        // strm u): decode/fill to the prefill target, then wait for the
+        // deadline without reading. Output launches only once the gate opens.
+        if (!gateOpen()) {
+            if (!gateWaitLogged_) {
+                gateWaitLogged_ = true;
+                log::info(log::Area::Pb, "start gate: waiting for scheduled start");
+            }
+        } else if (gateWaitLogged_) {
+            gateWaitLogged_ = false;
+            log::info(log::Area::Pb, "start gate: open, starting output");
+        }
+        if (!gateOpen() && prefillReached()) {
+            waitForGate(st);
+            continue;
+        }
+        if (!outputReady && output_.queued() > 0 && gateOpen()) {
+            outputReady = true;
+            onOutputReady();
+        }
+
+        // Ring-level throttle: don't let the sender hold more than `buffer-ms`
+        // of not-yet-sent audio. A deep local queue delays the audible effect of
+        // LMS's `strm a`/`strm p` corrections, so cap it and service the sender
+        // until it drains. Hysteresis (half the target) avoids chattering.
+        if (const uint64_t target = ringTargetSamples();
+            target != 0 && outputReady && output_.hasPlayer()) {
+            const uint64_t queued = output_.queued();
+            if (!ringThrottled_ && queued > target) {
+                ringThrottled_ = true;
+                log::debug(log::Area::Pb, "ring throttle: {} ms buffered; pausing reads",
+                           queued * kMsPerSecond / (outputRate_ * kDefaultChannels));
+            } else if (ringThrottled_ && queued < target / 2) {
+                ringThrottled_ = false;
+            }
+        }
+        if (ringThrottled_) {
+            lastDataMs_ = nowMs();  // a ring drain is not a source stall
+            const uint64_t t0 = nowMs();
+            output_.pumpUntil(std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(kRingThrottleSliceMs));
+            activeMs_ += nowMs() - t0;  // keep the pacer's clock honest
+            sampleRingTelemetry();
+            continue;
+        }
+
         uint64_t iterStart = nowMs();
         auto rr = reader_.read(std::span{buf}, kReadPollTimeoutMs);
 
@@ -250,7 +352,7 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
                 break;
             }
             if (fadeDone_) return End::FadedOut;
-            if (!outputReady && output_.queued() > 0) {
+            if (!outputReady && output_.queued() > 0 && gateOpen()) {
                 outputReady = true;
                 onOutputReady();
             }

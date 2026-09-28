@@ -58,7 +58,7 @@ public:
 
     PlaybackStream(AirplayOutput& output, StreamCounters& counters, bool paceRealtime,
                    ResamplerQuality resamplerQuality, std::optional<std::string> sinkPath,
-                   uint32_t sourceTimeoutMs = 0);
+                   uint32_t sourceTimeoutMs = 0, int bufferMs = 0);
     ~PlaybackStream();
     PlaybackStream(const PlaybackStream&) = delete;
     PlaybackStream& operator=(const PlaybackStream&) = delete;
@@ -82,7 +82,13 @@ public:
 
     // Set/clear a pause deadline (session callbacks, reader thread).
     void pause(uint32_t ms);
-    void unpause();
+    // Resume: clears a timed/indefinite pause and schedules the output start.
+    // `jiffies` is LMS's `strm u` payload: the player-local ms clock value at
+    // which output must begin (0 = immediately).
+    void unpause(uint32_t jiffies = 0);
+    // Hold output closed until the first `strm u` (strm s autostart 0). The
+    // pump decodes/fills but does not launch the receiver until then.
+    void holdStart();
     // Drop `ms` worth of decoded output (LMS 'strm a'), counting it as played.
     void skipAhead(uint32_t ms);
     // Start a fade-out (transition type OUT/INOUT); false when no fade applies.
@@ -118,6 +124,13 @@ private:
               DebugWavSink* sink, bool toOutput = true);
     // Drop queued skip frames from one chunk; returns the played drop count.
     size_t consumeSkip(size_t frames);
+    // Scheduled start gate (strm s autostart 0 / strm u). Open when nowMs()
+    // reaches the deadline; the pump holds output until then.
+    bool gateOpen();
+    bool prefillReached() const;
+    void waitForGate(std::stop_token st);
+    // Ring-level throttle: the target cap on not-yet-sent ring audio, in samples.
+    uint64_t ringTargetSamples() const;
     // Apply replay gain + the active fade to a float chunk in scratch.
     std::span<const float> applyGainFade(std::span<const float> pcm, const PcmFormat& fmt);
     // Round/saturate the float output to interleaved s16 in scratch.
@@ -144,6 +157,9 @@ private:
     RingTelemetry ringTelemetry_;
     std::atomic<uint64_t> pauseUntilMs_{0};
     std::atomic<uint64_t> skipFrames_{0};
+    // Output start gate: 0 = open, UINT64_MAX = closed until strm u, else open
+    // once nowMs() reaches the value (a scheduled strm u start).
+    std::atomic<uint64_t> outputGateUntilMs_{0};
     // Pause wait: the pump blocks here instead of polling; pause()/unpause()
     // (reader thread) wake it and the stop token cancels it.
     std::mutex pauseMutex_;
@@ -179,6 +195,11 @@ private:
 
     bool decoderReadyFired_ = false;
     bool underrunFired_ = false;
+    // One-shot logging for the scheduled-start gate (observability).
+    bool gateWaitLogged_ = false;
+    // Ring-level throttle state (see run()): true while the sender ring is
+    // above the high-water mark and we are not reading.
+    bool ringThrottled_ = false;
     // When the ring first went empty in the current underrun candidate window;
     // 0 = not empty. A sustained (~1 s) empty ring reports STMo, a brief
     // post-pause/resume refill gap does not.
@@ -187,6 +208,8 @@ private:
     // lastDataMs_ is the wall-clock of the most recent byte (kept fresh while
     // paused, which is not a stall).
     uint32_t sourceTimeoutMs_ = 0;
+    // Cap on the sender ring's not-yet-sent audio (0 = disabled).
+    int bufferMs_ = 0;
     uint64_t lastDataMs_ = 0;
 };
 
@@ -195,6 +218,14 @@ private:
 // Skip-ahead interval in ms -> source frames at `rate`. 0 ms -> 0 frames.
 inline uint64_t skipFramesFor(uint32_t ms, uint32_t rate) {
     return (static_cast<uint64_t>(ms) * rate) / 1000u;
+}
+
+// LMS `strm u` payload (a player-local 1 kHz clock value) -> output start-gate
+// deadline in the nowMs() timeline. 0 means "open now"; a past value (including
+// the u32 wrap) also opens now. Pure so the wrap handling is unit-testable.
+inline uint64_t gateDeadlineFromJiffies(uint32_t jiffies, uint64_t now) {
+    const int32_t delta = static_cast<int32_t>(jiffies - static_cast<uint32_t>(now));
+    return delta > 0 ? now + static_cast<uint64_t>(delta) : 0;
 }
 
 // STMo decision: the receiver output is running but its ring is empty while
@@ -212,6 +243,13 @@ constexpr uint32_t kPauseSliceMs = 25;        // max pause-wait slice
 constexpr uint32_t kUnderrunWindowMs = 1000;  // sustained-empty window -> STMo
 constexpr uint32_t kPacerLeadMs = 60;         // pacer sleep headroom
 constexpr uint32_t kPacerMaxSleepMs = 120;    // max pacer sleep slice
+// While the start gate is closed (autostart 0), stop reading once this much
+// audio is buffered and wait for the scheduled `strm u`; keeps the pump from
+// decoding a whole track into the ring while the group waits to start.
+constexpr uint32_t kStartGatePrefillMs = 1000;
+// Ring throttle: how long to service the sender before re-checking the ring
+// level; the slice bounds how long a stop request waits to be noticed.
+constexpr uint32_t kRingThrottleSliceMs = 50;
 constexpr uint32_t kDrainTimeoutMs = 5000;    // bound on the end-of-track drain
 constexpr uint32_t kDrainPumpMs = 20;         // sender pump slice while draining
 constexpr uint32_t kRetryDelayMs = 2000;      // receiver-loss retry delay

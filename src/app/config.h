@@ -24,6 +24,10 @@ constexpr uint32_t kDefaultServerTimeoutMs = 35000;
 constexpr uint32_t kDefaultSourceTimeoutMs = 15000;
 constexpr uint16_t kDefaultTargetPort = kDefaultRaopPort;
 constexpr int kDefaultLatencyMs = kDefaultAirplayLatencyMs;
+// Target cap on the sender ring's not-yet-sent audio (0 = unpaced/backpressure
+// only). Kept well under the receiver's buffering so a sync correction is
+// audible promptly instead of waiting behind a deep local queue.
+constexpr int kDefaultBufferMs = 500;
 constexpr float kDefaultVolumePct = 0.7f;
 constexpr bool kDefaultDiscovery = true;
 constexpr bool kDefaultAutoRegister = true;
@@ -41,6 +45,8 @@ constexpr float kVolumePctMin = 0.5f;
 constexpr float kVolumePctMax = 100.f;
 constexpr int kLatencyMinMs = 250;
 constexpr int kLatencyMaxMs = 2000;
+constexpr int kBufferMinMs = 0;     // 0 disables the ring-level throttle
+constexpr int kBufferMaxMs = 5000;
 
 // --- Config file surface ---------------------------------------------------
 //
@@ -76,6 +82,7 @@ constexpr const char* kKeyVolume = "volume";
 constexpr const char* kKeyVolumeMap = "volume-map";
 constexpr const char* kKeyVolumePct = "volume-pct";
 constexpr const char* kKeyLatencyMs = "latency-ms";
+constexpr const char* kKeyBufferMs = "buffer-ms";
 constexpr const char* kKeySink = "sink";
 constexpr const char* kKeyPace = "pace";
 constexpr const char* kKeyCreds = "creds";
@@ -157,6 +164,7 @@ struct PlayerConfig {
     std::optional<std::string> volumeMap;
     std::optional<float> volPct;
     std::optional<int> latencyMs;
+    std::optional<int> bufferMs;
     std::optional<std::string> sinkPath;
     std::optional<bool> paceRealtime;
 
@@ -184,6 +192,7 @@ struct ResolvedPlayerConfig {
     std::string volumeMap = kDefaultVolumeMap;
     float volPct = kDefaultVolumePct;
     int latencyMs = kDefaultLatencyMs;
+    int bufferMs = kDefaultBufferMs;
     std::optional<std::string> sinkPath;
     bool paceRealtime = true;
 };

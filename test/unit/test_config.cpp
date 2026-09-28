@@ -22,6 +22,7 @@ SQ2_TEST(config, builtins) {
     expect(r.volumeMode == VolumeMode::Lms, "[defaults] volume lms");
     expect(r.volPct == 0.7f, "[defaults] volume-pct 0.7");
     expect(r.latencyMs == 500, "[defaults] latency 500");
+    expect(r.bufferMs == 500, "[defaults] buffer 500");
     expect(r.paceRealtime, "[defaults] pace realtime");
     expect(!r.target.has_value(), "[defaults] no static target");
 }
@@ -31,6 +32,7 @@ SQ2_TEST(config, default_inheritance) {
     defaults.volumeMode = VolumeMode::Fixed;
     defaults.volPct = 40.0f;
     defaults.latencyMs = 1000;
+    defaults.bufferMs = 750;
     defaults.paceRealtime = false;
     defaults.password = "secret";
 
@@ -39,15 +41,18 @@ SQ2_TEST(config, default_inheritance) {
     expect(inherited.volumeMode == VolumeMode::Fixed, "inherits volume mode");
     expect(inherited.volPct == 40.0f, "inherits volume-pct");
     expect(inherited.latencyMs == 1000, "inherits latency");
+    expect(inherited.bufferMs == 750, "inherits buffer");
     expect(!inherited.paceRealtime, "inherits pace");
     expect(inherited.password == "secret", "inherits password");
 
     PlayerConfig override;
     override.volPct = 55.0f;
     override.latencyMs = 250;
+    override.bufferMs = 0;
     const ResolvedPlayerConfig overridden = resolvePlayer(defaults, override);
     expect(overridden.volPct == 55.0f, "player overrides volume-pct");
     expect(overridden.latencyMs == 250, "player overrides latency");
+    expect(overridden.bufferMs == 0, "player can disable the buffer throttle");
     expect(overridden.volumeMode == VolumeMode::Fixed, "unoverridden still inherits");
 }
 

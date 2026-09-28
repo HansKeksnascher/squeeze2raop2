@@ -112,3 +112,14 @@ SQ2_TEST(airplay_output, pump_without_target) {
     output.unpark();
     output.stop(false);
 }
+
+SQ2_TEST(airplay_output, latency_frames) {
+    // 50 ms of scheduled latency -> 2205 frames at 44.1 kHz.
+    AirplayOutput output("test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 50);
+    expect(output.latencyFrames() == 2205, "latency converts to 44.1 kHz frames");
+
+    AirplayOutput live("test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 500);
+    expect(live.latencyFrames() == 22050, "500 ms -> 22050 frames");
+    AirplayOutput clamped("test", "AABBCCDDEEFF", std::nullopt, nullptr, CredentialSink{}, 250);
+    expect(clamped.latencyFrames() == 11025, "250 ms -> 11025 frames");
+}
