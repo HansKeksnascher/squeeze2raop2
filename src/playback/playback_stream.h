@@ -120,8 +120,10 @@ private:
     void onMeta(std::string_view block);
     // Decode `data` and emit its chunks (sink + ring); false when the decoder
     // failed. `toOutput=false` is the paused drain (decode, discard).
+    // `endOfInput=true` (the HTTP EOF path) also flushes the resampler's
+    // filter tail.
     bool feed(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
-              DebugWavSink* sink, bool toOutput = true);
+              DebugWavSink* sink, bool toOutput = true, bool endOfInput = false);
     // Drop queued skip frames from one chunk; returns the played drop count.
     size_t consumeSkip(size_t frames);
     // Scheduled start gate (strm s autostart 0 / strm u). Open when nowMs()
@@ -137,8 +139,6 @@ private:
     std::span<const int16_t> clampToS16(std::span<const float> pcm);
     // The fixed pipeline output format (AirPlay clock).
     PcmFormat outputFormat() const;
-    // Ring-occupancy telemetry + the 10 s source-rate regulation boundary.
-    void sampleRingTelemetry();
 
     AirplayOutput& output_;
     StreamCounters& counters_;

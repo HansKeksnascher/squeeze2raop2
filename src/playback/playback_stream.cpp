@@ -254,7 +254,6 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             else
                 pauseUntilMs_.store(0, std::memory_order_relaxed);
         }
-        if (!paused && outputReady) sampleRingTelemetry();
         if (paused && !fadeOut_) {
             // Do NOT read while paused. LMS streams local tracks as fast as the
             // client reads, so draining a paused stream consumes the whole
@@ -314,18 +313,28 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             onOutputReady();
         }
 
+        // One ring-occupancy sample per iteration while streaming: the STAT
+        // output-buffer figure and the ring-health summary. Sampled after the
+        // outputReady transition above so the first sample sees the freshly
+        // queued audio.
+        size_t ringQueued = 0;
+        if (outputReady && output_.hasPlayer()) {
+            ringQueued = output_.queued();
+            counters_.setQueued(ringQueued);
+            ringTelemetry_.observe(ringQueued, nowMs());
+        }
+
         // Ring-level throttle: don't let the sender hold more than `buffer-ms`
         // of not-yet-sent audio. A deep local queue delays the audible effect of
         // LMS's `strm a`/`strm p` corrections, so cap it and service the sender
         // until it drains. Hysteresis (half the target) avoids chattering.
         if (const uint64_t target = ringTargetSamples();
             target != 0 && outputReady && output_.hasPlayer()) {
-            const uint64_t queued = output_.queued();
-            if (!ringThrottled_ && queued > target) {
+            if (!ringThrottled_ && ringQueued > target) {
                 ringThrottled_ = true;
                 log::debug(log::Area::Pb, "ring throttle: {} ms buffered; pausing reads",
-                           queued * kMsPerSecond / (outputRate_ * kDefaultChannels));
-            } else if (ringThrottled_ && queued < target / 2) {
+                           ringQueued * kMsPerSecond / (outputRate_ * kDefaultChannels));
+            } else if (ringThrottled_ && ringQueued < target / 2) {
                 ringThrottled_ = false;
             }
         }
@@ -335,7 +344,6 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
             output_.pumpUntil(std::chrono::steady_clock::now() +
                               std::chrono::milliseconds(kRingThrottleSliceMs));
             activeMs_ += nowMs() - t0;  // keep the pacer's clock honest
-            sampleRingTelemetry();
             continue;
         }
 
@@ -402,10 +410,11 @@ PlaybackStream::End PlaybackStream::run(std::stop_token st,
 
         if (rr.result == HttpStreamReader::ReadResult::AtEof) {
             if (decoder_) {
-                // Decode + emit the remaining tail frames of the stream (MP3);
-                // PCM's finish() is the base no-op.
+                // Decode + emit the remaining tail frames of the stream (MP3),
+                // then flush the resampler's filter tail. PCM's finish() is the
+                // base no-op.
                 decoder_->finish();
-                feed(st, {}, fmt, sink_.get());
+                feed(st, {}, fmt, sink_.get(), /*toOutput=*/true, /*endOfInput=*/true);
             }
             disconnect_ = DisconnectCode::Ok;
             reachedEof = true;
@@ -511,13 +520,35 @@ std::span<const int16_t> PlaybackStream::clampToS16(std::span<const float> pcm) 
 // One pipeline for every stream format: bytes go through the stream's Decoder
 // (mp3 decode / pcm header-skip + s16 stereo normalization) and are drained in
 // the same 1152-frame chunks, resampled to the 44.1 kHz AirPlay clock, then
-// gain/fade + clamp to s16. Returns false when the decoder failed.
+// gain/fade + clamp to s16. Returns false when the decoder failed. With
+// `endOfInput` set (the HTTP EOF path) the resampler's filter tail is flushed
+// as well, so the last frames of a track are not dropped.
 bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, PcmFormat& fmt,
-                          DebugWavSink* sink, bool toOutput) {
+                          DebugWavSink* sink, bool toOutput, bool endOfInput) {
     if (!decoder_) return true;
     const AirplayOutput::Abort abort = [&] {
         return st.stop_requested() || !g_run.load() || output_.lost();
     };
+
+    // Skip-ahead, gain/fade, clamp, sink + ring for one resampled chunk.
+    const auto emit = [&](std::span<const float> pcm) {
+        const size_t channels = fmt.channels ? fmt.channels : kDefaultChannels;
+        // Skip-ahead (strm a): drop whole output frames, counting them as
+        // played so the elapsed clock advances as in squeezelite.
+        const size_t droppedFrames = consumeSkip(pcm.size() / channels);
+        if (droppedFrames) {
+            const size_t droppedSamples = droppedFrames * channels;
+            counters_.onFed(droppedSamples, channels, decoder_->pendingBytes());
+            pcm = pcm.subspan(droppedSamples);
+        }
+        if (pcm.empty() || !toOutput) return;  // paused drain: decode, discard
+        const std::span<const float> gained = applyGainFade(pcm, fmt);
+        const std::span<const int16_t> out = clampToS16(gained);
+        if (sink) sink->feed(std::as_bytes(out), fmt);
+        output_.push(out, channels, abort);
+        counters_.onFed(out.size(), channels, decoder_->pendingBytes());
+    };
+
     decoder_->feed(data);
     for (;;) {
         const std::span<const int16_t> chunk = decoder_->nextChunk();
@@ -547,41 +578,13 @@ bool PlaybackStream::feed(std::stop_token st, std::span<const std::byte> data, P
         }
 
         if (!resampler_) continue;  // no native rate yet
-        std::span<const float> pcm = resampler_->process(chunk);
-        if (pcm.empty()) continue;
-
-        const size_t channels = fmt.channels ? fmt.channels : kDefaultChannels;
-
-        // Skip-ahead (strm a): drop whole output frames, counting them as
-        // played so the elapsed clock advances as in squeezelite.
-        const size_t droppedFrames = consumeSkip(pcm.size() / channels);
-        if (droppedFrames) {
-            const size_t droppedSamples = droppedFrames * channels;
-            counters_.onFed(droppedSamples, channels, decoder_->pendingBytes());
-            pcm = pcm.subspan(droppedSamples);
-        }
-        if (pcm.empty()) continue;
-        if (!toOutput) continue;  // paused drain: decode, discard
-
-        const std::span<const float> gained = applyGainFade(pcm, fmt);
-        const std::span<const int16_t> out = clampToS16(gained);
-        if (sink) sink->feed(std::as_bytes(out), fmt);
-        output_.push(out, channels, abort);
-        counters_.onFed(out.size(), channels, decoder_->pendingBytes());
+        emit(resampler_->process(chunk));
     }
-    return true;
-}
 
-// One occupancy sample per stream-loop iteration while streaming. Gaps between
-// samples are bounded by the read timeout + pacing sleep (~270 ms), so
-// sub-iteration zero-crossings can be missed — the min/max summary still shows
-// the trend and the warn/recover pair catches real starvation.
-void PlaybackStream::sampleRingTelemetry() {
-    if (!output_.hasPlayer()) return;
-    const size_t avail = output_.queued();
-    counters_.setQueued(avail);
-    // Ring-health summary every 10 s and the starvation warn/recover pair.
-    (void)ringTelemetry_.observe(avail, nowMs());
+    // End of stream: flush the resampler's filter tail (a no-op under the
+    // 44.1 kHz bypass) so no audio is lost at the end of a track.
+    if (endOfInput && resampler_) emit(resampler_->finish());
+    return true;
 }
 
 }  // namespace squeeze2raop2

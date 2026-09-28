@@ -107,3 +107,18 @@ SQ2_TEST(resampler, chunk_invariance) {
     for (std::size_t i = 0; i < n; ++i) maxDiff = std::max(maxDiff, std::fabs(ref[i] - got[i]));
     expect(maxDiff < 1.0F, "chunked output matches the whole-buffer pass");
 }
+
+SQ2_TEST(resampler, finish_flushes_the_filter_tail) {
+    // process() leaves the filter delay buffered; finish() must emit it so the
+    // last frames of a track are not dropped. 0.1 s at 48 kHz -> ~4410 frames.
+    constexpr std::size_t kFrames = 4800;
+    const auto in = sine(kFrames, 1000.0, 48000.0, 20000.0);
+
+    Resampler r(48000, 44100, ResamplerQuality::Medium);
+    require(r.valid() && !r.bypass(), "48k -> 44.1k resamples");
+    const std::size_t first = r.process(in).size() / 2;
+    const std::size_t tail = r.finish().size() / 2;
+    expect(tail > 0, "finish emits the buffered filter tail");
+    const std::size_t produced = first + tail;
+    expect(produced >= 4300 && produced <= 4450, "process + finish ~= 4410 frames");
+}

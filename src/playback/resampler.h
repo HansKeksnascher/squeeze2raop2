@@ -49,8 +49,6 @@ public:
 
     bool bypass() const { return bypass_; }
     bool valid() const { return bypass_ || state_ != nullptr; }
-    std::uint32_t sourceRate() const { return sourceRate_; }
-    std::uint32_t targetRate() const { return targetRate_; }
 
 private:
     // Run one SRC_DATA pass over `inFrames` frames already staged in inF_.
